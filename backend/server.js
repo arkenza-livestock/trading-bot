@@ -1,4 +1,4 @@
-   const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const http = require('http');
@@ -18,8 +18,9 @@ const wss = new WebSocketServer({ server });
 global.wss = wss;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
+// ── AYARLAR ──────────────────────────────────────────────────
 app.get('/api/settings', (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
@@ -28,14 +29,57 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.put('/api/settings', (req, res) => {
-  const stmt = db.prepare('UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?');
+  const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)');
   for (const [key, value] of Object.entries(req.body)) {
     if (key === 'binance_api_secret' && value === '••••••••') continue;
-    stmt.run(String(value), key);
+    stmt.run(key, String(value));
   }
+  // Engine'i yeniden başlat
+  engine.stop();
+  setTimeout(() => engine.start(), 1000);
   res.json({ success: true });
 });
 
+// ── KOD EDITÖRÜ ───────────────────────────────────────────────
+const CODE_FILES = {
+  engine: path.join(__dirname, 'src/engine.js'),
+  analysis: path.join(__dirname, 'src/analysis.js'),
+  binance: path.join(__dirname, 'src/binance.js')
+};
+
+app.get('/api/code/:file', (req, res) => {
+  const filePath = CODE_FILES[req.params.file];
+  if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.json({ content });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/code/:file', (req, res) => {
+  const filePath = CODE_FILES[req.params.file];
+  if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
+  try {
+    // Backup al
+    const backupPath = filePath + '.backup';
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    // Yeni kodu yaz
+    fs.writeFileSync(filePath, req.body.content, 'utf8');
+    // Cache'i temizle ve engine'i yeniden başlat
+    Object.keys(require.cache).forEach(key => {
+      if (key.includes('/src/')) delete require.cache[key];
+    });
+    engine.stop();
+    setTimeout(() => engine.start(), 2000);
+    res.json({ success: true, message: 'Kod kaydedildi ve sistem yeniden başlatıldı' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SİNYALLER ────────────────────────────────────────────────
 app.get('/api/signals', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   const signals = db.prepare('SELECT * FROM signals ORDER BY created_at DESC LIMIT ?').all(limit);
@@ -49,16 +93,10 @@ app.get('/api/stats', (req, res) => {
   const open = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
   const signals = db.prepare("SELECT COUNT(*) as count FROM signals").get();
   const total = wins.count + losses.count;
-  res.json({
-    totalPnl: parseFloat((totalPnl.total || 0).toFixed(2)),
-    winRate: total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0,
-    wins: wins.count,
-    losses: losses.count,
-    openPositions: open.count,
-    totalSignals: signals.count
-  });
+  res.json({ totalPnl: parseFloat((totalPnl.total || 0).toFixed(2)), winRate: total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0, wins: wins.count, losses: losses.count, openPositions: open.count, totalSignals: signals.count });
 });
 
+// ── POZİSYONLAR ──────────────────────────────────────────────
 app.get('/api/positions', (req, res) => {
   res.json(db.prepare('SELECT * FROM positions ORDER BY opened_at DESC').all());
 });
@@ -80,20 +118,21 @@ app.post('/api/positions/:id/close', async (req, res) => {
     const pnlPct = ((sellPrice - pos.entry_price) / pos.entry_price) * 100;
     db.prepare("UPDATE positions SET status = 'MANUAL_CLOSE', current_price = ?, pnl = ?, pnl_percent = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?").run(sellPrice, pnl, pnlPct, pos.id);
     res.json({ success: true, pnl, pnlPercent: pnlPct });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── TRADE GEÇMİŞİ ────────────────────────────────────────────
 app.get('/api/trades', (req, res) => {
   res.json(db.prepare('SELECT * FROM trades ORDER BY created_at DESC LIMIT 100').all());
 });
 
+// ── ENGINE KONTROL ────────────────────────────────────────────
 app.post('/api/engine/start', (req, res) => { engine.start(); res.json({ success: true, running: true }); });
 app.post('/api/engine/stop', (req, res) => { engine.stop(); res.json({ success: true, running: false }); });
 app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis(); res.json({ success: true }); });
 app.get('/api/engine/status', (req, res) => { res.json({ running: engine.running }); });
 
+// ── BİNANCE TEST ─────────────────────────────────────────────
 app.post('/api/binance/test', async (req, res) => {
   const settings = engine.getSettings();
   if (!settings.binance_api_key) return res.status(400).json({ error: 'API key girilmemiş' });
@@ -101,9 +140,7 @@ app.post('/api/binance/test', async (req, res) => {
     const binance = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
     const balance = await binance.getUSDTBalance();
     res.json({ success: true, usdtBalance: balance });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
