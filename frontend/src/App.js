@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Signals from './pages/Signals';
 import Positions from './pages/Positions';
 import Settings from './pages/Settings';
+import CodeEditor from './pages/CodeEditor';
 import './App.css';
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -29,15 +30,19 @@ export default function App() {
     fetchStats();
     const interval = setInterval(fetchStats, 30000);
     const wsUrl = window.location.hostname === 'localhost' ? 'ws://localhost:3001' : `wss://${window.location.host}`;
-    const socket = new WebSocket(wsUrl);
-    socket.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'NEW_SIGNAL') {
-        addNotification(`🚨 Yeni sinyal: ${msg.data.symbol} (Skor: ${msg.data.score})`);
-        fetchStats();
-      }
-    };
-    return () => { clearInterval(interval); socket.close(); };
+    try {
+      const socket = new WebSocket(wsUrl);
+      socket.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'NEW_SIGNAL') {
+          addNotification(`🚨 Yeni sinyal: ${msg.data.symbol} (Skor: ${msg.data.score})`);
+          fetchStats();
+        }
+      };
+      return () => { clearInterval(interval); socket.close(); };
+    } catch(e) {
+      return () => clearInterval(interval);
+    }
   }, [fetchStats]);
 
   const addNotification = (text) => {
@@ -65,7 +70,8 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'signals', label: 'Sinyaller', icon: '🚨' },
     { id: 'positions', label: 'Pozisyonlar', icon: '💼' },
-    { id: 'settings', label: 'Ayarlar', icon: '⚙️' }
+    { id: 'settings', label: 'Ayarlar', icon: '⚙️' },
+    { id: 'code', label: 'Kod Editörü', icon: '💻' }
   ];
 
   return (
@@ -115,6 +121,7 @@ export default function App() {
         {page === 'signals' && <Signals api={API} />}
         {page === 'positions' && <Positions api={API} />}
         {page === 'settings' && <Settings api={API} />}
+        {page === 'code' && <CodeEditor api={API} />}
       </main>
       <div className="notifications">
         {notifications.map(n => (
