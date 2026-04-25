@@ -1,4 +1,4 @@
- const Database = require('better-sqlite3');
+const Database = require('better-sqlite3');
 const path = require('path');
 
 const db = new Database(path.join(__dirname, '../../data/trading.db'));
@@ -55,25 +55,45 @@ db.exec(`
     status TEXT DEFAULT 'FILLED',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS scan_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    coin_count INTEGER DEFAULT 0,
+    signal_count INTEGER DEFAULT 0,
+    duration_ms INTEGER DEFAULT 0,
+    signals_found TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const defaultSettings = {
-  min_volume: '5000000',
+  min_volume: '1000000',
   min_change: '-50',
   max_change: '50',
-  max_coins: '100',
-  min_score: '50',
-  rsi_oversold: '35',
-  rsi_overbought: '65',
+  max_coins: '50',
+  min_score: '10',
+  rsi_period: '7',
+  rsi_oversold: '50',
+  rsi_overbought: '75',
+  candle_interval: '5m',
+  candle_limit: '50',
+  sr_lookback: '20',
   trade_amount_usdt: '100',
   max_open_positions: '5',
-  stop_loss_percent: '3',
-  take_profit_percent: '5',
+  stop_loss_percent: '0.75',
+  take_profit_percent: '1.5',
+  trailing_stop_percent: '0.5',
+  min_profit_percent: '0.5',
+  time_stop_minutes: '60',
+  max_daily_loss_percent: '5',
+  max_daily_trades: '20',
+  commission_rate: '0.1',
+  slippage_rate: '0.05',
   auto_trade_enabled: 'false',
   binance_api_key: '',
   binance_api_secret: '',
   groq_api_key: '',
-  check_interval: '20'
+  check_interval: '5'
 };
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
