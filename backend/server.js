@@ -34,13 +34,12 @@ app.put('/api/settings', (req, res) => {
     if (key === 'binance_api_secret' && value === '••••••••') continue;
     stmt.run(key, String(value));
   }
-  // Engine'i yeniden başlat
   engine.stop();
   setTimeout(() => engine.start(), 1000);
   res.json({ success: true });
 });
 
-// ── KOD EDITÖRÜ ───────────────────────────────────────────────
+// ── KOD EDİTÖRÜ ──────────────────────────────────────────────
 const CODE_FILES = {
   engine: path.join(__dirname, 'src/engine.js'),
   analysis: path.join(__dirname, 'src/analysis.js'),
@@ -62,12 +61,9 @@ app.post('/api/code/:file', (req, res) => {
   const filePath = CODE_FILES[req.params.file];
   if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
   try {
-    // Backup al
     const backupPath = filePath + '.backup';
     if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
-    // Yeni kodu yaz
     fs.writeFileSync(filePath, req.body.content, 'utf8');
-    // Cache'i temizle ve engine'i yeniden başlat
     Object.keys(require.cache).forEach(key => {
       if (key.includes('/src/')) delete require.cache[key];
     });
@@ -83,17 +79,41 @@ app.post('/api/code/:file', (req, res) => {
 app.get('/api/signals', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   const signals = db.prepare('SELECT * FROM signals ORDER BY created_at DESC LIMIT ?').all(limit);
-  res.json(signals.map(s => ({ ...s, positive_signals: JSON.parse(s.positive_signals || '[]'), negative_signals: JSON.parse(s.negative_signals || '[]') })));
+  res.json(signals.map(s => ({
+    ...s,
+    positive_signals: JSON.parse(s.positive_signals || '[]'),
+    negative_signals: JSON.parse(s.negative_signals || '[]')
+  })));
 });
 
+// ── TARAMA LOGLARI ────────────────────────────────────────────
+app.get('/api/scan-logs', (req, res) => {
+  const logs = db.prepare('SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 50').all();
+  res.json(logs.map(l => ({
+    ...l,
+    signals_found: JSON.parse(l.signals_found || '[]')
+  })));
+});
+
+// ── İSTATİSTİKLER ────────────────────────────────────────────
 app.get('/api/stats', (req, res) => {
-  const totalPnl = db.prepare("SELECT SUM(pnl) as total FROM positions WHERE status != 'OPEN'").get();
-  const wins = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl > 0 AND status != 'OPEN'").get();
-  const losses = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl <= 0 AND status != 'OPEN'").get();
-  const open = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
-  const signals = db.prepare("SELECT COUNT(*) as count FROM signals").get();
-  const total = wins.count + losses.count;
-  res.json({ totalPnl: parseFloat((totalPnl.total || 0).toFixed(2)), winRate: total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0, wins: wins.count, losses: losses.count, openPositions: open.count, totalSignals: signals.count });
+  const totalPnl   = db.prepare("SELECT COALESCE(SUM(pnl),0) as total FROM positions WHERE status != 'OPEN'").get();
+  const wins       = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl > 0 AND status != 'OPEN'").get();
+  const losses     = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl <= 0 AND status != 'OPEN'").get();
+  const open       = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
+  const signals    = db.prepare("SELECT COUNT(*) as count FROM signals").get();
+  const lastScan   = db.prepare("SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 1").get();
+  const total      = wins.count + losses.count;
+
+  res.json({
+    totalPnl:      parseFloat((totalPnl.total || 0).toFixed(2)),
+    winRate:       total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0,
+    wins:          wins.count,
+    losses:        losses.count,
+    openPositions: open.count,
+    totalSignals:  signals.count,
+    lastScan:      lastScan || null
+  });
 });
 
 // ── POZİSYONLAR ──────────────────────────────────────────────
@@ -116,9 +136,12 @@ app.post('/api/positions/:id/close', async (req, res) => {
     const sellPrice = parseFloat(order.fills?.[0]?.price || pos.current_price);
     const pnl = (sellPrice - pos.entry_price) * pos.quantity;
     const pnlPct = ((sellPrice - pos.entry_price) / pos.entry_price) * 100;
-    db.prepare("UPDATE positions SET status = 'MANUAL_CLOSE', current_price = ?, pnl = ?, pnl_percent = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?").run(sellPrice, pnl, pnlPct, pos.id);
+    db.prepare("UPDATE positions SET status='MANUAL_CLOSE', current_price=?, pnl=?, pnl_percent=?, closed_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(sellPrice, pnl, pnlPct, pos.id);
     res.json({ success: true, pnl, pnlPercent: pnlPct });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── TRADE GEÇMİŞİ ────────────────────────────────────────────
@@ -128,7 +151,7 @@ app.get('/api/trades', (req, res) => {
 
 // ── ENGINE KONTROL ────────────────────────────────────────────
 app.post('/api/engine/start', (req, res) => { engine.start(); res.json({ success: true, running: true }); });
-app.post('/api/engine/stop', (req, res) => { engine.stop(); res.json({ success: true, running: false }); });
+app.post('/api/engine/stop',  (req, res) => { engine.stop();  res.json({ success: true, running: false }); });
 app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis(); res.json({ success: true }); });
 app.get('/api/engine/status', (req, res) => { res.json({ running: engine.running }); });
 
@@ -140,7 +163,9 @@ app.post('/api/binance/test', async (req, res) => {
     const binance = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
     const balance = await binance.getUSDTBalance();
     res.json({ success: true, usdtBalance: balance });
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
