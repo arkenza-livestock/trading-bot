@@ -93,6 +93,8 @@ const defaultSettings = {
   binance_api_key: '',
   binance_api_secret: '',
   groq_api_key: '',
+  telegram_token: '',
+  telegram_chat_id: '',
   check_interval: '5'
 };
 
