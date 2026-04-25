@@ -1,3 +1,4 @@
+// v3
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 7) {
@@ -40,11 +41,11 @@ class TechnicalAnalysis {
     const sonMum = closes[len-1] - closes[len-2];
     const sonRange = highs[len-1] - lows[len-1];
     const govdeOran = sonRange > 0 ? Math.abs(sonMum) / sonRange : 0;
-
-    const ema5  = this.calculateEMA(closes, 5);
+    const ema5 = this.calculateEMA(closes, 5);
     const ema10 = this.calculateEMA(closes, 10);
     const emaTrend = ema5 > ema10 ? 'YUKARI' : 'ASAGI';
     const emaFark = ((ema5 - ema10) / ema10) * 100;
+    const volRoc = len > 4 ? ((volumes[len-1] - volumes[len-4]) / (volumes[len-4] || 1)) * 100 : 0;
 
     let puan = 0;
     const desc = [];
@@ -82,7 +83,6 @@ class TechnicalAnalysis {
     if      (emaTrend === 'YUKARI' && emaFark > 0.1) { puan += 20; desc.push('EMA5>EMA10'); }
     else if (emaTrend === 'ASAGI'  && emaFark < -0.1) { puan -= 20; }
 
-    const volRoc = len > 4 ? ((volumes[len-1] - volumes[len-4]) / (volumes[len-4] || 1)) * 100 : 0;
     if (volRoc > 50 && roc1 > 0) { puan += 15; desc.push('Hacim+fiyat artıyor'); }
     else if (volRoc > 50 && roc1 < 0) { puan -= 10; }
 
@@ -96,10 +96,10 @@ class TechnicalAnalysis {
     const sonVol = volumes[len - 1];
     const avg20  = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
     const avg5   = volumes.slice(-6,  -1).reduce((a, b) => a + b, 0) / 5;
-    if (avg20 === 0) return { puan: -100, desc: 'Hacim sıfır', gecerli: false, oran: 0 };
-console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).toFixed(2)}`);
 
-    const oran20 = parseFloat((sonVol / avg20).toFixed(2));
+    if (avg20 === 0) return { puan: -100, desc: 'Hacim sıfır', gecerli: false, oran: 0 };
+
+    const oran20    = parseFloat((sonVol / avg20).toFixed(2));
     const vol5Trend = avg5 > avg20 * 1.2;
 
     let alimVol = 0, satisVol = 0;
@@ -113,13 +113,15 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
     let puan = 0;
     const desc = [];
 
-    if      (oran20 > 5)    { puan += 60; desc.push(`🔥${oran20}x spike`); }
-    else if (oran20 > 3)    { puan += 45; desc.push(`⚡${oran20}x yüksek`); }
-    else if (oran20 > 2)    { puan += 30; desc.push(`📈${oran20}x`); }
-    else if (oran20 > 1.5)  { puan += 20; desc.push(`${oran20}x`); }
-    else if (oran20 > 1)    { puan += 10; }
-    else if (oran20 < 0.3)  { puan -= 40; desc.push('Hacim çok düşük'); }
-    else if (oran20 < 0.5)  { puan -= 20; }
+    if      (oran20 > 5)   { puan += 60; desc.push(`🔥${oran20}x spike`); }
+    else if (oran20 > 3)   { puan += 45; desc.push(`⚡${oran20}x`); }
+    else if (oran20 > 2)   { puan += 30; desc.push(`📈${oran20}x`); }
+    else if (oran20 > 1.5) { puan += 20; desc.push(`${oran20}x`); }
+    else if (oran20 > 1)   { puan += 10; }
+    else if (oran20 > 0.7) { puan +=  5; }
+    else if (oran20 > 0.4) { puan -=  5; }
+    else if (oran20 > 0.2) { puan -= 15; }
+    else                   { puan -= 25; desc.push('Hacim çok düşük'); }
 
     if (vol5Trend) { puan += 15; desc.push('Hacim trendi yukarı'); }
 
@@ -137,41 +139,37 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
     let puan = 0;
     const desc = [];
 
-    if      (rsi < 20)         { puan += 60; desc.push(`🔥RSI aşırı satım(${rsi})`); }
-    else if (rsi < 25)         { puan += 45; desc.push(`RSI çok satım(${rsi})`); }
-    else if (rsi < oversold)   { puan += 30; desc.push(`RSI satım(${rsi})`); }
-    else if (rsi < 45)         { puan += 15; desc.push(`RSI nötr+(${rsi})`); }
-    else if (rsi > 80)         { puan -= 50; desc.push(`⚠️RSI aşırı alım(${rsi})`); }
-    else if (rsi > 75)         { puan -= 35; desc.push(`RSI çok alım(${rsi})`); }
-    else if (rsi > overbought) { puan -= 20; desc.push(`RSI alım(${rsi})`); }
+    if      (rsi < 20)         { puan += 60; desc.push(`🔥RSI(${rsi})`); }
+    else if (rsi < 25)         { puan += 45; desc.push(`RSI(${rsi})`); }
+    else if (rsi < oversold)   { puan += 30; desc.push(`RSI(${rsi})`); }
+    else if (rsi < 45)         { puan += 15; desc.push(`RSI(${rsi})`); }
+    else if (rsi > 80)         { puan -= 50; desc.push(`⚠️RSI(${rsi})`); }
+    else if (rsi > 75)         { puan -= 35; desc.push(`RSI(${rsi})`); }
+    else if (rsi > overbought) { puan -= 20; desc.push(`RSI(${rsi})`); }
     else                       { puan +=  5; }
 
     return { puan, desc: desc.join(' | ') };
   }
 
   static calculateSR(closes, highs, lows, settings = {}) {
-    const lookback = parseInt(settings.sr_lookback || 20);
-    const price = closes[closes.length - 1];
-    const recentHighs = highs.slice(-lookback);
-    const recentLows  = lows.slice(-lookback);
-    const resistance  = Math.max(...recentHighs);
-    const support     = Math.min(...recentLows);
-    const range       = resistance - support;
+    const lookback   = parseInt(settings.sr_lookback || 20);
+    const price      = closes[closes.length - 1];
+    const resistance = Math.max(...highs.slice(-lookback));
+    const support    = Math.min(...lows.slice(-lookback));
+    const range      = resistance - support;
 
     if (range === 0) return { puan: 0, desc: 'Range yok', pozisyon: 50, riskOdul: 1 };
 
-    const pozisyon   = (price - support) / range * 100;
-    const hedefMesafe = resistance - price;
-    const stopMesafe  = price - support;
-    const riskOdul    = stopMesafe > 0 ? hedefMesafe / stopMesafe : 0;
+    const pozisyon = (price - support) / range * 100;
+    const riskOdul = (resistance - price) / (price - support || 1);
 
     let puan = 0;
     const desc = [];
 
-    if      (pozisyon < 8)  { puan += 55; desc.push(`🔥Desteğe çok yakın(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon < 20) { puan += 40; desc.push(`Alt bölge(%${pozisyon.toFixed(0)})`); }
+    if      (pozisyon < 8)  { puan += 55; desc.push(`🔥Destek(%${pozisyon.toFixed(0)})`); }
+    else if (pozisyon < 20) { puan += 40; desc.push(`Alt(%${pozisyon.toFixed(0)})`); }
     else if (pozisyon < 35) { puan += 20; desc.push(`Orta-alt(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon > 92) { puan -= 50; desc.push(`⚠️Direce çok yakın(%${pozisyon.toFixed(0)})`); }
+    else if (pozisyon > 92) { puan -= 50; desc.push(`⚠️Direnç(%${pozisyon.toFixed(0)})`); }
     else if (pozisyon > 80) { puan -= 30; }
     else if (pozisyon > 65) { puan -= 10; }
 
@@ -197,21 +195,12 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
     const hacim    = this.calculateVolume(closes, volumes);
     const sr       = this.calculateSR(closes, highs, lows, settings);
 
-    // Hacim yetersizse eleme
-    if (!hacim.gecerli) {
-      console.log(`${ticker.symbol} elendi: Hacim geçersiz`);
-      return null;
-    }
+    if (!hacim.gecerli) return null;
 
-    // 24s hacim kontrolü
     const vol24h = parseFloat(ticker.quoteVolume || 0);
-    const minVol = parseFloat(settings.min_volume || 5000000);
-    if (vol24h < minVol) {
-      console.log(`${ticker.symbol} elendi: 24s hacim düşük (${(vol24h/1e6).toFixed(1)}M)`);
-      return null;
-    }
+    const minVol = parseFloat(settings.min_volume || 1000000);
+    if (vol24h < minVol) return null;
 
-    // Ağırlıklı skor
     const toplamSkor = Math.round(
       momentum.puan * 0.30 +
       rsiSkor.puan  * 0.25 +
@@ -219,15 +208,12 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
       sr.puan       * 0.15
     );
 
-    // DEBUG LOG
-    console.log(`${ticker.symbol} | Mom:${momentum.puan} RSI:${rsi}(${rsiSkor.puan}) Hacim:${hacim.puan}(${hacim.oran}x) SR:${sr.puan} | TOPLAM:${toplamSkor}`);
-
-    const minScore = parseFloat(settings.min_score || 15);
+    const minScore = parseFloat(settings.min_score || 10);
     const signal   = toplamSkor >= minScore ? 'ALIM' : toplamSkor <= -15 ? 'SATIS' : 'BEKLE';
     const risk     = toplamSkor >= 60 ? 'DUSUK' : toplamSkor >= 35 ? 'ORTA' : 'YUKSEK';
 
-    const komisyon = parseFloat(settings.commission_rate || 0.1);
-    const slippage = parseFloat(settings.slippage_rate  || 0.05);
+    const komisyon  = parseFloat(settings.commission_rate || 0.1);
+    const slippage  = parseFloat(settings.slippage_rate   || 0.05);
     const minNetKar = (komisyon + slippage) * 2 + parseFloat(settings.min_profit_percent || 1.0);
 
     const atrDegerleri = [];
@@ -240,18 +226,15 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
 
     const hedefFiyat = parseFloat((price * (1 + minNetKar / 100)).toFixed(8));
     const stopFiyat  = parseFloat((price * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
-    const riskOdul   = (hedefFiyat - price) / (price - stopFiyat);
-
-    // Risk/ödül çok kötüyse eleme — eşiği düşürdük
-    if (signal === 'ALIM' && riskOdul < 0.5) return null;
+    const riskOdul   = (hedefFiyat - price) / (price - stopFiyat || 1);
 
     const positive = [], negative = [];
     if (momentum.puan > 0) positive.push('Momentum: ' + momentum.desc);
-    else negative.push('Momentum: ' + momentum.desc);
+    else if (momentum.puan < 0) negative.push('Momentum: ' + momentum.desc);
     if (rsiSkor.puan > 0) positive.push(rsiSkor.desc);
     else if (rsiSkor.puan < 0) negative.push(rsiSkor.desc);
     if (hacim.puan > 0) positive.push('Hacim: ' + hacim.desc);
-    else negative.push('Hacim: ' + hacim.desc);
+    else if (hacim.puan < 0) negative.push('Hacim: ' + hacim.desc);
     if (sr.puan > 0) positive.push('S/R: ' + sr.desc);
     else if (sr.puan < 0) negative.push('S/R: ' + sr.desc);
 
@@ -259,13 +242,15 @@ console.log(`VOL DEBUG: avg20=${avg20} sonVol=${sonVol} oran=${(sonVol/avg20).to
       symbol: ticker.symbol, price,
       change24h: parseFloat(ticker.priceChangePercent),
       volume24h: vol24h,
-      signal, score: toplamSkor, risk,
-      rsi, momentum: momentum.puan,
+      signal, score: toplamSkor, risk, rsi,
+      momentum: momentum.puan,
       hacimOran: hacim.oran, alimOran: hacim.alimOran,
-      srPozisyon: sr.pozisyon, riskOdul: parseFloat(riskOdul.toFixed(2)),
-      atr: parseFloat(atr.toFixed(8)), atrPct: parseFloat(atrPct.toFixed(3)),
-      target: hedefFiyat, stopLoss: stopFiyat, minNetKar,
-      positive, negative
+      srPozisyon: sr.pozisyon,
+      riskOdul: parseFloat(riskOdul.toFixed(2)),
+      atr: parseFloat(atr.toFixed(8)),
+      atrPct: parseFloat(atrPct.toFixed(3)),
+      target: hedefFiyat, stopLoss: stopFiyat,
+      minNetKar, positive, negative
     };
   }
 }
