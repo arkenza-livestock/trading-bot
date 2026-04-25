@@ -11,6 +11,7 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 const db = require('./src/database');
 const engine = require('./src/engine');
 const BinanceService = require('./src/binance');
+const TelegramService = require('./src/telegram');
 
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +76,26 @@ app.post('/api/code/:file', (req, res) => {
   }
 });
 
+// ── TELEGRAM TEST ─────────────────────────────────────────────
+app.post('/api/telegram/test', async (req, res) => {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  if (!settings.telegram_token || !settings.telegram_chat_id) {
+    return res.status(400).json({ error: 'Telegram token veya chat ID eksik' });
+  }
+  try {
+    const telegram = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
+    await telegram.sendMessage(
+      '✅ <b>Kripto Sinyal Botu</b>\n\n' +
+      'Bağlantı başarılı! Bot aktif ve çalışıyor.\n\n' +
+      `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── SİNYALLER ────────────────────────────────────────────────
 app.get('/api/signals', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
@@ -97,14 +118,13 @@ app.get('/api/scan-logs', (req, res) => {
 
 // ── İSTATİSTİKLER ────────────────────────────────────────────
 app.get('/api/stats', (req, res) => {
-  const totalPnl   = db.prepare("SELECT COALESCE(SUM(pnl),0) as total FROM positions WHERE status != 'OPEN'").get();
-  const wins       = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl > 0 AND status != 'OPEN'").get();
-  const losses     = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl <= 0 AND status != 'OPEN'").get();
-  const open       = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
-  const signals    = db.prepare("SELECT COUNT(*) as count FROM signals").get();
-  const lastScan   = db.prepare("SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 1").get();
-  const total      = wins.count + losses.count;
-
+  const totalPnl = db.prepare("SELECT COALESCE(SUM(pnl),0) as total FROM positions WHERE status != 'OPEN'").get();
+  const wins     = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl > 0 AND status != 'OPEN'").get();
+  const losses   = db.prepare("SELECT COUNT(*) as count FROM positions WHERE pnl <= 0 AND status != 'OPEN'").get();
+  const open     = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
+  const signals  = db.prepare("SELECT COUNT(*) as count FROM signals").get();
+  const lastScan = db.prepare("SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 1").get();
+  const total    = wins.count + losses.count;
   res.json({
     totalPnl:      parseFloat((totalPnl.total || 0).toFixed(2)),
     winRate:       total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0,
@@ -138,6 +158,13 @@ app.post('/api/positions/:id/close', async (req, res) => {
     const pnlPct = ((sellPrice - pos.entry_price) / pos.entry_price) * 100;
     db.prepare("UPDATE positions SET status='MANUAL_CLOSE', current_price=?, pnl=?, pnl_percent=?, closed_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(sellPrice, pnl, pnlPct, pos.id);
+
+    // Telegram bildirimi
+    if (settings.telegram_token && settings.telegram_chat_id) {
+      const telegram = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
+      await telegram.sendPositionClosed(pos.symbol, 'MANUAL_CLOSE', pnlPct, pnl);
+    }
+
     res.json({ success: true, pnl, pnlPercent: pnlPct });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -150,10 +177,10 @@ app.get('/api/trades', (req, res) => {
 });
 
 // ── ENGINE KONTROL ────────────────────────────────────────────
-app.post('/api/engine/start', (req, res) => { engine.start(); res.json({ success: true, running: true }); });
-app.post('/api/engine/stop',  (req, res) => { engine.stop();  res.json({ success: true, running: false }); });
-app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis(); res.json({ success: true }); });
-app.get('/api/engine/status', (req, res) => { res.json({ running: engine.running }); });
+app.post('/api/engine/start',   (req, res) => { engine.start();        res.json({ success: true, running: true }); });
+app.post('/api/engine/stop',    (req, res) => { engine.stop();         res.json({ success: true, running: false }); });
+app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis();  res.json({ success: true }); });
+app.get('/api/engine/status',   (req, res) => { res.json({ running: engine.running }); });
 
 // ── BİNANCE TEST ─────────────────────────────────────────────
 app.post('/api/binance/test', async (req, res) => {
