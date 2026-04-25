@@ -9,6 +9,7 @@ export default function Settings({ api }) {
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [telegramTest, setTelegramTest] = useState(null);
 
   useEffect(() => {
     axios.get(`${api}/api/settings`).then(res => setSettings(res.data));
@@ -34,6 +35,17 @@ export default function Settings({ api }) {
       setTestResult({ success: false, message: '❌ ' + (err.response?.data?.error || 'Bağlantı hatası') });
     }
     setTesting(false);
+  };
+
+  const testTelegram = async () => {
+    setTelegramTest(null);
+    try {
+      await axios.put(`${api}/api/settings`, settings);
+      await axios.post(`${api}/api/telegram/test`);
+      setTelegramTest({ success: true, message: '✅ Telegram mesajı gönderildi!' });
+    } catch (err) {
+      setTelegramTest({ success: false, message: '❌ ' + (err.response?.data?.error || 'Gönderme hatası') });
+    }
   };
 
   const F = ({ label, desc, children }) => (
@@ -101,7 +113,7 @@ export default function Settings({ api }) {
                   value={settings.binance_api_secret || ''} onChange={e => update('binance_api_secret', e.target.value)} />
               </F>
             </R2>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 4 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={testBinance} disabled={testing}>
                 {testing ? 'Test ediliyor...' : '🔌 Bağlantı Test Et'}
               </button>
@@ -109,8 +121,27 @@ export default function Settings({ api }) {
             </div>
           </S>
 
+          <S title="📱 Telegram Bildirimi">
+            <R2>
+              <F label="Bot Token">
+                <input className="form-input" type="password" placeholder="1234567890:AAAA..."
+                  value={settings.telegram_token || ''} onChange={e => update('telegram_token', e.target.value)} />
+              </F>
+              <F label="Chat ID">
+                <input className="form-input" type="text" placeholder="-1001234567890"
+                  value={settings.telegram_chat_id || ''} onChange={e => update('telegram_chat_id', e.target.value)} />
+              </F>
+            </R2>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <button className="btn btn-ghost" onClick={testTelegram}>
+                📤 Test Mesajı Gönder
+              </button>
+              {telegramTest && <span style={{ fontSize: 13, color: telegramTest.success ? '#68d391' : '#fc8181' }}>{telegramTest.message}</span>}
+            </div>
+          </S>
+
           <S title="🤖 Groq AI">
-            <F label="API Key" desc="(Opsiyonel — AI yorum için)">
+            <F label="API Key" desc="(Opsiyonel)">
               <input className="form-input" type="password" placeholder="gsk_..."
                 value={settings.groq_api_key || ''} onChange={e => update('groq_api_key', e.target.value)} />
             </F>
@@ -118,8 +149,8 @@ export default function Settings({ api }) {
 
           <S title="🔍 Coin Filtresi">
             <R2>
-              <N k="min_volume" label="Min Hacim (USDT)" placeholder="5000000" />
-              <N k="max_coins" label="Max Coin Sayısı" placeholder="100" />
+              <N k="min_volume" label="Min Hacim (USDT)" placeholder="1000000" />
+              <N k="max_coins" label="Max Coin Sayısı" placeholder="50" />
             </R2>
           </S>
 
@@ -172,43 +203,33 @@ export default function Settings({ api }) {
         <div>
           <S title="📊 Genel">
             <R2>
-              <N k="min_score" label="Min Sinyal Skoru" desc="Bu altı sinyal yok" placeholder="30" />
-              <N k="candle_limit" label="Mum Sayısı" desc="Kaç mum analiz edilsin" placeholder="50" />
+              <N k="min_score" label="Min Sinyal Skoru" desc="Bu altı sinyal yok" placeholder="10" />
+              <N k="candle_limit" label="Mum Sayısı" placeholder="50" />
             </R2>
           </S>
-
-          <S title="📈 Momentum (1-3-5 Mum)">
+          <S title="📈 Momentum">
             <R2>
-              <N k="momentum_roc3_threshold" label="ROC3 Eşiği (%)" desc="3 mumda min değişim" step={0.1} placeholder="0.5" />
-              <N k="momentum_roc5_threshold" label="ROC5 Eşiği (%)" desc="5 mumda min değişim" step={0.1} placeholder="1.0" />
-            </R2>
-            <R2>
-              <N k="momentum_consecutive_score" label="Ardışık Mum Puanı" desc="3 yeşil/kırmızı mum" placeholder="30" />
-              <N k="momentum_roc_score" label="ROC Puanı" desc="Hız puanı" placeholder="25" />
+              <N k="momentum_roc3_threshold" label="ROC3 Eşiği (%)" step={0.1} placeholder="0.5" />
+              <N k="momentum_roc5_threshold" label="ROC5 Eşiği (%)" step={0.1} placeholder="1.0" />
             </R2>
           </S>
-
           <S title="📉 RSI">
             <R2>
-              <N k="rsi_period" label="RSI Periyot" desc="Varsayılan: 7" placeholder="7" />
-              <N k="rsi_oversold" label="Aşırı Satım Eşiği" desc="Altı = alım fırsatı" placeholder="35" />
+              <N k="rsi_period" label="RSI Periyot" placeholder="7" />
+              <N k="rsi_oversold" label="Aşırı Satım Eşiği" placeholder="50" />
             </R2>
             <R2>
-              <N k="rsi_overbought" label="Aşırı Alım Eşiği" desc="Üstü = satış baskısı" placeholder="65" />
-            </R2>
-          </S>
-
-          <S title="📊 Hacim Spike">
-            <R2>
-              <N k="volume_spike_threshold" label="Spike Eşiği (x)" desc="Ortalamanın kaç katı" step={0.1} placeholder="2.0" />
-              <N k="volume_spike_score" label="Spike Puanı" placeholder="40" />
+              <N k="rsi_overbought" label="Aşırı Alım Eşiği" placeholder="75" />
             </R2>
           </S>
-
-          <S title="📍 Fiyat Konumu (Destek/Direnç)">
+          <S title="💧 Hacim">
             <R2>
-              <N k="sr_lookback" label="Bakış Periyotu" desc="Kaç mum geriye bak" placeholder="20" />
-              <N k="sr_low_zone_score" label="Alt Bölge Puanı" desc="Fiyat destek yakını" placeholder="40" />
+              <N k="volume_spike_threshold" label="Spike Eşiği (x)" step={0.1} placeholder="2.0" />
+            </R2>
+          </S>
+          <S title="📍 Destek/Direnç">
+            <R2>
+              <N k="sr_lookback" label="Bakış Periyotu" placeholder="20" />
             </R2>
           </S>
         </div>
@@ -223,21 +244,26 @@ export default function Settings({ api }) {
               <N k="max_open_positions" label="Max Açık Pozisyon" placeholder="5" />
             </R2>
           </S>
-
           <S title="🎯 Kar / Zarar">
             <R2>
               <N k="stop_loss_percent" label="Stop Loss (%)" step={0.1} placeholder="0.75" />
-              <N k="take_profit_percent" label="Take Profit (%)" step={0.1} placeholder="1.5" />
+              <N k="trailing_stop_percent" label="Trailing Stop (%)" step={0.1} placeholder="0.5" />
             </R2>
             <R2>
-              <N k="time_stop_minutes" label="Zaman Stop (dakika)" desc="0 = kapalı" placeholder="60" />
+              <N k="min_profit_percent" label="Min Kar (trailing için)" step={0.1} placeholder="0.5" />
+              <N k="time_stop_minutes" label="Zaman Stop (dakika)" placeholder="60" />
             </R2>
           </S>
-
           <S title="⚖️ Günlük Limit">
             <R2>
               <N k="max_daily_loss_percent" label="Max Günlük Zarar (%)" step={0.1} placeholder="5" />
               <N k="max_daily_trades" label="Max Günlük İşlem" placeholder="20" />
+            </R2>
+          </S>
+          <S title="💸 Maliyet">
+            <R2>
+              <N k="commission_rate" label="Komisyon (%)" step={0.01} placeholder="0.1" />
+              <N k="slippage_rate" label="Slippage (%)" step={0.01} placeholder="0.05" />
             </R2>
           </S>
         </div>
