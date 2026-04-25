@@ -1,4 +1,4 @@
-// v3
+// v4
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 7) {
@@ -86,7 +86,7 @@ class TechnicalAnalysis {
     if (volRoc > 50 && roc1 > 0) { puan += 15; desc.push('Hacim+fiyat artıyor'); }
     else if (volRoc > 50 && roc1 < 0) { puan -= 10; }
 
-    return { puan, desc: desc.join(' | '), roc1, roc3, roc5, ivme, ardisikYesil, emaTrend };
+    return { puan, desc: desc.join('\n'), roc1, roc3, roc5, ivme, ardisikYesil, emaTrend };
   }
 
   static calculateVolume(closes, volumes) {
@@ -113,10 +113,10 @@ class TechnicalAnalysis {
     let puan = 0;
     const desc = [];
 
-    if      (oran20 > 5)   { puan += 60; desc.push(`🔥${oran20}x spike`); }
-    else if (oran20 > 3)   { puan += 45; desc.push(`⚡${oran20}x`); }
-    else if (oran20 > 2)   { puan += 30; desc.push(`📈${oran20}x`); }
-    else if (oran20 > 1.5) { puan += 20; desc.push(`${oran20}x`); }
+    if      (oran20 > 5)   { puan += 60; desc.push(`🔥 ${oran20}x mega spike`); }
+    else if (oran20 > 3)   { puan += 45; desc.push(`⚡ ${oran20}x spike`); }
+    else if (oran20 > 2)   { puan += 30; desc.push(`📈 ${oran20}x yüksek`); }
+    else if (oran20 > 1.5) { puan += 20; desc.push(`${oran20}x normal+`); }
     else if (oran20 > 1)   { puan += 10; }
     else if (oran20 > 0.7) { puan +=  5; }
     else if (oran20 > 0.4) { puan -=  5; }
@@ -125,30 +125,32 @@ class TechnicalAnalysis {
 
     if (vol5Trend) { puan += 15; desc.push('Hacim trendi yukarı'); }
 
-    if      (alimOran > 75) { puan += 30; desc.push(`💪Alım %${alimOran.toFixed(0)}`); }
-    else if (alimOran > 60) { puan += 20; desc.push(`Alım %${alimOran.toFixed(0)}`); }
-    else if (alimOran < 35) { puan -= 25; desc.push(`Satış %${(100-alimOran).toFixed(0)}`); }
+    if      (alimOran > 75) { puan += 30; desc.push(`💪 Alım baskısı %${alimOran.toFixed(0)}`); }
+    else if (alimOran > 60) { puan += 20; desc.push(`Alım baskısı %${alimOran.toFixed(0)}`); }
+    else if (alimOran < 35) { puan -= 25; desc.push(`Satış baskısı %${(100-alimOran).toFixed(0)}`); }
     else if (alimOran < 45) { puan -= 10; }
 
-    return { puan, desc: desc.join(' | '), oran: oran20, alimOran, vol5Trend, gecerli: true, spike: oran20 > 2 };
+    return { puan, desc: desc.join('\n'), oran: oran20, alimOran, vol5Trend, gecerli: true, spike: oran20 > 2 };
   }
 
   static calculateRSIScore(rsi, settings = {}) {
-    const oversold   = parseFloat(settings.rsi_oversold   || 35);
-    const overbought = parseFloat(settings.rsi_overbought || 65);
+    const oversold   = parseFloat(settings.rsi_oversold   || 40);
+    const overbought = parseFloat(settings.rsi_overbought || 60);
     let puan = 0;
     const desc = [];
 
-    if      (rsi < 20)         { puan += 60; desc.push(`🔥RSI(${rsi})`); }
-    else if (rsi < 25)         { puan += 45; desc.push(`RSI(${rsi})`); }
-    else if (rsi < oversold)   { puan += 30; desc.push(`RSI(${rsi})`); }
-    else if (rsi < 45)         { puan += 15; desc.push(`RSI(${rsi})`); }
-    else if (rsi > 80)         { puan -= 50; desc.push(`⚠️RSI(${rsi})`); }
-    else if (rsi > 75)         { puan -= 35; desc.push(`RSI(${rsi})`); }
-    else if (rsi > overbought) { puan -= 20; desc.push(`RSI(${rsi})`); }
-    else                       { puan +=  5; }
+    // İdeal alım: RSI 25-50 arası
+    if      (rsi < 20)         { puan += 50; desc.push(`🔥 RSI aşırı satım (${rsi}) — güçlü alım`); }
+    else if (rsi < 30)         { puan += 40; desc.push(`RSI satım bölgesi (${rsi}) — alım fırsatı`); }
+    else if (rsi < oversold)   { puan += 25; desc.push(`RSI düşük (${rsi}) — alım bölgesi`); }
+    else if (rsi < 50)         { puan += 15; desc.push(`RSI nötr+ (${rsi})`); }
+    else if (rsi < 55)         { puan +=  5; desc.push(`RSI nötr (${rsi})`); }
+    else if (rsi < overbought) { puan -=  5; desc.push(`RSI yükseliyor (${rsi}) — dikkat`); }
+    else if (rsi < 70)         { puan -= 15; desc.push(`RSI yüksek (${rsi}) — geç kalındı`); }
+    else if (rsi < 80)         { puan -= 30; desc.push(`⚠️ RSI çok yüksek (${rsi}) — alım uygun değil`); }
+    else                       { puan -= 50; desc.push(`🚫 RSI aşırı alım (${rsi}) — kesinlikle girme`); }
 
-    return { puan, desc: desc.join(' | ') };
+    return { puan, desc: desc.join('\n') };
   }
 
   static calculateSR(closes, highs, lows, settings = {}) {
@@ -166,18 +168,20 @@ class TechnicalAnalysis {
     let puan = 0;
     const desc = [];
 
-    if      (pozisyon < 8)  { puan += 55; desc.push(`🔥Destek(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon < 20) { puan += 40; desc.push(`Alt(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon < 35) { puan += 20; desc.push(`Orta-alt(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon > 92) { puan -= 50; desc.push(`⚠️Direnç(%${pozisyon.toFixed(0)})`); }
-    else if (pozisyon > 80) { puan -= 30; }
-    else if (pozisyon > 65) { puan -= 10; }
+    if      (pozisyon < 8)  { puan += 55; desc.push(`🔥 Desteğe çok yakın (%${pozisyon.toFixed(0)}) — ideal giriş`); }
+    else if (pozisyon < 20) { puan += 40; desc.push(`Alt bölge (%${pozisyon.toFixed(0)}) — iyi giriş`); }
+    else if (pozisyon < 35) { puan += 20; desc.push(`Orta-alt bölge (%${pozisyon.toFixed(0)})`); }
+    else if (pozisyon < 65) { puan +=  5; desc.push(`Orta bölge (%${pozisyon.toFixed(0)})`); }
+    else if (pozisyon < 80) { puan -= 15; desc.push(`Üst bölge (%${pozisyon.toFixed(0)}) — dikkat`); }
+    else if (pozisyon < 92) { puan -= 30; desc.push(`Direce yakın (%${pozisyon.toFixed(0)}) — riskli`); }
+    else                    { puan -= 50; desc.push(`⚠️ Direce çok yakın (%${pozisyon.toFixed(0)}) — girme`); }
 
-    if      (riskOdul > 2)   { puan += 20; desc.push(`R/R:${riskOdul.toFixed(1)}`); }
-    else if (riskOdul > 1)   { puan += 10; }
-    else if (riskOdul < 0.5) { puan -= 20; }
+    if      (riskOdul > 3)   { puan += 25; desc.push(`R/R: ${riskOdul.toFixed(1)} — mükemmel`); }
+    else if (riskOdul > 2)   { puan += 15; desc.push(`R/R: ${riskOdul.toFixed(1)} — iyi`); }
+    else if (riskOdul > 1)   { puan +=  5; desc.push(`R/R: ${riskOdul.toFixed(1)}`); }
+    else if (riskOdul < 0.5) { puan -= 25; desc.push(`R/R: ${riskOdul.toFixed(1)} — kötü`); }
 
-    return { puan, desc: desc.join(' | '), pozisyon, resistance, support, riskOdul };
+    return { puan, desc: desc.join('\n'), pozisyon, resistance, support, riskOdul };
   }
 
   static analyze(candles, ticker, settings = {}) {
@@ -228,15 +232,33 @@ class TechnicalAnalysis {
     const stopFiyat  = parseFloat((price * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
     const riskOdul   = (hedefFiyat - price) / (price - stopFiyat || 1);
 
-    const positive = [], negative = [];
-    if (momentum.puan > 0) positive.push('Momentum: ' + momentum.desc);
-    else if (momentum.puan < 0) negative.push('Momentum: ' + momentum.desc);
-    if (rsiSkor.puan > 0) positive.push(rsiSkor.desc);
-    else if (rsiSkor.puan < 0) negative.push(rsiSkor.desc);
-    if (hacim.puan > 0) positive.push('Hacim: ' + hacim.desc);
-    else if (hacim.puan < 0) negative.push('Hacim: ' + hacim.desc);
-    if (sr.puan > 0) positive.push('S/R: ' + sr.desc);
-    else if (sr.puan < 0) negative.push('S/R: ' + sr.desc);
+    // Pozitif ve negatif — her madde ayrı satır
+    const positive = [];
+    const negative = [];
+
+    if (momentum.puan > 0) {
+      momentum.desc.split('\n').forEach(d => d && positive.push('📈 ' + d));
+    } else if (momentum.puan < 0) {
+      momentum.desc.split('\n').forEach(d => d && negative.push('📉 ' + d));
+    }
+
+    if (rsiSkor.puan > 0) {
+      rsiSkor.desc.split('\n').forEach(d => d && positive.push('📊 ' + d));
+    } else if (rsiSkor.puan < 0) {
+      rsiSkor.desc.split('\n').forEach(d => d && negative.push('⚠️ ' + d));
+    }
+
+    if (hacim.puan > 0) {
+      hacim.desc.split('\n').forEach(d => d && positive.push('💧 ' + d));
+    } else if (hacim.puan < 0) {
+      hacim.desc.split('\n').forEach(d => d && negative.push('⚠️ ' + d));
+    }
+
+    if (sr.puan > 0) {
+      sr.desc.split('\n').forEach(d => d && positive.push('📍 ' + d));
+    } else if (sr.puan < 0) {
+      sr.desc.split('\n').forEach(d => d && negative.push('⚠️ ' + d));
+    }
 
     return {
       symbol: ticker.symbol, price,
