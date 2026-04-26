@@ -5,6 +5,7 @@ import Signals from './pages/Signals';
 import Positions from './pages/Positions';
 import Settings from './pages/Settings';
 import CodeEditor from './pages/CodeEditor';
+import Backtest from './pages/Backtest';
 import './App.css';
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -62,10 +63,11 @@ export default function App() {
   };
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'signals',   label: 'Sinyaller', icon: '🚨' },
+    { id: 'dashboard', label: 'Dashboard',   icon: '📊' },
+    { id: 'signals',   label: 'Sinyaller',   icon: '🚨' },
     { id: 'positions', label: 'Pozisyonlar', icon: '💼' },
-    { id: 'settings',  label: 'Ayarlar', icon: '⚙️' },
+    { id: 'backtest',  label: 'Backtest',    icon: '🔬' },
+    { id: 'settings',  label: 'Ayarlar',     icon: '⚙️' },
     { id: 'code',      label: 'Kod Editörü', icon: '💻' }
   ];
 
@@ -118,6 +120,7 @@ export default function App() {
         {page === 'dashboard'  && <Dashboard api={API} stats={stats} />}
         {page === 'signals'    && <Signals api={API} />}
         {page === 'positions'  && <Positions api={API} />}
+        {page === 'backtest'   && <Backtest api={API} />}
         {page === 'settings'   && <Settings api={API} />}
         {page === 'code'       && <CodeEditor api={API} />}
       </main>
