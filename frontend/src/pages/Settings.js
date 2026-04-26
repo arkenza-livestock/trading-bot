@@ -1,7 +1,56 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const TABS = ['Genel', 'İndikatör', 'Risk'];
+
+const F = ({ label, desc, children }) => (
+  <div style={{ marginBottom: 16 }}>
+    <label style={{ display: 'block', fontSize: 13, color: '#a0aec0', marginBottom: 6 }}>
+      {label} {desc && <span style={{ fontSize: 11, color: '#4a5568' }}>{desc}</span>}
+    </label>
+    {children}
+  </div>
+);
+
+const R2 = ({ children }) => (
+  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>{children}</div>
+);
+
+const S = ({ title, children }) => (
+  <div style={{ marginBottom: 28 }}>
+    <div style={{
+      fontSize: 12, fontWeight: 700, color: '#60a5fa', marginBottom: 14,
+      paddingBottom: 6, borderBottom: '1px solid #1e2736',
+      textTransform: 'uppercase', letterSpacing: 1
+    }}>{title}</div>
+    {children}
+  </div>
+);
+
+const NumInput = ({ label, desc, step = 1, placeholder, value, onChange }) => (
+  <F label={label} desc={desc}>
+    <input
+      className="form-input"
+      type="number"
+      step={step}
+      placeholder={placeholder}
+      value={value ?? ''}
+      onChange={e => onChange(e.target.value)}
+    />
+  </F>
+);
+
+const TextInput = ({ label, desc, type = 'text', placeholder, value, onChange }) => (
+  <F label={label} desc={desc}>
+    <input
+      className="form-input"
+      type={type}
+      placeholder={placeholder}
+      value={value ?? ''}
+      onChange={e => onChange(e.target.value)}
+    />
+  </F>
+);
 
 export default function Settings({ api }) {
   const [tab, setTab] = useState('Genel');
@@ -52,43 +101,6 @@ export default function Settings({ api }) {
 
   if (!settings) return <div style={{ padding: 40, color: '#718096' }}>Yükleniyor...</div>;
 
-  const F = ({ label, desc, children }) => (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: 'block', fontSize: 13, color: '#a0aec0', marginBottom: 6 }}>
-        {label} {desc && <span style={{ fontSize: 11, color: '#4a5568' }}>{desc}</span>}
-      </label>
-      {children}
-    </div>
-  );
-
-  const N = ({ k, label, desc, step = 1, placeholder }) => (
-    <F label={label} desc={desc}>
-      <input
-        className="form-input"
-        type="number"
-        step={step}
-        placeholder={placeholder}
-        value={settings[k] ?? ''}
-        onChange={e => update(k, e.target.value)}
-      />
-    </F>
-  );
-
-  const R2 = ({ children }) => (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>{children}</div>
-  );
-
-  const S = ({ title, children }) => (
-    <div style={{ marginBottom: 28 }}>
-      <div style={{
-        fontSize: 12, fontWeight: 700, color: '#60a5fa', marginBottom: 14,
-        paddingBottom: 6, borderBottom: '1px solid #1e2736',
-        textTransform: 'uppercase', letterSpacing: 1
-      }}>{title}</div>
-      {children}
-    </div>
-  );
-
   return (
     <div>
       <div className="page-header">
@@ -101,7 +113,6 @@ export default function Settings({ api }) {
         </button>
       </div>
 
-      {/* Sekmeler */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#0d1117', padding: 4, borderRadius: 10, border: '1px solid #1e2736' }}>
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
@@ -113,29 +124,14 @@ export default function Settings({ api }) {
         ))}
       </div>
 
-      {/* GENEL */}
       {tab === 'Genel' && (
         <div>
           <S title="🔑 Binance API">
             <R2>
-              <F label="API Key">
-                <input
-                  className="form-input"
-                  type="text"
-                  placeholder="API Key"
-                  value={settings.binance_api_key ?? ''}
-                  onChange={e => update('binance_api_key', e.target.value)}
-                />
-              </F>
-              <F label="API Secret">
-                <input
-                  className="form-input"
-                  type="password"
-                  placeholder="API Secret"
-                  value={settings.binance_api_secret ?? ''}
-                  onChange={e => update('binance_api_secret', e.target.value)}
-                />
-              </F>
+              <TextInput label="API Key" placeholder="API Key"
+                value={settings.binance_api_key} onChange={v => update('binance_api_key', v)} />
+              <TextInput label="API Secret" type="password" placeholder="API Secret"
+                value={settings.binance_api_secret} onChange={v => update('binance_api_secret', v)} />
             </R2>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={testBinance} disabled={testing}>
@@ -151,27 +147,14 @@ export default function Settings({ api }) {
 
           <S title="📱 Telegram Bildirimi">
             <R2>
-              <F label="Bot Token">
-                <input
-                  className="form-input"
-                  type="password"
-                  placeholder="1234567890:AAAA..."
-                  value={settings.telegram_token ?? ''}
-                  onChange={e => update('telegram_token', e.target.value)}
-                />
-              </F>
-              <F label="Chat ID">
-                <input
-                  className="form-input"
-                  type="text"
-                  placeholder="123456789"
-                  value={settings.telegram_chat_id ?? ''}
-                  onChange={e => update('telegram_chat_id', e.target.value)}
-                />
-              </F>
+              <TextInput label="Bot Token" type="password" placeholder="1234567890:AAAA..."
+                value={settings.telegram_token} onChange={v => update('telegram_token', v)} />
+              <TextInput label="Chat ID" placeholder="123456789"
+                value={settings.telegram_chat_id} onChange={v => update('telegram_chat_id', v)} />
             </R2>
             <R2>
-              <N k="telegram_min_score" label="Telegram Min Skor" desc="Bu skorun altı Telegram'a gitmez" placeholder="50" />
+              <NumInput label="Telegram Min Skor" desc="Bu skorun altı Telegram'a gitmez" placeholder="50"
+                value={settings.telegram_min_score} onChange={v => update('telegram_min_score', v)} />
             </R2>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
               <button className="btn btn-ghost" onClick={testTelegram}>
@@ -186,32 +169,25 @@ export default function Settings({ api }) {
           </S>
 
           <S title="🤖 Groq AI">
-            <F label="API Key" desc="(Opsiyonel)">
-              <input
-                className="form-input"
-                type="password"
-                placeholder="gsk_..."
-                value={settings.groq_api_key ?? ''}
-                onChange={e => update('groq_api_key', e.target.value)}
-              />
-            </F>
+            <TextInput label="API Key" desc="(Opsiyonel)" type="password" placeholder="gsk_..."
+              value={settings.groq_api_key} onChange={v => update('groq_api_key', v)} />
           </S>
 
           <S title="🔍 Coin Filtresi">
             <R2>
-              <N k="min_volume" label="Min Hacim (USDT)" placeholder="1000000" />
-              <N k="max_coins" label="Max Coin Sayısı" placeholder="50" />
+              <NumInput label="Min Hacim (USDT)" placeholder="1000000"
+                value={settings.min_volume} onChange={v => update('min_volume', v)} />
+              <NumInput label="Max Coin Sayısı" placeholder="50"
+                value={settings.max_coins} onChange={v => update('max_coins', v)} />
             </R2>
           </S>
 
           <S title="⏱️ Tarama">
             <R2>
               <F label="Mum Zaman Dilimi">
-                <select
-                  className="form-input"
+                <select className="form-input"
                   value={settings.candle_interval ?? '5m'}
-                  onChange={e => update('candle_interval', e.target.value)}
-                >
+                  onChange={e => update('candle_interval', e.target.value)}>
                   <option value="1m">1 Dakika</option>
                   <option value="3m">3 Dakika</option>
                   <option value="5m">5 Dakika</option>
@@ -220,7 +196,8 @@ export default function Settings({ api }) {
                   <option value="1h">1 Saat</option>
                 </select>
               </F>
-              <N k="candle_limit" label="Mum Sayısı" placeholder="50" />
+              <NumInput label="Mum Sayısı" placeholder="50"
+                value={settings.candle_limit} onChange={v => update('candle_limit', v)} />
             </R2>
           </S>
 
@@ -230,11 +207,9 @@ export default function Settings({ api }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <label className="toggle">
-                <input
-                  type="checkbox"
+                <input type="checkbox"
                   checked={settings.auto_trade_enabled === 'true'}
-                  onChange={e => update('auto_trade_enabled', e.target.checked ? 'true' : 'false')}
-                />
+                  onChange={e => update('auto_trade_enabled', e.target.checked ? 'true' : 'false')} />
                 <span className="toggle-slider" />
               </label>
               <span style={{ fontSize: 14, fontWeight: 600, color: settings.auto_trade_enabled === 'true' ? '#68d391' : '#718096' }}>
@@ -245,71 +220,81 @@ export default function Settings({ api }) {
         </div>
       )}
 
-      {/* İNDİKATÖR */}
       {tab === 'İndikatör' && (
         <div>
           <S title="📊 Sinyal">
             <R2>
-              <N k="min_score" label="Min Sinyal Skoru" desc="Web'de göster" placeholder="10" />
+              <NumInput label="Min Sinyal Skoru" desc="Web'de göster" placeholder="10"
+                value={settings.min_score} onChange={v => update('min_score', v)} />
             </R2>
           </S>
           <S title="📈 RSI">
             <R2>
-              <N k="rsi_period" label="RSI Periyot" placeholder="7" />
-              <N k="rsi_oversold" label="RSI Aşırı Satım" placeholder="50" />
+              <NumInput label="RSI Periyot" placeholder="7"
+                value={settings.rsi_period} onChange={v => update('rsi_period', v)} />
+              <NumInput label="RSI Aşırı Satım" placeholder="50"
+                value={settings.rsi_oversold} onChange={v => update('rsi_oversold', v)} />
             </R2>
             <R2>
-              <N k="rsi_overbought" label="RSI Aşırı Alım" placeholder="75" />
+              <NumInput label="RSI Aşırı Alım" placeholder="75"
+                value={settings.rsi_overbought} onChange={v => update('rsi_overbought', v)} />
             </R2>
           </S>
           <S title="📍 Destek/Direnç">
             <R2>
-              <N k="sr_lookback" label="Bakış Periyotu" placeholder="20" />
+              <NumInput label="Bakış Periyotu" placeholder="20"
+                value={settings.sr_lookback} onChange={v => update('sr_lookback', v)} />
             </R2>
           </S>
         </div>
       )}
 
-      {/* RİSK */}
       {tab === 'Risk' && (
         <div>
           <S title="💰 İşlem">
             <R2>
-              <N k="trade_amount_usdt" label="İşlem Başı Miktar (USDT)" placeholder="100" />
-              <N k="max_open_positions" label="Max Açık Pozisyon" placeholder="5" />
+              <NumInput label="İşlem Başı Miktar (USDT)" placeholder="100"
+                value={settings.trade_amount_usdt} onChange={v => update('trade_amount_usdt', v)} />
+              <NumInput label="Max Açık Pozisyon" placeholder="5"
+                value={settings.max_open_positions} onChange={v => update('max_open_positions', v)} />
             </R2>
           </S>
           <S title="🎯 Kar / Zarar">
             <R2>
-              <N k="stop_loss_percent" label="Stop Loss (%)" step={0.1} placeholder="0.75" />
-              <N k="trailing_stop_percent" label="Trailing Stop (%)" step={0.1} placeholder="0.5" />
+              <NumInput label="Stop Loss (%)" step={0.1} placeholder="0.75"
+                value={settings.stop_loss_percent} onChange={v => update('stop_loss_percent', v)} />
+              <NumInput label="Trailing Stop (%)" step={0.1} placeholder="0.5"
+                value={settings.trailing_stop_percent} onChange={v => update('trailing_stop_percent', v)} />
             </R2>
             <R2>
-              <N k="min_profit_percent" label="Min Kar (trailing için %)" step={0.1} placeholder="0.5" />
-              <N k="time_stop_minutes" label="Zaman Stop (dakika)" desc="0 = kapalı" placeholder="60" />
+              <NumInput label="Min Kar (trailing için %)" step={0.1} placeholder="0.5"
+                value={settings.min_profit_percent} onChange={v => update('min_profit_percent', v)} />
+              <NumInput label="Zaman Stop (dakika)" desc="0 = kapalı" placeholder="60"
+                value={settings.time_stop_minutes} onChange={v => update('time_stop_minutes', v)} />
             </R2>
           </S>
           <S title="⚖️ Günlük Limit">
             <R2>
-              <N k="max_daily_loss_percent" label="Max Günlük Zarar (%)" step={0.1} placeholder="5" />
-              <N k="max_daily_trades" label="Max Günlük İşlem" placeholder="20" />
+              <NumInput label="Max Günlük Zarar (%)" step={0.1} placeholder="5"
+                value={settings.max_daily_loss_percent} onChange={v => update('max_daily_loss_percent', v)} />
+              <NumInput label="Max Günlük İşlem" placeholder="20"
+                value={settings.max_daily_trades} onChange={v => update('max_daily_trades', v)} />
             </R2>
           </S>
           <S title="💸 Maliyet">
             <R2>
-              <N k="commission_rate" label="Komisyon (%)" step={0.01} placeholder="0.1" />
-              <N k="slippage_rate" label="Slippage (%)" step={0.01} placeholder="0.05" />
+              <NumInput label="Komisyon (%)" step={0.01} placeholder="0.1"
+                value={settings.commission_rate} onChange={v => update('commission_rate', v)} />
+              <NumInput label="Slippage (%)" step={0.01} placeholder="0.05"
+                value={settings.slippage_rate} onChange={v => update('slippage_rate', v)} />
             </R2>
           </S>
         </div>
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
-        <button
-          className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-          onClick={save}
-          style={{ padding: '12px 32px', fontSize: 15 }}
-        >
+        <button className={`btn ${saved ? 'btn-success' : 'btn-primary'}`} onClick={save}
+          style={{ padding: '12px 32px', fontSize: 15 }}>
           {saved ? '✓ Kaydedildi' : '💾 Ayarları Kaydet'}
         </button>
       </div>
