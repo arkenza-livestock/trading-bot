@@ -14,15 +14,16 @@ const COINS = [
 export default function Backtest({ api }) {
   const [params, setParams] = useState({
     symbol:        'TÜMÜ',
-    interval:      '15m',
-    days:          10,
-    stopLoss:      1.5,
+    interval:      '1h',
+    days:          30,
+    stopLoss:      2.0,
     trailingStop:  0.5,
-    minProfit:     1.0,
+    minProfit:     1.5,
     commission:    0.1,
     slippage:      0.05,
-    minScore:      35,
+    minScore:      50,
     tradeAmount:   100,
+    maxPositions:  3,
     rsiPeriod:     7,
     rsiOversold:   40,
     rsiOverbought: 70
@@ -30,7 +31,6 @@ export default function Backtest({ api }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0, symbol: '' });
 
   const update = (key, value) => setParams(prev => ({ ...prev, [key]: value }));
 
@@ -38,80 +38,11 @@ export default function Backtest({ api }) {
     setLoading(true);
     setError(null);
     setResult(null);
-
-    const symbols = params.symbol === 'TÜMÜ'
-      ? COINS.filter(c => c !== 'TÜMÜ')
-      : [params.symbol];
-
-    setProgress({ current: 0, total: symbols.length, symbol: '' });
-
     try {
-      if (symbols.length === 1) {
-        // Tek coin
-        const res = await axios.post(`${api}/api/backtest`, { ...params, symbol: symbols[0] });
-        setResult(res.data);
-      } else {
-        // Tüm coinler
-        const results = [];
-        for (let i = 0; i < symbols.length; i++) {
-          const symbol = symbols[i];
-          setProgress({ current: i + 1, total: symbols.length, symbol });
-          try {
-            const res = await axios.post(`${api}/api/backtest`, { ...params, symbol });
-            if (res.data.summary.totalTrades > 0) {
-              results.push({ symbol, ...res.data });
-            }
-          } catch (err) {
-            console.error(`${symbol} hata:`, err.message);
-          }
-        }
-        // Tüm sonuçları birleştir
-        const allTrades = results.flatMap(r => r.trades.map(t => ({ ...t, symbol: r.symbol })));
-        const closedTrades = allTrades.filter(t => t.reason !== 'OPEN');
-        const wins   = closedTrades.filter(t => t.netPnl > 0);
-        const losses = closedTrades.filter(t => t.netPnl <= 0);
-        const totalPnl  = allTrades.reduce((s, t) => s + t.netPnl, 0);
-        const winRate   = closedTrades.length > 0 ? (wins.length / closedTrades.length * 100) : 0;
-        const avgWin    = wins.length   > 0 ? wins.reduce((s,t)   => s + t.netPnlPct, 0) / wins.length   : 0;
-        const avgLoss   = losses.length > 0 ? losses.reduce((s,t) => s + t.netPnlPct, 0) / losses.length : 0;
-        const grossWin  = Math.abs(wins.reduce((s,t)   => s + t.netPnl, 0));
-        const grossLoss = Math.abs(losses.reduce((s,t) => s + t.netPnl, 0));
-        const bestTrade  = allTrades.reduce((b, t) => t.netPnlPct > (b?.netPnlPct || -999) ? t : b, null);
-        const worstTrade = allTrades.reduce((w, t) => t.netPnlPct < (w?.netPnlPct || 999)  ? t : w, null);
-
-        // Her coin özeti
-        const coinSummaries = results.map(r => ({
-          symbol:      r.symbol,
-          totalTrades: r.summary.totalTrades,
-          wins:        r.summary.wins,
-          losses:      r.summary.losses,
-          winRate:     r.summary.winRate,
-          totalPnl:    r.summary.totalPnl,
-          profitFactor: r.summary.profitFactor
-        })).sort((a, b) => b.totalPnl - a.totalPnl);
-
-        setResult({
-          isMulti: true,
-          params,
-          coinSummaries,
-          summary: {
-            totalCoins:   results.length,
-            totalTrades:  allTrades.length,
-            wins:         wins.length,
-            losses:       losses.length,
-            winRate:      parseFloat(winRate.toFixed(1)),
-            totalPnl:     parseFloat(totalPnl.toFixed(4)),
-            avgWin:       parseFloat(avgWin.toFixed(2)),
-            avgLoss:      parseFloat(avgLoss.toFixed(2)),
-            bestTrade:    bestTrade  ? parseFloat(bestTrade.netPnlPct.toFixed(2))  : 0,
-            worstTrade:   worstTrade ? parseFloat(worstTrade.netPnlPct.toFixed(2)) : 0,
-            profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 999
-          },
-          trades: allTrades.sort((a, b) => new Date(b.entryTime) - new Date(a.entryTime)).slice(0, 50)
-        });
-      }
+      const res = await axios.post(`${api}/api/backtest`, params, { timeout: 300000 });
+      setResult(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Backtest hatası');
+      setError(err.response?.data?.error || err.message || 'Backtest hatası');
     }
     setLoading(false);
   };
@@ -138,10 +69,10 @@ export default function Backtest({ api }) {
       <div className="page-header">
         <div>
           <div className="page-title">🔬 Backtest</div>
-          <div className="page-sub">Geçmiş verilerle strateji simülasyonu</div>
+          <div className="page-sub">Tüm coinler aynı zaman çizgisinde simüle edilir</div>
         </div>
         <button className="btn btn-primary" onClick={run} disabled={loading} style={{ padding: '10px 28px' }}>
-          {loading ? '⏳ Test ediliyor...' : '▶ Backtest Çalıştır'}
+          {loading ? '⏳ Simüle ediliyor...' : '▶ Backtest Çalıştır'}
         </button>
       </div>
 
@@ -163,10 +94,10 @@ export default function Backtest({ api }) {
             <label style={{ display: 'block', fontSize: 12, color: '#718096', marginBottom: 4 }}>Mum Aralığı</label>
             <select className="form-input" value={params.interval} onChange={e => update('interval', e.target.value)}
               style={{ padding: '8px 10px', fontSize: 13 }}>
-              <option value="5m">5 Dakika (~3.5 gün)</option>
               <option value="15m">15 Dakika (~10 gün)</option>
               <option value="30m">30 Dakika (~20 gün)</option>
               <option value="1h">1 Saat (~41 gün)</option>
+              <option value="4h">4 Saat (~166 gün)</option>
             </select>
           </div>
 
@@ -174,19 +105,20 @@ export default function Backtest({ api }) {
             <label style={{ display: 'block', fontSize: 12, color: '#718096', marginBottom: 4 }}>Test Süresi</label>
             <select className="form-input" value={params.days} onChange={e => update('days', parseInt(e.target.value))}
               style={{ padding: '8px 10px', fontSize: 13 }}>
-              <option value={3}>3 Gün</option>
               <option value={7}>7 Gün</option>
-              <option value={10}>10 Gün</option>
               <option value={14}>14 Gün</option>
               <option value={30}>30 Gün</option>
+              <option value={60}>60 Gün</option>
+              <option value={90}>90 Gün</option>
             </select>
           </div>
 
           <div style={{ fontSize: 11, color: '#60a5fa', fontWeight: 700, marginBottom: 10, marginTop: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Risk</div>
-          <N k="stopLoss"     label="Stop Loss (%)"             step={0.1} />
-          <N k="trailingStop" label="Trailing Stop (%)"          step={0.1} />
-          <N k="minProfit"    label="Min Kar (trailing için %)"  step={0.1} />
-          <N k="tradeAmount"  label="İşlem Miktarı (USDT)" />
+          <N k="stopLoss"      label="Stop Loss (%)"            step={0.1} />
+          <N k="trailingStop"  label="Trailing Stop (%)"         step={0.1} />
+          <N k="minProfit"     label="Min Kar (trailing için %)" step={0.1} />
+          <N k="tradeAmount"   label="İşlem Miktarı (USDT)" />
+          <N k="maxPositions"  label="Max Açık Pozisyon" />
 
           <div style={{ fontSize: 11, color: '#60a5fa', fontWeight: 700, marginBottom: 10, marginTop: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Sinyal</div>
           <N k="minScore"      label="Min Sinyal Skoru" />
@@ -200,8 +132,15 @@ export default function Backtest({ api }) {
 
           <button className="btn btn-primary" onClick={run} disabled={loading}
             style={{ width: '100%', marginTop: 16, padding: '12px', fontSize: 14 }}>
-            {loading ? '⏳ Test ediliyor...' : '▶ Backtest Çalıştır'}
+            {loading ? '⏳ Simüle ediliyor...' : '▶ Backtest Çalıştır'}
           </button>
+
+          {loading && (
+            <div style={{ marginTop: 12, fontSize: 12, color: '#718096', textAlign: 'center' }}>
+              Tüm coinler aynı anda simüle ediliyor...<br/>
+              Bu 1-2 dakika sürebilir
+            </div>
+          )}
         </div>
 
         {/* Sağ — Sonuçlar */}
@@ -213,25 +152,17 @@ export default function Backtest({ api }) {
           )}
 
           {loading && (
-            <div style={{ background: '#0d1a2d', border: '1px solid #1e3a5f', borderRadius: 8, padding: 40, textAlign: 'center' }}>
-              <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+            <div style={{ background: '#0d1a2d', border: '1px solid #1e3a5f', borderRadius: 8, padding: 60, textAlign: 'center' }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>⚙️</div>
               <div style={{ fontSize: 15, fontWeight: 600, color: '#60a5fa', marginBottom: 8 }}>
-                {progress.total > 1
-                  ? `${progress.current}/${progress.total} coin test ediliyor...`
-                  : 'Backtest çalışıyor...'}
+                Simülasyon çalışıyor...
               </div>
-              {progress.symbol && (
-                <div style={{ fontSize: 13, color: '#718096' }}>Şu an: {progress.symbol}</div>
-              )}
-              {progress.total > 1 && (
-                <div style={{ background: '#1a2744', borderRadius: 8, height: 8, marginTop: 16, overflow: 'hidden' }}>
-                  <div style={{
-                    background: '#60a5fa', height: '100%', borderRadius: 8,
-                    width: `${(progress.current / progress.total) * 100}%`,
-                    transition: 'width 0.3s'
-                  }} />
-                </div>
-              )}
+              <div style={{ fontSize: 12, color: '#718096' }}>
+                Tüm coinler aynı zaman çizgisinde test ediliyor
+              </div>
+              <div style={{ fontSize: 12, color: '#4a5568', marginTop: 8 }}>
+                Max pozisyon, zarar koruması ve BTC filtresi aktif
+              </div>
             </div>
           )}
 
@@ -240,7 +171,7 @@ export default function Backtest({ api }) {
               {/* Özet */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
                 <StatCard label="Toplam İşlem" value={result.summary.totalTrades}
-                  sub={result.isMulti ? `${result.summary.totalCoins} coin` : `${result.summary.wins}K / ${result.summary.losses}K`} />
+                  sub={`${result.summary.wins}K / ${result.summary.losses}K`} />
                 <StatCard label="Kazanma Oranı" value={`%${result.summary.winRate}`}
                   color={result.summary.winRate >= 50 ? '#68d391' : '#fc8181'} />
                 <StatCard label="Toplam PnL"
@@ -259,8 +190,21 @@ export default function Backtest({ api }) {
                 <StatCard label="En Kötü İşlem" value={`%${result.summary.worstTrade}`} color="#fc8181" />
               </div>
 
-              {/* Coin bazlı sonuçlar */}
-              {result.isMulti && result.coinSummaries && (
+              {/* Parametreler */}
+              <div className="card" style={{ marginBottom: 16, padding: '10px 16px' }}>
+                <div style={{ fontSize: 12, color: '#718096', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  <span>⏱️ <b style={{ color: '#e2e8f0' }}>{result.params.interval}</b></span>
+                  <span>📅 <b style={{ color: '#e2e8f0' }}>{result.params.days} gün</b></span>
+                  <span>🎯 Min Skor: <b style={{ color: '#e2e8f0' }}>{result.params.minScore}</b></span>
+                  <span>🛑 Stop: <b style={{ color: '#e2e8f0' }}>%{result.params.stopLoss}</b></span>
+                  <span>📈 Trailing: <b style={{ color: '#e2e8f0' }}>%{result.params.trailingStop}</b></span>
+                  <span>💰 Miktar: <b style={{ color: '#e2e8f0' }}>{result.params.tradeAmount} USDT</b></span>
+                  <span>📊 Max Pozisyon: <b style={{ color: '#e2e8f0' }}>{result.params.maxPositions}</b></span>
+                </div>
+              </div>
+
+              {/* Coin Özeti */}
+              {result.coinSummaries && result.coinSummaries.length > 0 && (
                 <div className="card" style={{ marginBottom: 20 }}>
                   <div className="card-title">📊 Coin Bazlı Sonuçlar</div>
                   <div style={{ overflowX: 'auto' }}>
@@ -270,7 +214,6 @@ export default function Backtest({ api }) {
                           <th style={{ padding: '8px 12px', textAlign: 'left',   fontSize: 12, color: '#718096' }}>Coin</th>
                           <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12, color: '#718096' }}>İşlem</th>
                           <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12, color: '#718096' }}>Kazanma %</th>
-                          <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12, color: '#718096' }}>PF</th>
                           <th style={{ padding: '8px 12px', textAlign: 'right',  fontSize: 12, color: '#718096' }}>PnL</th>
                         </tr>
                       </thead>
@@ -284,10 +227,6 @@ export default function Backtest({ api }) {
                             <td style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 600,
                               color: c.winRate >= 50 ? '#68d391' : '#fc8181' }}>
                               %{c.winRate}
-                            </td>
-                            <td style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12,
-                              color: c.profitFactor >= 1 ? '#68d391' : '#fc8181' }}>
-                              {c.profitFactor === 999 ? '∞' : c.profitFactor}
                             </td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700,
                               color: c.totalPnl >= 0 ? '#68d391' : '#fc8181' }}>
@@ -308,7 +247,7 @@ export default function Backtest({ api }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #1e2736' }}>
-                        {result.isMulti && <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, color: '#718096' }}>Coin</th>}
+                        <th style={{ padding: '8px 12px', textAlign: 'left',   fontSize: 12, color: '#718096' }}>Coin</th>
                         <th style={{ padding: '8px 12px', textAlign: 'left',   fontSize: 12, color: '#718096' }}>Giriş</th>
                         <th style={{ padding: '8px 12px', textAlign: 'left',   fontSize: 12, color: '#718096' }}>Çıkış</th>
                         <th style={{ padding: '8px 12px', textAlign: 'right',  fontSize: 12, color: '#718096' }}>Giriş $</th>
@@ -322,8 +261,9 @@ export default function Backtest({ api }) {
                     </thead>
                     <tbody>
                       {result.trades.map((t, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #0d1117', background: t.netPnl >= 0 ? 'rgba(13,40,24,0.3)' : 'rgba(45,17,17,0.3)' }}>
-                          {result.isMulti && <td style={{ padding: '8px 12px', fontWeight: 600, color: '#60a5fa', fontSize: 12 }}>{t.symbol}</td>}
+                        <tr key={i} style={{ borderBottom: '1px solid #0d1117',
+                          background: t.netPnl >= 0 ? 'rgba(13,40,24,0.3)' : 'rgba(45,17,17,0.3)' }}>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: '#60a5fa', fontSize: 12 }}>{t.symbol}</td>
                           <td style={{ padding: '8px 12px', fontSize: 11, color: '#a0aec0' }}>{trSaat(t.entryTime)}</td>
                           <td style={{ padding: '8px 12px', fontSize: 11, color: '#a0aec0' }}>{trSaat(t.exitTime)}</td>
                           <td style={{ padding: '8px 12px', fontSize: 12, color: '#e2e8f0', textAlign: 'right' }}>{parseFloat(t.entryPrice).toFixed(4)}</td>
@@ -357,9 +297,12 @@ export default function Backtest({ api }) {
             <div style={{ background: '#0d1a2d', border: '1px solid #1e3a5f', borderRadius: 8, padding: 60, textAlign: 'center', color: '#718096' }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>🔬</div>
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: '#a0aec0' }}>Backtest Hazır</div>
-              <div style={{ fontSize: 13 }}>Sol taraftan parametreleri ayarla ve çalıştır</div>
-              <div style={{ fontSize: 12, color: '#4a5568', marginTop: 8 }}>
-                "Tüm Coinler" seçeneği 19 coini sırayla test eder
+              <div style={{ fontSize: 13, marginBottom: 8 }}>Parametreleri ayarla ve çalıştır</div>
+              <div style={{ fontSize: 12, color: '#4a5568' }}>
+                ✅ Tüm coinler aynı zaman çizgisinde<br/>
+                ✅ Max {params.maxPositions} pozisyon aynı anda<br/>
+                ✅ Zararlı pozisyon varsa yeni alım yok<br/>
+                ✅ BTC ani düşüş koruması aktif
               </div>
             </div>
           )}
