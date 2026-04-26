@@ -37,26 +37,19 @@ class BacktestEngine {
 
     console.log(`Backtest: ${symbol} | ${interval} | ${days} gün | ${limit} mum`);
 
-    // Ana mum verisi
     let allCandles;
     try {
       allCandles = await binance.getKlines(symbol, interval, limit);
-    } catch (err) {
-      throw new Error(`Veri çekilemedi: ${err.message}`);
-    }
+    } catch (err) { throw new Error(`Veri çekilemedi: ${err.message}`); }
     if (!allCandles || allCandles.length < 50) throw new Error('Yetersiz veri');
 
-    // 1H mum verisi
     let all1HCandles;
-    try {
-      all1HCandles = await binance.getKlines(symbol, '1h', 500);
-    } catch (err) { all1HCandles = []; }
+    try { all1HCandles = await binance.getKlines(symbol, '1h', 500); }
+    catch (err) { all1HCandles = []; }
 
-    // 4H mum verisi
     let all4HCandles;
-    try {
-      all4HCandles = await binance.getKlines(symbol, '4h', 300);
-    } catch (err) { all4HCandles = []; }
+    try { all4HCandles = await binance.getKlines(symbol, '4h', 300); }
+    catch (err) { all4HCandles = []; }
 
     console.log(`Ana:${allCandles.length} | 1H:${all1HCandles.length} | 4H:${all4HCandles.length}`);
 
@@ -70,11 +63,9 @@ class BacktestEngine {
       const price      = parseFloat(allCandles[i][4]);
       const candleTime = parseInt(allCandles[i][0]);
 
-      // Bu ana karşılık gelen 1H ve 4H mumları
       const candles1H = all1HCandles.filter(c => parseInt(c[0]) <= candleTime);
       const candles4H = all4HCandles.filter(c => parseInt(c[0]) <= candleTime);
 
-      // Açık pozisyon varsa kontrol et
       if (openPosition) {
         if (price > highestPrice) highestPrice = price;
 
@@ -109,7 +100,6 @@ class BacktestEngine {
         continue;
       }
 
-      // Sinyal ara
       const ticker   = { symbol, priceChangePercent: '0', quoteVolume: '999999999' };
       const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
       if (!analysis || analysis.signal !== 'ALIM') continue;
@@ -117,27 +107,31 @@ class BacktestEngine {
       // 4H trend — ana filtre
       const trend4H = TechnicalAnalysis.analyze4H(candles4H);
 
-      // 4H ASAGI veya HAFIF_ASAGI → alım yok
-      if (trend4H.trend === 'ASAGI' || trend4H.trend === 'HAFIF_ASAGI') continue;
+      // 4H ASAGI, HAFIF_ASAGI veya BELIRSIZ → kesinlikle alım yok
+      if (['ASAGI', 'HAFIF_ASAGI', 'BELIRSIZ'].includes(trend4H.trend)) {
+        continue;
+      }
 
-      // 4H YATAY → yüksek skor gerek
+      // 4H YATAY → sadece yüksek skor
       if (trend4H.trend === 'YATAY' && analysis.score < 65) continue;
 
       // 1H trend — ikinci filtre
       const trend1H = TechnicalAnalysis.analyze1H(candles1H);
 
-      // 1H ASAGI → alım yok
-      if (trend1H.trend === 'ASAGI') continue;
+      // 1H ASAGI veya BELIRSIZ → alım yok
+      if (['ASAGI', 'BELIRSIZ'].includes(trend1H.trend)) {
+        continue;
+      }
 
-      // 1H HAFIF_ASAGI → çok yüksek skor gerek
+      // 1H HAFIF_ASAGI → çok yüksek skor
       if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) continue;
 
-      // 1H YATAY → yüksek skor gerek
+      // 1H YATAY → yüksek skor
       if (trend1H.trend === 'YATAY' && analysis.score < 55) continue;
 
       // Skor bonusu
       let finalScore = analysis.score;
-      if      (trend4H.trend === 'YUKARI' && trend1H.trend === 'YUKARI') {
+      if (trend4H.trend === 'YUKARI' && trend1H.trend === 'YUKARI') {
         finalScore = Math.min(100, finalScore + (trend4H.guclu && trend1H.guclu ? 25 : 15));
       } else if (trend4H.trend === 'YUKARI') {
         finalScore = Math.min(100, finalScore + 10);
@@ -201,7 +195,6 @@ class BacktestEngine {
       });
     }
 
-    // İstatistikler
     const closedTrades = trades.filter(t => t.reason !== 'OPEN');
     const wins         = closedTrades.filter(t => t.netPnl > 0);
     const losses       = closedTrades.filter(t => t.netPnl <= 0);
