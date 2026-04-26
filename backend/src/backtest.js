@@ -6,21 +6,21 @@ class BacktestEngine {
   async run(params = {}) {
     const {
       symbol        = 'BTCUSDT',
-      interval      = '5m',
-      days          = 7,
-      stopLoss      = 0.75,
+      interval      = '1h',
+      days          = 30,
+      stopLoss      = 2.0,
       trailingStop  = 0.5,
-      minProfit     = 0.5,
+      minProfit     = 1.5,
       commission    = 0.1,
       slippage      = 0.05,
-      minScore      = 35,
+      minScore      = 50,
       tradeAmount   = 100,
       rsiPeriod     = 7,
       rsiOversold   = 40,
       rsiOverbought = 70,
       srLookback    = 20,
       maxPositions  = 3,
-      symbols       = null  // null = tek coin, array = multi coin
+      symbols       = null
     } = params;
 
     const binance  = new BinanceService('', '');
@@ -36,68 +36,92 @@ class BacktestEngine {
     const intervalMinutes = this.getIntervalMinutes(interval);
     const totalCandles    = Math.ceil((days * 24 * 60) / intervalMinutes) + 100;
     const limit           = Math.min(totalCandles, 1000);
-    const coinList        = symbols || [symbol];
+    const coinList        = symbols && symbols.length > 0 ? symbols : [symbol];
     const isMulti         = coinList.length > 1;
 
-    console.log(`Backtest: ${coinList.length} coin | ${interval} | ${days} gün | ${limit} mum`);
+    console.log(`Backtest: ${coinList.length} coin | ${interval} | ${days} gün | limit:${limit}`);
 
     // Tüm coinlerin verilerini çek
     const coinData = {};
     for (const sym of coinList) {
       try {
-        const [main, h1, h4] = await Promise.all([
-          binance.getKlines(sym, interval, limit),
-          binance.getKlines(sym, '1h', 500),
-          binance.getKlines(sym, '4h', 300)
-        ]);
-        coinData[sym] = { main, h1, h4 };
-        await new Promise(r => setTimeout(r, 100));
+        const main = await binance.getKlines(sym, interval, limit);
+        await new Promise(r => setTimeout(r, 80));
+        const h1 = await binance.getKlines(sym, '1h', 500);
+        await new Promise(r => setTimeout(r, 80));
+        const h4 = await binance.getKlines(sym, '4h', 300);
+        await new Promise(r => setTimeout(r, 80));
+        if (main && main.length >= 50) {
+          coinData[sym] = { main, h1: h1 || [], h4: h4 || [] };
+          console.log(`✅ ${sym}: ${main.length} mum`);
+        } else {
+          console.log(`⚠️ ${sym}: yetersiz veri (${main?.length || 0})`);
+        }
       } catch (err) {
         console.error(`${sym} veri hatası:`, err.message);
       }
     }
 
+    const availableCoins = Object.keys(coinData);
+    if (availableCoins.length === 0) throw new Error('Hiçbir coin için veri çekilemedi');
+
     // BTC verisi
     let btcMain = [], btcH1 = [], btcH4 = [];
-    if (!coinList.includes('BTCUSDT')) {
-      try {
-        [btcMain, btcH1, btcH4] = await Promise.all([
-          binance.getKlines('BTCUSDT', interval, limit),
-          binance.getKlines('BTCUSDT', '1h', 500),
-          binance.getKlines('BTCUSDT', '4h', 300)
-        ]);
-      } catch (err) {}
+    if (coinData['BTCUSDT']) {
+      btcMain = coinData['BTCUSDT'].main;
+      btcH1   = coinData['BTCUSDT'].h1;
+      btcH4   = coinData['BTCUSDT'].h4;
     } else {
-      btcMain = coinData['BTCUSDT']?.main || [];
-      btcH1   = coinData['BTCUSDT']?.h1   || [];
-      btcH4   = coinData['BTCUSDT']?.h4   || [];
+      try {
+        btcMain = await binance.getKlines('BTCUSDT', interval, limit);
+        await new Promise(r => setTimeout(r, 80));
+        btcH1 = await binance.getKlines('BTCUSDT', '1h', 500);
+        await new Promise(r => setTimeout(r, 80));
+        btcH4 = await binance.getKlines('BTCUSDT', '4h', 300);
+      } catch (err) {
+        console.error('BTC veri hatası:', err.message);
+      }
     }
 
-    console.log(`Veriler hazır. BTC: ${btcMain.length} mum`);
+    console.log(`Mevcut coinler: ${availableCoins.join(', ')}`);
+    console.log(`BTC ana mum: ${btcMain.length}`);
 
-    // Referans zaman çizgisi — en çok mumu olan coinin zamanları
-    const refSymbol  = coinList[0];
-    const refCandles = coinData[refSymbol]?.main || [];
-    if (refCandles.length < 50) throw new Error('Yetersiz veri');
+    // Referans zaman çizgisi — BTC veya ilk coin
+    const refData = btcMain.length >= 50 ? btcMain : coinData[availableCoins[0]].main;
+    if (refData.length < 50) throw new Error('Yetersiz referans veri');
+
+    // Zaman damgalarını index'e çevir — hızlı erişim için
+    const coinIndex = {};
+    for (const sym of availableCoins) {
+      coinIndex[sym] = {};
+      for (const c of coinData[sym].main) {
+        coinIndex[sym][parseInt(c[0])] = c;
+      }
+    }
+
+    const btcIndex = {};
+    for (const c of btcMain) btcIndex[parseInt(c[0])] = c;
 
     const totalCost     = (commission + slippage) / 100 * 2;
     const trades        = [];
-    const openPositions = {}; // symbol → position
-    const highestPrices = {}; // symbol → highest price
+    const openPositions = {};
+    const highestPrices = {};
 
-    // Her zaman adımında tüm coinleri kontrol et
-    for (let i = 50; i < refCandles.length; i++) {
-      const candleTime = parseInt(refCandles[i][0]);
+    // BTC trend cache — her seferinde hesaplamamak için
+    let cachedBtcTrend4H = { trend: 'BELIRSIZ' };
+    let cachedBtcTrend1H = { trend: 'BELIRSIZ' };
+    let lastBtcTrendTime  = 0;
 
-      // ── Açık pozisyonları güncelle ve kontrol et ──────────
+    for (let i = 50; i < refData.length; i++) {
+      const candleTime = parseInt(refData[i][0]);
+
+      // ── Açık pozisyonları kontrol et ──────────────────────
       for (const sym of Object.keys(openPositions)) {
-        const pos      = openPositions[sym];
-        const symData  = coinData[sym]?.main || [];
-        const symCandle = symData.find(c => parseInt(c[0]) === candleTime);
+        const pos       = openPositions[sym];
+        const symCandle = coinIndex[sym]?.[candleTime];
         if (!symCandle) continue;
 
         const posPrice = parseFloat(symCandle[4]);
-
         if (posPrice > (highestPrices[sym] || pos.entryPrice)) {
           highestPrices[sym] = posPrice;
         }
@@ -105,8 +129,7 @@ class BacktestEngine {
         const trailingStopPrice = (highestPrices[sym] || pos.entryPrice) * (1 - trailingStop / 100);
         const brutoPnlPct       = ((posPrice - pos.entryPrice) / pos.entryPrice) * 100;
         const netPnlPct         = brutoPnlPct - (totalCost * 100);
-
-        pos.currentPnlPct = netPnlPct;
+        pos.currentPnlPct       = netPnlPct;
 
         let closeReason = null;
         if (netPnlPct <= -stopLoss)                                          closeReason = 'STOP_LOSS';
@@ -116,19 +139,12 @@ class BacktestEngine {
           const netPnl = (posPrice - pos.entryPrice) * pos.quantity
                        - (pos.entryPrice * pos.quantity * totalCost);
           trades.push({
-            symbol:     sym,
-            entryTime:  pos.entryTime,
-            exitTime:   new Date(candleTime),
-            entryPrice: pos.entryPrice,
-            exitPrice:  posPrice,
-            quantity:   pos.quantity,
-            reason:     closeReason,
-            netPnl:     parseFloat(netPnl.toFixed(4)),
-            netPnlPct:  parseFloat(netPnlPct.toFixed(2)),
-            score:      pos.score,
-            trend1H:    pos.trend1H,
-            trend4H:    pos.trend4H,
-            btcTrend:   pos.btcTrend
+            symbol: sym, entryTime: pos.entryTime, exitTime: new Date(candleTime),
+            entryPrice: pos.entryPrice, exitPrice: posPrice, quantity: pos.quantity,
+            reason: closeReason,
+            netPnl: parseFloat(netPnl.toFixed(4)),
+            netPnlPct: parseFloat(netPnlPct.toFixed(2)),
+            score: pos.score, trend1H: pos.trend1H, trend4H: pos.trend4H, btcTrend: pos.btcTrend
           });
           delete openPositions[sym];
           delete highestPrices[sym];
@@ -140,31 +156,35 @@ class BacktestEngine {
       // 1 — Max pozisyon
       if (Object.keys(openPositions).length >= maxPositions) continue;
 
-      // 2 — Zararlı pozisyon varsa yeni alım yapma
+      // 2 — Zararlı pozisyon
       const zararliVar = Object.values(openPositions).some(p => (p.currentPnlPct || 0) < -0.5);
       if (zararliVar) continue;
 
       // 3 — BTC ani düşüş
+      const btcCandle = btcIndex[candleTime];
       if (btcMain.length >= 4) {
-        const btcIdx  = btcMain.filter(c => parseInt(c[0]) <= candleTime);
-        if (btcIdx.length >= 4) {
-          const btcNow  = parseFloat(btcIdx[btcIdx.length-1][4]);
-          const btc3ago = parseFloat(btcIdx[btcIdx.length-4][4]);
+        const btcSlice = btcMain.filter(c => parseInt(c[0]) <= candleTime);
+        if (btcSlice.length >= 4) {
+          const btcNow  = parseFloat(btcSlice[btcSlice.length-1][4]);
+          const btc3ago = parseFloat(btcSlice[btcSlice.length-4][4]);
           const btcDrop = ((btcNow - btc3ago) / btc3ago) * 100;
           if (btcDrop < -1.0) continue;
         }
       }
 
-      // 4 — BTC trend
-      const btcH1Filtered = btcH1.filter(c => parseInt(c[0]) <= candleTime);
-      const btcH4Filtered = btcH4.filter(c => parseInt(c[0]) <= candleTime);
-      const btcTrend1H = coinList.includes('BTCUSDT') && !isMulti
-        ? { trend: 'YUKARI' }
-        : TechnicalAnalysis.analyze1H(btcH1Filtered);
-      const btcTrend4H = coinList.includes('BTCUSDT') && !isMulti
-        ? { trend: 'YUKARI' }
-        : TechnicalAnalysis.analyze4H(btcH4Filtered);
+      // 4 — BTC trend (4 saatte bir güncelle)
+      if (candleTime - lastBtcTrendTime > 4 * 60 * 60 * 1000) {
+        const btcH1Filtered = btcH1.filter(c => parseInt(c[0]) <= candleTime);
+        const btcH4Filtered = btcH4.filter(c => parseInt(c[0]) <= candleTime);
+        if (btcH1Filtered.length >= 50) cachedBtcTrend1H = TechnicalAnalysis.analyze1H(btcH1Filtered);
+        if (btcH4Filtered.length >= 50) cachedBtcTrend4H = TechnicalAnalysis.analyze4H(btcH4Filtered);
+        lastBtcTrendTime = candleTime;
+      }
 
+      const btcTrend1H = cachedBtcTrend1H;
+      const btcTrend4H = cachedBtcTrend4H;
+
+      // 5 — BTC güçlü düşüş
       if (btcTrend4H.trend === 'ASAGI' && btcTrend1H.trend === 'ASAGI') continue;
 
       const btcMinScore = btcTrend4H.trend === 'ASAGI'       ? 75
@@ -174,17 +194,11 @@ class BacktestEngine {
         : 0;
 
       // ── Her coin için sinyal ara ───────────────────────────
-      for (const sym of coinList) {
-        // Zaten açık pozisyon varsa atla
+      for (const sym of availableCoins) {
         if (openPositions[sym]) continue;
 
-        const symData = coinData[sym];
-        if (!symData) continue;
-
-        const symMain = symData.main.filter(c => parseInt(c[0]) <= candleTime);
-        const symH1   = symData.h1.filter(c => parseInt(c[0]) <= candleTime);
-        const symH4   = symData.h4.filter(c => parseInt(c[0]) <= candleTime);
-
+        const symData   = coinData[sym];
+        const symMain   = symData.main.filter(c => parseInt(c[0]) <= candleTime);
         if (symMain.length < 50) continue;
 
         const price  = parseFloat(symMain[symMain.length-1][4]);
@@ -192,15 +206,16 @@ class BacktestEngine {
 
         const analysis = TechnicalAnalysis.analyze(symMain, ticker, settings);
         if (!analysis || analysis.signal !== 'ALIM') continue;
-
         if (btcMinScore > 0 && analysis.score < btcMinScore) continue;
 
         // 4H filtresi
+        const symH4 = symData.h4.filter(c => parseInt(c[0]) <= candleTime);
         const trend4H = TechnicalAnalysis.analyze4H(symH4);
         if (['ASAGI', 'HAFIF_ASAGI', 'BELIRSIZ'].includes(trend4H.trend)) continue;
         if (trend4H.trend === 'YATAY' && analysis.score < 65) continue;
 
         // 1H filtresi
+        const symH1 = symData.h1.filter(c => parseInt(c[0]) <= candleTime);
         const trend1H = TechnicalAnalysis.analyze1H(symH1);
         if (['ASAGI', 'BELIRSIZ'].includes(trend1H.trend)) continue;
         if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) continue;
@@ -241,19 +256,16 @@ class BacktestEngine {
         const quantity    = finalAmount / price;
 
         openPositions[sym] = {
-          entryTime:     new Date(candleTime),
-          entryPrice:    price,
-          quantity,
-          score:         finalScore,
-          trend1H:       trend1H.trend,
-          trend4H:       trend4H.trend,
-          btcTrend:      btcTrend4H.trend,
-          amount:        finalAmount,
-          currentPnlPct: 0
+          entryTime: new Date(candleTime), entryPrice: price,
+          quantity, score: finalScore,
+          trend1H: trend1H.trend, trend4H: trend4H.trend,
+          btcTrend: btcTrend4H.trend,
+          amount: finalAmount, currentPnlPct: 0
         };
         highestPrices[sym] = price;
 
-        // Max pozisyon doldu mu?
+        console.log(`📈 ALIM: ${sym} @ ${price} | Skor:${finalScore} | 4H:${trend4H.trend} | 1H:${trend1H.trend}`);
+
         if (Object.keys(openPositions).length >= maxPositions) break;
       }
     }
@@ -261,27 +273,18 @@ class BacktestEngine {
     // Açık pozisyonları kapat
     for (const sym of Object.keys(openPositions)) {
       const pos      = openPositions[sym];
-      const symData  = coinData[sym]?.main || [];
-      const lastPrice = symData.length > 0
-        ? parseFloat(symData[symData.length-1][4])
-        : pos.entryPrice;
-      const netPnl    = (lastPrice - pos.entryPrice) * pos.quantity
-                      - (pos.entryPrice * pos.quantity * totalCost);
+      const symMain  = coinData[sym]?.main || [];
+      const lastPrice = symMain.length > 0 ? parseFloat(symMain[symMain.length-1][4]) : pos.entryPrice;
+      const netPnl    = (lastPrice - pos.entryPrice) * pos.quantity - (pos.entryPrice * pos.quantity * totalCost);
       const netPnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice * 100) - (totalCost * 100);
       trades.push({
-        symbol:     sym,
-        entryTime:  pos.entryTime,
-        exitTime:   new Date(parseInt(refCandles[refCandles.length-1][0])),
-        entryPrice: pos.entryPrice,
-        exitPrice:  lastPrice,
-        quantity:   pos.quantity,
-        reason:     'OPEN',
-        netPnl:     parseFloat(netPnl.toFixed(4)),
-        netPnlPct:  parseFloat(netPnlPct.toFixed(2)),
-        score:      pos.score,
-        trend1H:    pos.trend1H,
-        trend4H:    pos.trend4H,
-        btcTrend:   pos.btcTrend
+        symbol: sym, entryTime: pos.entryTime,
+        exitTime: new Date(parseInt(refData[refData.length-1][0])),
+        entryPrice: pos.entryPrice, exitPrice: lastPrice,
+        quantity: pos.quantity, reason: 'OPEN',
+        netPnl: parseFloat(netPnl.toFixed(4)),
+        netPnlPct: parseFloat(netPnlPct.toFixed(2)),
+        score: pos.score, trend1H: pos.trend1H, trend4H: pos.trend4H, btcTrend: pos.btcTrend
       });
     }
 
@@ -293,58 +296,54 @@ class BacktestEngine {
     const winRate      = closedTrades.length > 0 ? (wins.length / closedTrades.length * 100) : 0;
     const bestTrade    = trades.reduce((b, t) => t.netPnlPct > (b?.netPnlPct || -999) ? t : b, null);
     const worstTrade   = trades.reduce((w, t) => t.netPnlPct < (w?.netPnlPct || 999)  ? t : w, null);
-    const avgWin       = wins.length   > 0 ? wins.reduce((s,t)   => s + t.netPnlPct, 0) / wins.length   : 0;
+    const avgWin       = wins.length   > 0 ? wins.reduce((s,t) => s + t.netPnlPct, 0) / wins.length : 0;
     const avgLoss      = losses.length > 0 ? losses.reduce((s,t) => s + t.netPnlPct, 0) / losses.length : 0;
-    const grossWin     = Math.abs(wins.reduce((s,t)   => s + t.netPnl, 0));
+    const grossWin     = Math.abs(wins.reduce((s,t) => s + t.netPnl, 0));
     const grossLoss    = Math.abs(losses.reduce((s,t) => s + t.netPnl, 0));
 
     // Coin bazlı özet
-    const coinSummaries = {};
+    const coinSummaryMap = {};
     for (const t of trades) {
-      if (!coinSummaries[t.symbol]) {
-        coinSummaries[t.symbol] = { symbol: t.symbol, totalTrades: 0, wins: 0, losses: 0, totalPnl: 0 };
+      if (!coinSummaryMap[t.symbol]) {
+        coinSummaryMap[t.symbol] = { symbol: t.symbol, totalTrades: 0, wins: 0, losses: 0, totalPnl: 0 };
       }
-      coinSummaries[t.symbol].totalTrades++;
+      coinSummaryMap[t.symbol].totalTrades++;
       if (t.reason !== 'OPEN') {
-        if (t.netPnl > 0) coinSummaries[t.symbol].wins++;
-        else coinSummaries[t.symbol].losses++;
+        if (t.netPnl > 0) coinSummaryMap[t.symbol].wins++;
+        else coinSummaryMap[t.symbol].losses++;
       }
-      coinSummaries[t.symbol].totalPnl += t.netPnl;
+      coinSummaryMap[t.symbol].totalPnl += t.netPnl;
     }
 
-    const coinSummaryList = Object.values(coinSummaries)
-      .map(c => ({
-        ...c,
-        totalPnl:     parseFloat(c.totalPnl.toFixed(4)),
-        winRate:      c.wins + c.losses > 0 ? parseFloat((c.wins / (c.wins + c.losses) * 100).toFixed(1)) : 0,
-        profitFactor: 999
-      }))
-      .sort((a, b) => b.totalPnl - a.totalPnl);
+    const coinSummaries = Object.values(coinSummaryMap).map(c => ({
+      ...c,
+      totalPnl: parseFloat(c.totalPnl.toFixed(4)),
+      winRate: c.wins + c.losses > 0 ? parseFloat((c.wins / (c.wins + c.losses) * 100).toFixed(1)) : 0
+    })).sort((a, b) => b.totalPnl - a.totalPnl);
 
     return {
-      params:        { symbol: coinList.join(','), interval, days, stopLoss, trailingStop, minScore, tradeAmount, maxPositions },
+      params: { symbol: coinList.join(','), interval, days, stopLoss, trailingStop, minScore, tradeAmount, maxPositions },
+      isMulti,
       summary: {
-        totalCoins:   coinList.length,
-        totalTrades:  trades.length,
-        wins:         wins.length,
-        losses:       losses.length,
-        winRate:      parseFloat(winRate.toFixed(1)),
-        totalPnl:     parseFloat(totalPnl.toFixed(4)),
-        avgWin:       parseFloat(avgWin.toFixed(2)),
-        avgLoss:      parseFloat(avgLoss.toFixed(2)),
-        bestTrade:    bestTrade  ? parseFloat(bestTrade.netPnlPct.toFixed(2))  : 0,
-        worstTrade:   worstTrade ? parseFloat(worstTrade.netPnlPct.toFixed(2)) : 0,
+        totalCoins: availableCoins.length,
+        totalTrades: trades.length,
+        wins: wins.length, losses: losses.length,
+        winRate: parseFloat(winRate.toFixed(1)),
+        totalPnl: parseFloat(totalPnl.toFixed(4)),
+        avgWin: parseFloat(avgWin.toFixed(2)),
+        avgLoss: parseFloat(avgLoss.toFixed(2)),
+        bestTrade:  bestTrade  ? parseFloat(bestTrade.netPnlPct.toFixed(2))  : 0,
+        worstTrade: worstTrade ? parseFloat(worstTrade.netPnlPct.toFixed(2)) : 0,
         profitFactor: grossLoss > 0 ? parseFloat((grossWin / grossLoss).toFixed(2)) : 999
       },
-      coinSummaries: coinSummaryList,
-      isMulti:       isMulti,
-      trades:        trades.sort((a,b) => new Date(b.entryTime) - new Date(a.entryTime)).slice(0, 50)
+      coinSummaries,
+      trades: trades.sort((a,b) => new Date(b.entryTime) - new Date(a.entryTime)).slice(0, 50)
     };
   }
 
   getIntervalMinutes(interval) {
-    const map = { '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 };
-    return map[interval] || 5;
+    const map = { '1m':1,'3m':3,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440 };
+    return map[interval] || 60;
   }
 }
 
