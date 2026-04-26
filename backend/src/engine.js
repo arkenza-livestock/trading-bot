@@ -17,6 +17,7 @@ class TradingEngine {
     this.tickers = {};
     this.lastSignalTime = {};
     this.closedCandles = new Set();
+    this.btcTrend = { trend1H: 'BELIRSIZ', trend4H: 'BELIRSIZ', lastUpdate: 0 };
   }
 
   getSettings() {
@@ -48,7 +49,7 @@ class TradingEngine {
       analysis.symbol, analysis.signal, analysis.score, analysis.risk, analysis.price,
       analysis.rsi, analysis.momentum || 0, `${analysis.trend1H}|${analysis.trend4H}`,
       JSON.stringify(analysis.positive), JSON.stringify(analysis.negative),
-      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H} | 4H:${analysis.trend4H}`
+      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H} | 4H:${analysis.trend4H} | BTC:${this.btcTrend.trend4H}`
     );
     return result.lastInsertRowid;
   }
@@ -60,6 +61,7 @@ class TradingEngine {
     const trend4H    = analysis.trend4H || 'BELIRSIZ';
     const guclu1H    = analysis.guclu1H || false;
     const guclu4H    = analysis.guclu4H || false;
+    const btc4H      = this.btcTrend.trend4H;
 
     let multiplier = 1.0;
 
@@ -70,20 +72,24 @@ class TradingEngine {
     else if (score >= 35) multiplier = 0.75;
     else                  multiplier = 0.5;
 
-    // 1H + 4H her ikisi de YUKARI ise maksimum
-    if (trend1H === 'YUKARI' && trend4H === 'YUKARI') {
-      multiplier *= guclu1H && guclu4H ? 1.5 : 1.3;
-    } else if (trend1H === 'YUKARI') {
-      multiplier *= guclu1H ? 1.2 : 1.1;
+    // 1H + 4H trend bonusu
+    if (trend4H === 'YUKARI' && trend1H === 'YUKARI') {
+      multiplier *= guclu4H && guclu1H ? 1.5 : 1.3;
+    } else if (trend4H === 'YUKARI') {
+      multiplier *= guclu4H ? 1.2 : 1.1;
     } else if (trend1H === 'HAFIF_YUKARI') {
       multiplier *= 0.9;
     } else if (trend1H === 'YATAY') {
       multiplier *= 0.7;
     }
 
+    // BTC trend bonusu/cezası
+    if      (btc4H === 'YUKARI') multiplier *= 1.1;
+    else if (btc4H === 'YATAY')  multiplier *= 0.8;
+
     multiplier = Math.min(2.0, Math.max(0.25, multiplier));
     const finalAmount = parseFloat((baseAmount * multiplier).toFixed(2));
-    console.log(`💰 Pozisyon: ${finalAmount} USDT (${multiplier.toFixed(2)}x) | Skor:${score} | 1H:${trend1H} | 4H:${trend4H}`);
+    console.log(`💰 Pozisyon: ${finalAmount} USDT (${multiplier.toFixed(2)}x) | Skor:${score} | 1H:${trend1H} | 4H:${trend4H} | BTC:${btc4H}`);
     return finalAmount;
   }
 
@@ -164,6 +170,29 @@ class TradingEngine {
     console.log(`✅ 4H mumlar hazır`);
   }
 
+  // BTC trend güncelle — her 4 saatte bir
+  async updateBTCTrend() {
+    try {
+      const binance = new BinanceService('', '');
+      const [btc1H, btc4H] = await Promise.all([
+        binance.getKlines('BTCUSDT', '1h', 200),
+        binance.getKlines('BTCUSDT', '4h', 200)
+      ]);
+      const trend1H = TechnicalAnalysis.analyze1H(btc1H);
+      const trend4H = TechnicalAnalysis.analyze4H(btc4H);
+      this.btcTrend = {
+        trend1H: trend1H.trend,
+        trend4H: trend4H.trend,
+        adx1H:   trend1H.adx,
+        adx4H:   trend4H.adx,
+        lastUpdate: Date.now()
+      };
+      console.log(`📊 BTC Trend → 1H:${trend1H.trend}(ADX:${trend1H.adx}) | 4H:${trend4H.trend}(ADX:${trend4H.adx})`);
+    } catch (err) {
+      console.error('BTC trend güncelleme hatası:', err.message);
+    }
+  }
+
   async scanAllCoins(candleCloseTime) {
     if (this.closedCandles.has(candleCloseTime)) return;
     this.closedCandles.add(candleCloseTime);
@@ -177,7 +206,25 @@ class TradingEngine {
     const zaman     = new Date().toLocaleTimeString('tr-TR');
     const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
-    console.log(`[${zaman}] Mum kapandı — analiz başlıyor...`);
+    // BTC trend kontrolü — piyasa durumu
+    const btc4H = this.btcTrend.trend4H;
+    const btc1H = this.btcTrend.trend1H;
+
+    // BTC güçlü düşüşte → hiç alım yapma
+    if (btc4H === 'ASAGI' && btc1H === 'ASAGI') {
+      console.log(`[${zaman}] ⛔ BTC 4H+1H ASAGI — tüm alımlar durduruldu`);
+      this.saveScanLog(0, 0, 0, []);
+      return;
+    }
+
+    // BTC 4H düşüşte → sadece çok güçlü sinyaller
+    const btcMinScore = btc4H === 'ASAGI' ? 75
+      : btc4H === 'HAFIF_ASAGI' ? 65
+      : btc4H === 'YATAY'       ? 55
+      : btc4H === 'BELIRSIZ'    ? 60
+      : 0; // YUKARI veya HAFIF_YUKARI → normal skor
+
+    console.log(`[${zaman}] Mum kapandı — BTC:${btc4H}/${btc1H} | Min skor override: ${btcMinScore || 'yok'}`);
     db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
@@ -186,6 +233,9 @@ class TradingEngine {
 
     for (const symbol of symbols) {
       try {
+        // BTC kendisi zaten kendi trendiyle analiz edilir
+        if (symbol === 'BTCUSDT') continue;
+
         const candles   = this.candleBuffers[symbol];
         const candles1H = this.candle1HBuffers[symbol];
         const candles4H = this.candle4HBuffers[symbol];
@@ -196,61 +246,66 @@ class TradingEngine {
         if (!analysis) continue;
         if (analysis.signal !== 'ALIM') continue;
 
-        // 4H trend — ana filtre
-        const trend4H = TechnicalAnalysis.analyze4H(candles4H);
-        analysis.trend4H  = trend4H.trend;
-        analysis.guclu4H  = trend4H.guclu;
-        analysis.adx4H    = trend4H.adx;
-
-        // 4H ASAGI veya HAFIF_ASAGI → kesinlikle alım yok
-        if (trend4H.trend === 'ASAGI' || trend4H.trend === 'HAFIF_ASAGI') {
-          console.log(`⛔ ${symbol} — 4H ${trend4H.trend} (ADX:${trend4H.adx}), reddedildi`);
+        // BTC override min skor
+        if (btcMinScore > 0 && analysis.score < btcMinScore) {
+          console.log(`⛔ ${symbol} — BTC ${btc4H}, skor yetersiz (${analysis.score}<${btcMinScore})`);
           continue;
         }
 
-        // 4H YATAY → sadece çok yüksek skor
+        // 4H trend filtresi
+        const trend4H = TechnicalAnalysis.analyze4H(candles4H);
+        analysis.trend4H = trend4H.trend;
+        analysis.guclu4H = trend4H.guclu;
+        analysis.adx4H   = trend4H.adx;
+
+        if (['ASAGI', 'HAFIF_ASAGI', 'BELIRSIZ'].includes(trend4H.trend)) {
+          console.log(`⛔ ${symbol} — 4H ${trend4H.trend}, reddedildi`);
+          continue;
+        }
+
         if (trend4H.trend === 'YATAY' && analysis.score < 65) {
           console.log(`⛔ ${symbol} — 4H YATAY, skor yetersiz (${analysis.score}<65)`);
           continue;
         }
 
-        // 1H trend — ikinci filtre
+        // 1H trend filtresi
         const trend1H = TechnicalAnalysis.analyze1H(candles1H);
-        analysis.trend1H  = trend1H.trend;
-        analysis.guclu1H  = trend1H.guclu;
-        analysis.adx1H    = trend1H.adx;
+        analysis.trend1H = trend1H.trend;
+        analysis.guclu1H = trend1H.guclu;
+        analysis.adx1H   = trend1H.adx;
 
-        // 1H ASAGI → alım yok
-        if (trend1H.trend === 'ASAGI') {
-          console.log(`⛔ ${symbol} — 1H ASAGI, reddedildi`);
+        if (['ASAGI', 'BELIRSIZ'].includes(trend1H.trend)) {
+          console.log(`⛔ ${symbol} — 1H ${trend1H.trend}, reddedildi`);
           continue;
         }
 
-        // 1H HAFIF_ASAGI → sadece çok yüksek skor
         if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) {
-          console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz (${analysis.score}<70)`);
+          console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz`);
           continue;
         }
 
-        // 1H YATAY → yüksek skor
         if (trend1H.trend === 'YATAY' && analysis.score < 55) {
-          console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz (${analysis.score}<55)`);
+          console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz`);
           continue;
         }
 
-        // Skor bonusu — her iki zaman dilimi de YUKARI ise maksimum bonus
+        // Skor bonusu
         if (trend4H.trend === 'YUKARI' && trend1H.trend === 'YUKARI') {
           const bonus = trend4H.guclu && trend1H.guclu ? 25 : 15;
           analysis.score = Math.min(100, analysis.score + bonus);
-          analysis.positive.push(`✅ 4H+1H YUKARI (ADX 4H:${trend4H.adx} 1H:${trend1H.adx})`);
+          analysis.positive.push(`✅ 4H+1H YUKARI | BTC:${btc4H}`);
         } else if (trend4H.trend === 'YUKARI') {
           analysis.score = Math.min(100, analysis.score + 10);
-          analysis.positive.push(`✅ 4H YUKARI (ADX:${trend4H.adx})`);
+          analysis.positive.push(`✅ 4H YUKARI`);
         } else if (trend1H.trend === 'YUKARI') {
           analysis.score = Math.min(100, analysis.score + 8);
           analysis.positive.push(`📈 1H YUKARI`);
-        } else if (trend4H.trend === 'YATAY') {
-          analysis.negative.push(`⚠️ 4H YATAY — dikkat`);
+        }
+
+        // BTC YUKARI ise bonus
+        if (btc4H === 'YUKARI') {
+          analysis.score = Math.min(100, analysis.score + 5);
+          analysis.positive.push(`₿ BTC 4H YUKARI`);
         }
 
         const minScore = parseFloat(settings.min_score || 10);
@@ -264,7 +319,7 @@ class TradingEngine {
         signalCount++;
         signalsFound.push(`${symbol}(${analysis.score})`);
 
-        console.log(`🚨 ALIM: ${symbol} | Skor:${analysis.score} | 4H:${trend4H.trend} | 1H:${trend1H.trend} | RSI:${analysis.rsi}`);
+        console.log(`🚨 ALIM: ${symbol} | Skor:${analysis.score} | 4H:${trend4H.trend} | 1H:${trend1H.trend} | BTC:${btc4H}`);
 
         const signalId = this.saveSignal(analysis);
 
@@ -375,7 +430,7 @@ class TradingEngine {
           `💰 Fiyat: <code>${fillPrice}</code>\n` +
           `💵 Miktar: <b>${tradeAmount} USDT</b>\n` +
           `🛑 Stop: <code>${stopLoss}</code>\n` +
-          `📊 Skor: ${analysis.score} | 4H: ${analysis.trend4H} | 1H: ${analysis.trend1H}`
+          `📊 Skor:${analysis.score} | 4H:${analysis.trend4H} | 1H:${analysis.trend1H} | BTC:${this.btcTrend.trend4H}`
         );
       }
       return posResult.lastInsertRowid;
@@ -460,20 +515,33 @@ class TradingEngine {
     try {
       const symbols = await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
+
+      // BTC trend güncelle
+      await this.updateBTCTrend();
+
       await this.loadHistoricalCandles(symbols, interval, limit);
       await this.load1HCandles(symbols);
       await this.load4HCandles(symbols);
       this.startWebSocket(symbols, interval);
+
+      // Pozisyon kontrolü her 30 saniyede
       this.positionInterval = setInterval(() => this.checkPositions(), 30000);
+
+      // Her saatte coin listesi + mumlar yenile
       this.symbolRefreshInterval = setInterval(async () => {
-        console.log('🔄 Coin listesi yenileniyor...');
+        console.log('🔄 Yenileniyor...');
+        await this.updateBTCTrend();
         const newSymbols = await this.fetchSymbols();
         await this.loadHistoricalCandles(newSymbols, interval, limit);
         await this.load1HCandles(newSymbols);
         await this.load4HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-      console.log('✅ Engine hazır — 5M + 1H + 4H trend filtresi aktif');
+
+      // BTC trend her 4 saatte güncelle
+      setInterval(() => this.updateBTCTrend(), 4 * 60 * 60 * 1000);
+
+      console.log('✅ Engine hazır — 5M + 1H + 4H + BTC Trend filtresi aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
