@@ -1,4 +1,4 @@
-// v6 - güçlü trend filtresi
+// v7 - 4H trend filtresi
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 7) {
@@ -21,36 +21,25 @@ class TechnicalAnalysis {
     return parseFloat(ema.toFixed(8));
   }
 
-  // ── ADX (Trend Gücü) ──────────────────────────────────────
   static calculateADX(highs, lows, closes, period = 14) {
     if (closes.length < period + 1) return { adx: 0, diPlus: 0, diMinus: 0 };
-
     const trList = [], dmPlus = [], dmMinus = [];
-
     for (let i = 1; i < closes.length; i++) {
       const h = highs[i], l = lows[i], ph = highs[i-1], pl = lows[i-1], pc = closes[i-1];
-      const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
-      const upMove   = h - ph;
-      const downMove = pl - l;
+      const tr = Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
+      const upMove = h - ph, downMove = pl - l;
       trList.push(tr);
       dmPlus.push(upMove > downMove && upMove > 0 ? upMove : 0);
       dmMinus.push(downMove > upMove && downMove > 0 ? downMove : 0);
     }
-
-    const smoothTR     = trList.slice(-period).reduce((a, b) => a + b, 0);
-    const smoothDMPlus = dmPlus.slice(-period).reduce((a, b) => a + b, 0);
-    const smoothDMMinus= dmMinus.slice(-period).reduce((a, b) => a + b, 0);
-
+    const smoothTR      = trList.slice(-period).reduce((a,b) => a+b, 0);
+    const smoothDMPlus  = dmPlus.slice(-period).reduce((a,b) => a+b, 0);
+    const smoothDMMinus = dmMinus.slice(-period).reduce((a,b) => a+b, 0);
     const diPlus  = smoothTR > 0 ? (smoothDMPlus  / smoothTR) * 100 : 0;
     const diMinus = smoothTR > 0 ? (smoothDMMinus / smoothTR) * 100 : 0;
     const diSum   = diPlus + diMinus;
     const dx      = diSum > 0 ? Math.abs(diPlus - diMinus) / diSum * 100 : 0;
-
-    return {
-      adx:     parseFloat(dx.toFixed(2)),
-      diPlus:  parseFloat(diPlus.toFixed(2)),
-      diMinus: parseFloat(diMinus.toFixed(2))
-    };
+    return { adx: parseFloat(dx.toFixed(2)), diPlus: parseFloat(diPlus.toFixed(2)), diMinus: parseFloat(diMinus.toFixed(2)) };
   }
 
   static calculateMomentum(closes, volumes, highs, lows) {
@@ -214,8 +203,8 @@ class TechnicalAnalysis {
     return { puan, desc: desc.join('\n'), pozisyon, resistance, support, riskOdul };
   }
 
-  // ── GÜÇLENDİRİLMİŞ 1H TREND ANALİZİ ─────────────────────
-  static analyze1H(candles) {
+  // ── 1H TREND ANALİZİ ──────────────────────────────────────
+  static analyzeTF(candles, label = '1H') {
     if (!candles || candles.length < 50) return { trend: 'BELIRSIZ', puan: 0, guclu: false };
 
     const closes  = candles.map(c => parseFloat(c[4]));
@@ -225,65 +214,53 @@ class TechnicalAnalysis {
     const len     = closes.length;
     const price   = closes[len-1];
 
-    // EMA'lar
     const ema10  = this.calculateEMA(closes, 10);
     const ema20  = this.calculateEMA(closes, 20);
     const ema50  = this.calculateEMA(closes, Math.min(50, len));
     const ema200 = this.calculateEMA(closes, Math.min(200, len));
+    const rsi14  = this.calculateRSI(closes, 14);
+    const adxData= this.calculateADX(highs, lows, closes, 14);
 
-    // RSI
-    const rsi14 = this.calculateRSI(closes, 14);
-
-    // ADX — trend gücü
-    const adxData = this.calculateADX(highs, lows, closes, 14);
-
-    // Higher Highs / Higher Lows — son 10 mum
     const son10Highs = highs.slice(-10);
     const son10Lows  = lows.slice(-10);
-    const hhCount    = son10Highs.filter((h, i) => i > 0 && h > son10Highs[i-1]).length;
-    const hlCount    = son10Lows.filter((l, i)  => i > 0 && l > son10Lows[i-1]).length;
-    const llCount    = son10Lows.filter((l, i)  => i > 0 && l < son10Lows[i-1]).length;
-    const lhCount    = son10Highs.filter((h, i) => i > 0 && h < son10Highs[i-1]).length;
+    const hhCount = son10Highs.filter((h, i) => i > 0 && h > son10Highs[i-1]).length;
+    const hlCount = son10Lows.filter((l, i)  => i > 0 && l > son10Lows[i-1]).length;
+    const llCount = son10Lows.filter((l, i)  => i > 0 && l < son10Lows[i-1]).length;
+    const lhCount = son10Highs.filter((h, i) => i > 0 && h < son10Highs[i-1]).length;
 
-    // Hacim trendi
     const avgVol10 = volumes.slice(-10, -1).reduce((a,b) => a+b, 0) / 9;
-    const sonVol   = volumes[len-1];
-    const volTrend = sonVol > avgVol10 * 1.1;
+    const volTrend = volumes[len-1] > avgVol10 * 1.1;
 
     let puan = 0;
 
-    // EMA sıralaması (en güvenilir)
-    if (ema10 > ema20 && ema20 > ema50) { puan += 35; }
-    else if (ema10 > ema20)              { puan += 15; }
-    else if (ema10 < ema20 && ema20 < ema50) { puan -= 35; }
-    else if (ema10 < ema20)              { puan -= 15; }
+    // EMA sıralaması
+    if      (ema10 > ema20 && ema20 > ema50) puan += 35;
+    else if (ema10 > ema20)                   puan += 15;
+    else if (ema10 < ema20 && ema20 < ema50) puan -= 35;
+    else if (ema10 < ema20)                   puan -= 15;
 
-    // Fiyat EMA'ların üstünde mi?
-    if (price > ema50)  { puan += 20; }
-    else                { puan -= 20; }
+    // Fiyat EMA'ların üstünde mi
+    if (price > ema50)  puan += 20; else puan -= 20;
+    if (price > ema200) puan += 15; else puan -= 15;
 
-    if (price > ema200) { puan += 15; }
-    else                { puan -= 15; }
-
-    // ADX trend gücü
-    if (adxData.adx > 25 && adxData.diPlus > adxData.diMinus)  { puan += 25; } // Güçlü yükseliş
-    else if (adxData.adx > 25 && adxData.diMinus > adxData.diPlus) { puan -= 25; } // Güçlü düşüş
-    else if (adxData.adx < 20) { puan -= 10; } // Trend yok — yatay
+    // ADX
+    if      (adxData.adx > 25 && adxData.diPlus > adxData.diMinus)  puan += 25;
+    else if (adxData.adx > 25 && adxData.diMinus > adxData.diPlus)  puan -= 25;
+    else if (adxData.adx < 20)                                        puan -= 10;
 
     // HH/HL yapısı
-    if (hhCount >= 5 && hlCount >= 5) { puan += 20; } // Güçlü yükseliş yapısı
-    else if (hhCount >= 3)             { puan += 10; }
-    if (llCount >= 5 && lhCount >= 5)  { puan -= 20; } // Güçlü düşüş yapısı
-    else if (llCount >= 3)             { puan -= 10; }
+    if      (hhCount >= 5 && hlCount >= 5) puan += 20;
+    else if (hhCount >= 3)                  puan += 10;
+    if      (llCount >= 5 && lhCount >= 5) puan -= 20;
+    else if (llCount >= 3)                  puan -= 10;
 
     // RSI
-    if      (rsi14 > 55 && rsi14 < 75) { puan += 10; } // Yükseliş momentumu
-    else if (rsi14 < 45)               { puan -= 10; } // Düşüş momentumu
+    if      (rsi14 > 55 && rsi14 < 75) puan += 10;
+    else if (rsi14 < 45)               puan -= 10;
 
-    // Hacim teyidi
-    if (volTrend && ema10 > ema20) { puan += 10; }
+    // Hacim
+    if (volTrend && ema10 > ema20) puan += 10;
 
-    // Trend belirle
     let trend = 'BELIRSIZ';
     let guclu = false;
 
@@ -293,17 +270,19 @@ class TechnicalAnalysis {
     else if (puan >= -15) { trend = 'YATAY'; }
     else if (puan >= -40) { trend = 'HAFIF_ASAGI'; }
     else if (puan >= -70) { trend = 'ASAGI'; }
-    else                  { trend = 'ASAGI';         guclu = true; }
+    else                  { trend = 'ASAGI'; guclu = true; }
 
-    return {
-      trend, puan, guclu,
-      ema10, ema20, ema50,
-      adx: adxData.adx,
-      diPlus: adxData.diPlus,
-      diMinus: adxData.diMinus,
-      rsi: rsi14,
-      hhCount, hlCount
-    };
+    return { trend, puan, guclu, ema10, ema20, ema50, adx: adxData.adx, diPlus: adxData.diPlus, diMinus: adxData.diMinus, rsi: rsi14, hhCount, hlCount };
+  }
+
+  // Geriye dönük uyumluluk için
+  static analyze1H(candles) {
+    return this.analyzeTF(candles, '1H');
+  }
+
+  // ── 4H TREND ANALİZİ ──────────────────────────────────────
+  static analyze4H(candles) {
+    return this.analyzeTF(candles, '4H');
   }
 
   // ── ANA ANALİZ (5M) ────────────────────────────────────────
@@ -366,26 +345,18 @@ class TechnicalAnalysis {
     else if (sr.puan < 0) sr.desc.split('\n').forEach(d => d && negative.push('⚠️ ' + d));
 
     return {
-      symbol:     ticker.symbol,
-      price,
-      change24h:  parseFloat(ticker.priceChangePercent),
-      volume24h:  vol24h,
-      signal,
-      score:      toplamSkor,
-      risk,
-      rsi,
-      momentum:   momentum.puan,
-      hacimOran:  hacim.oran,
-      alimOran:   hacim.alimOran,
+      symbol: ticker.symbol, price,
+      change24h: parseFloat(ticker.priceChangePercent),
+      volume24h: vol24h,
+      signal, score: toplamSkor, risk, rsi,
+      momentum: momentum.puan,
+      hacimOran: hacim.oran, alimOran: hacim.alimOran,
       srPozisyon: sr.pozisyon,
-      riskOdul:   parseFloat(riskOdul.toFixed(2)),
-      atr:        parseFloat(atr.toFixed(8)),
-      atrPct:     parseFloat(atrPct.toFixed(3)),
-      target:     hedefFiyat,
-      stopLoss:   stopFiyat,
-      minNetKar,
-      positive,
-      negative
+      riskOdul: parseFloat(riskOdul.toFixed(2)),
+      atr: parseFloat(atr.toFixed(8)),
+      atrPct: parseFloat(atrPct.toFixed(3)),
+      target: hedefFiyat, stopLoss: stopFiyat,
+      minNetKar, positive, negative
     };
   }
 }
