@@ -8,23 +8,23 @@ const fs = require('fs');
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = require('./src/database');
-const engine = require('./src/engine');
-const BinanceService = require('./src/binance');
+const db      = require('./src/database');
+const engine  = require('./src/engine');
+const BinanceService  = require('./src/binance');
 const TelegramService = require('./src/telegram');
 const backtest = require('./src/backtest');
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-global.wss = wss;
+const wss    = new WebSocketServer({ server });
+global.wss   = wss;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // ── AYARLAR ──────────────────────────────────────────────────
 app.get('/api/settings', (req, res) => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const rows     = db.prepare('SELECT key, value FROM settings').all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
   if (settings.binance_api_secret) settings.binance_api_secret = '••••••••';
   res.json(settings);
@@ -51,11 +51,8 @@ const CODE_FILES = {
 app.get('/api/code/:file', (req, res) => {
   const filePath = CODE_FILES[req.params.file];
   if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
-  try {
-    res.json({ content: fs.readFileSync(filePath, 'utf8') });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  try { res.json({ content: fs.readFileSync(filePath, 'utf8') }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/code/:file', (req, res) => {
@@ -68,33 +65,28 @@ app.post('/api/code/:file', (req, res) => {
     engine.stop();
     setTimeout(() => engine.start(), 2000);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── TELEGRAM ─────────────────────────────────────────────────
 app.post('/api/telegram/test', async (req, res) => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const rows     = db.prepare('SELECT key, value FROM settings').all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  if (!settings.telegram_token || !settings.telegram_chat_id) {
+  if (!settings.telegram_token || !settings.telegram_chat_id)
     return res.status(400).json({ error: 'Telegram token veya chat ID eksik' });
-  }
   try {
     const telegram = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
     await telegram.sendMessage(
-      '✅ <b>Kripto Sinyal Botu</b>\n\nBağlantı başarılı! Bot aktif ve çalışıyor.\n\n' +
+      `✅ <b>Kripto Sinyal Botu</b>\n\nBağlantı başarılı!\n\n` +
       `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`
     );
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── SİNYALLER ────────────────────────────────────────────────
 app.get('/api/signals', (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
+  const limit   = parseInt(req.query.limit) || 50;
   const signals = db.prepare('SELECT * FROM signals ORDER BY created_at DESC LIMIT ?').all(limit);
   res.json(signals.map(s => ({
     ...s,
@@ -103,13 +95,10 @@ app.get('/api/signals', (req, res) => {
   })));
 });
 
-// ── TARAMA LOGLARI ────────────────────────────────────────────
+// ── TARAMA LOGLARI ───────────────────────────────────────────
 app.get('/api/scan-logs', (req, res) => {
   const logs = db.prepare('SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 50').all();
-  res.json(logs.map(l => ({
-    ...l,
-    signals_found: JSON.parse(l.signals_found || '[]')
-  })));
+  res.json(logs.map(l => ({ ...l, signals_found: JSON.parse(l.signals_found || '[]') })));
 });
 
 // ── İSTATİSTİKLER ────────────────────────────────────────────
@@ -124,10 +113,8 @@ app.get('/api/stats', (req, res) => {
   res.json({
     totalPnl:      parseFloat((totalPnl.total || 0).toFixed(2)),
     winRate:       total > 0 ? parseFloat(((wins.count / total) * 100).toFixed(1)) : 0,
-    wins:          wins.count,
-    losses:        losses.count,
-    openPositions: open.count,
-    totalSignals:  signals.count,
+    wins:          wins.count, losses: losses.count,
+    openPositions: open.count, totalSignals: signals.count,
     lastScan:      lastScan || null
   });
 });
@@ -159,9 +146,7 @@ app.post('/api/positions/:id/close', async (req, res) => {
       await telegram.sendPositionClosed(pos.symbol, 'MANUAL_CLOSE', pnlPct, pnl);
     }
     res.json({ success: true, pnl, pnlPercent: pnlPct });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── TRADE GEÇMİŞİ ────────────────────────────────────────────
@@ -183,22 +168,35 @@ app.post('/api/binance/test', async (req, res) => {
     const binance = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
     const balance = await binance.getUSDTBalance();
     res.json({ success: true, usdtBalance: balance });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 // ── BACKTEST ─────────────────────────────────────────────────
+const BACKTEST_COINS = [
+  'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
+  'ADAUSDT','DOGEUSDT','AVAXUSDT','DOTUSDT','LINKUSDT',
+  'LTCUSDT','UNIUSDT','ATOMUSDT','NEARUSDT',
+  'APTUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'
+];
+
 app.post('/api/backtest', async (req, res) => {
   try {
-    const result = await backtest.run(req.body);
+    const params = { ...req.body };
+    if (params.symbol === 'TÜMÜ') {
+      params.symbols = BACKTEST_COINS;
+      delete params.symbol;
+    }
+    const result = await backtest.run(params);
     res.json(result);
   } catch (err) {
+    console.error('Backtest hatası:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ── HEALTH ───────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 app.use(express.static(path.join(__dirname, '../frontend/build')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../frontend/build/index.html')));
 
