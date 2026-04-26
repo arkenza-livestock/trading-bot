@@ -29,7 +29,9 @@ export default function App() {
   useEffect(() => {
     fetchStats();
     const interval = setInterval(fetchStats, 30000);
-    const wsUrl = window.location.hostname === 'localhost' ? 'ws://localhost:3001' : `wss://${window.location.host}`;
+    const wsUrl = window.location.hostname === 'localhost'
+      ? 'ws://localhost:3001'
+      : `wss://${window.location.host}`;
     try {
       const socket = new WebSocket(wsUrl);
       socket.onmessage = (e) => {
@@ -59,19 +61,12 @@ export default function App() {
     } catch (err) { console.error(err); }
   };
 
-  const runNow = async () => {
-    try {
-      await axios.post(`${API}/api/engine/run-now`);
-      addNotification('✅ Analiz başlatıldı');
-    } catch (err) { console.error(err); }
-  };
-
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'signals', label: 'Sinyaller', icon: '🚨' },
+    { id: 'signals',   label: 'Sinyaller', icon: '🚨' },
     { id: 'positions', label: 'Pozisyonlar', icon: '💼' },
-    { id: 'settings', label: 'Ayarlar', icon: '⚙️' },
-    { id: 'code', label: 'Kod Editörü', icon: '💻' }
+    { id: 'settings',  label: 'Ayarlar', icon: '⚙️' },
+    { id: 'code',      label: 'Kod Editörü', icon: '💻' }
   ];
 
   return (
@@ -83,7 +78,9 @@ export default function App() {
         </div>
         <nav className="nav">
           {navItems.map(item => (
-            <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}>
+            <button key={item.id}
+              className={`nav-item ${page === item.id ? 'active' : ''}`}
+              onClick={() => setPage(item.id)}>
               <span className="nav-icon">{item.icon}</span>
               <span className="nav-label">{item.label}</span>
             </button>
@@ -94,10 +91,11 @@ export default function App() {
             <span className="status-dot" />
             {engineRunning ? 'Çalışıyor' : 'Durduruldu'}
           </div>
-          <button className={`btn-engine ${engineRunning ? 'btn-stop' : 'btn-start'}`} onClick={toggleEngine}>
+          <button
+            className={`btn-engine ${engineRunning ? 'btn-stop' : 'btn-start'}`}
+            onClick={toggleEngine}>
             {engineRunning ? '⏹ Durdur' : '▶ Başlat'}
           </button>
-          <button className="btn-run-now" onClick={runNow}>⚡ Şimdi Çalıştır</button>
         </div>
         <div className="stats-mini">
           <div className="stat-mini">
@@ -117,11 +115,11 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
-        {page === 'dashboard' && <Dashboard api={API} stats={stats} />}
-        {page === 'signals' && <Signals api={API} />}
-        {page === 'positions' && <Positions api={API} />}
-        {page === 'settings' && <Settings api={API} />}
-        {page === 'code' && <CodeEditor api={API} />}
+        {page === 'dashboard'  && <Dashboard api={API} stats={stats} />}
+        {page === 'signals'    && <Signals api={API} />}
+        {page === 'positions'  && <Positions api={API} />}
+        {page === 'settings'   && <Settings api={API} />}
+        {page === 'code'       && <CodeEditor api={API} />}
       </main>
       <div className="notifications">
         {notifications.map(n => (
