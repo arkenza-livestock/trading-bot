@@ -12,6 +12,7 @@ const db = require('./src/database');
 const engine = require('./src/engine');
 const BinanceService = require('./src/binance');
 const TelegramService = require('./src/telegram');
+const backtest = require('./src/backtest');
 
 const app = express();
 const server = http.createServer(app);
@@ -42,17 +43,16 @@ app.put('/api/settings', (req, res) => {
 
 // ── KOD EDİTÖRÜ ──────────────────────────────────────────────
 const CODE_FILES = {
-  engine: path.join(__dirname, 'src/engine.js'),
+  engine:   path.join(__dirname, 'src/engine.js'),
   analysis: path.join(__dirname, 'src/analysis.js'),
-  binance: path.join(__dirname, 'src/binance.js')
+  binance:  path.join(__dirname, 'src/binance.js')
 };
 
 app.get('/api/code/:file', (req, res) => {
   const filePath = CODE_FILES[req.params.file];
   if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
   try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    res.json({ content });
+    res.json({ content: fs.readFileSync(filePath, 'utf8') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -62,21 +62,18 @@ app.post('/api/code/:file', (req, res) => {
   const filePath = CODE_FILES[req.params.file];
   if (!filePath) return res.status(404).json({ error: 'Dosya bulunamadı' });
   try {
-    const backupPath = filePath + '.backup';
-    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, filePath + '.backup');
     fs.writeFileSync(filePath, req.body.content, 'utf8');
-    Object.keys(require.cache).forEach(key => {
-      if (key.includes('/src/')) delete require.cache[key];
-    });
+    Object.keys(require.cache).forEach(key => { if (key.includes('/src/')) delete require.cache[key]; });
     engine.stop();
     setTimeout(() => engine.start(), 2000);
-    res.json({ success: true, message: 'Kod kaydedildi ve sistem yeniden başlatıldı' });
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── TELEGRAM TEST ─────────────────────────────────────────────
+// ── TELEGRAM ─────────────────────────────────────────────────
 app.post('/api/telegram/test', async (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
@@ -86,8 +83,7 @@ app.post('/api/telegram/test', async (req, res) => {
   try {
     const telegram = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
     await telegram.sendMessage(
-      '✅ <b>Kripto Sinyal Botu</b>\n\n' +
-      'Bağlantı başarılı! Bot aktif ve çalışıyor.\n\n' +
+      '✅ <b>Kripto Sinyal Botu</b>\n\nBağlantı başarılı! Bot aktif ve çalışıyor.\n\n' +
       `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`
     );
     res.json({ success: true });
@@ -151,20 +147,17 @@ app.post('/api/positions/:id/close', async (req, res) => {
   const settings = engine.getSettings();
   if (!settings.binance_api_key) return res.status(400).json({ error: 'API key yok' });
   try {
-    const binance = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
-    const order = await binance.placeOrder(pos.symbol, 'SELL', pos.quantity);
+    const binance   = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
+    const order     = await binance.placeOrder(pos.symbol, 'SELL', pos.quantity);
     const sellPrice = parseFloat(order.fills?.[0]?.price || pos.current_price);
-    const pnl = (sellPrice - pos.entry_price) * pos.quantity;
-    const pnlPct = ((sellPrice - pos.entry_price) / pos.entry_price) * 100;
+    const pnl       = (sellPrice - pos.entry_price) * pos.quantity;
+    const pnlPct    = ((sellPrice - pos.entry_price) / pos.entry_price) * 100;
     db.prepare("UPDATE positions SET status='MANUAL_CLOSE', current_price=?, pnl=?, pnl_percent=?, closed_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(sellPrice, pnl, pnlPct, pos.id);
-
-    // Telegram bildirimi
     if (settings.telegram_token && settings.telegram_chat_id) {
       const telegram = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
       await telegram.sendPositionClosed(pos.symbol, 'MANUAL_CLOSE', pnlPct, pnl);
     }
-
     res.json({ success: true, pnl, pnlPercent: pnlPct });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -176,10 +169,10 @@ app.get('/api/trades', (req, res) => {
   res.json(db.prepare('SELECT * FROM trades ORDER BY created_at DESC LIMIT 100').all());
 });
 
-// ── ENGINE KONTROL ────────────────────────────────────────────
-app.post('/api/engine/start',   (req, res) => { engine.start();        res.json({ success: true, running: true }); });
-app.post('/api/engine/stop',    (req, res) => { engine.stop();         res.json({ success: true, running: false }); });
-app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis();  res.json({ success: true }); });
+// ── ENGINE ───────────────────────────────────────────────────
+app.post('/api/engine/start',   (req, res) => { engine.start();       res.json({ success: true, running: true }); });
+app.post('/api/engine/stop',    (req, res) => { engine.stop();        res.json({ success: true, running: false }); });
+app.post('/api/engine/run-now', (req, res) => { engine.runAnalysis(); res.json({ success: true }); });
 app.get('/api/engine/status',   (req, res) => { res.json({ running: engine.running }); });
 
 // ── BİNANCE TEST ─────────────────────────────────────────────
@@ -192,6 +185,16 @@ app.post('/api/binance/test', async (req, res) => {
     res.json({ success: true, usdtBalance: balance });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ── BACKTEST ─────────────────────────────────────────────────
+app.post('/api/backtest', async (req, res) => {
+  try {
+    const result = await backtest.run(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
