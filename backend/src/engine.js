@@ -11,8 +11,8 @@ class TradingEngine {
     this.symbolRefreshInterval = null;
     this.trailingStops = {};
     this.ws = null;
-    this.candleBuffers = {};   // 5M mumlar
-    this.candle1HBuffers = {}; // 1H mumlar
+    this.candleBuffers = {};
+    this.candle1HBuffers = {};
     this.tickers = {};
     this.lastSignalTime = {};
     this.closedCandles = new Set();
@@ -52,6 +52,37 @@ class TradingEngine {
       `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H}`
     );
     return result.lastInsertRowid;
+  }
+
+  // Dinamik pozisyon boyutu — skora ve 1H trende göre
+  calculatePositionSize(analysis, settings) {
+    const baseAmount = parseFloat(settings.trade_amount_usdt || 100);
+    const score      = analysis.score;
+    const trend1H    = analysis.trend1H || 'BELIRSIZ';
+
+    let multiplier = 1.0;
+
+    // Skora göre çarpan
+    if      (score >= 80) multiplier = 2.0;
+    else if (score >= 70) multiplier = 1.5;
+    else if (score >= 60) multiplier = 1.25;
+    else if (score >= 50) multiplier = 1.0;
+    else if (score >= 35) multiplier = 0.75;
+    else                  multiplier = 0.5;
+
+    // 1H trend bonusu
+    if      (trend1H === 'YUKARI')       multiplier *= 1.2;
+    else if (trend1H === 'HAFIF_YUKARI') multiplier *= 1.0;
+    else if (trend1H === 'YATAY')        multiplier *= 0.85;
+    else if (trend1H === 'HAFIF_ASAGI')  multiplier *= 0.7;
+
+    // Max 2x, min 0.25x
+    multiplier = Math.min(2.0, Math.max(0.25, multiplier));
+
+    const finalAmount = parseFloat((baseAmount * multiplier).toFixed(2));
+
+    console.log(`💰 Pozisyon boyutu: ${finalAmount} USDT (${multiplier}x) | Skor: ${score} | 1H: ${trend1H}`);
+    return finalAmount;
   }
 
   checkDailyLimits(settings) {
@@ -140,8 +171,6 @@ class TradingEngine {
     const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
     console.log(`[${zaman}] Mum kapandı — tüm coinler analiz ediliyor...`);
-
-    // Her taramada sinyalleri temizle
     db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
@@ -155,41 +184,28 @@ class TradingEngine {
         const ticker    = this.tickers[symbol];
         if (!candles || candles.length < 20 || !ticker) continue;
 
-        // 5M analiz
         const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
         if (!analysis) continue;
         if (analysis.signal !== 'ALIM') continue;
 
-        // 1H trend konfirmasyonu
+        // 1H konfirmasyon
         const trend1H = TechnicalAnalysis.analyze1H(candles1H);
-        analysis.trend1H = trend1H.trend;
+        analysis.trend1H     = trend1H.trend;
         analysis.trend1HPuan = trend1H.puan;
 
-        // 1H aşağı trendse sinyali reddet
         if (trend1H.trend === 'ASAGI') {
-          console.log(`⛔ ${symbol} — 5M ALIM ama 1H ASAGI trend, sinyal reddedildi`);
+          console.log(`⛔ ${symbol} — 1H ASAGI, reddedildi`);
           continue;
         }
 
-        // 1H yukarı trendse skoru artır
-        if (trend1H.trend === 'YUKARI') {
-          analysis.score = Math.min(100, analysis.score + 15);
-          analysis.positive.push(`✅ 1H Trend: YUKARI (${trend1H.puan} puan)`);
-        } else if (trend1H.trend === 'HAFIF_YUKARI') {
-          analysis.score = Math.min(100, analysis.score + 8);
-          analysis.positive.push(`📈 1H Trend: HAFIF YUKARI`);
-        } else if (trend1H.trend === 'YATAY') {
-          analysis.positive.push(`➡️ 1H Trend: YATAY — devam`);
-        } else if (trend1H.trend === 'HAFIF_ASAGI') {
-          analysis.score = Math.max(0, analysis.score - 10);
-          analysis.negative.push(`⚠️ 1H Trend: HAFIF ASAGI — dikkat`);
-        }
+        if      (trend1H.trend === 'YUKARI')       { analysis.score = Math.min(100, analysis.score + 15); analysis.positive.push(`✅ 1H Trend: YUKARI`); }
+        else if (trend1H.trend === 'HAFIF_YUKARI') { analysis.score = Math.min(100, analysis.score + 8);  analysis.positive.push(`📈 1H Trend: HAFIF YUKARI`); }
+        else if (trend1H.trend === 'YATAY')        { analysis.positive.push(`➡️ 1H Trend: YATAY`); }
+        else if (trend1H.trend === 'HAFIF_ASAGI')  { analysis.score = Math.max(0, analysis.score - 10); analysis.negative.push(`⚠️ 1H Trend: HAFIF ASAGI`); }
 
-        // Min skor kontrolü
         const minScore = parseFloat(settings.min_score || 10);
         if (analysis.score < minScore) continue;
 
-        // Son 5 dakikada aynı coin için sinyal verildi mi?
         const now      = Date.now();
         const lastTime = this.lastSignalTime[symbol] || 0;
         if (now - lastTime < 5 * 60 * 1000) continue;
@@ -198,17 +214,15 @@ class TradingEngine {
         signalCount++;
         signalsFound.push(`${symbol}(${analysis.score})`);
 
-        console.log(`🚨 ALIM: ${symbol} | 5M Skor: ${analysis.score} | 1H: ${trend1H.trend} | RSI: ${analysis.rsi}`);
+        console.log(`🚨 ALIM: ${symbol} | Skor: ${analysis.score} | 1H: ${trend1H.trend} | RSI: ${analysis.rsi}`);
 
         const signalId = this.saveSignal(analysis);
 
-        // Telegram
         const telegram = this.getTelegram();
         if (telegram && analysis.score >= telegramMinScore) {
           await telegram.sendSignal(analysis);
         }
 
-        // WebSocket arayüze bildir
         if (global.wss) {
           global.wss.clients.forEach(client => {
             if (client.readyState === 1) {
@@ -217,7 +231,6 @@ class TradingEngine {
           });
         }
 
-        // Otomatik alım
         if (settings.auto_trade_enabled === 'true') {
           await this.openPosition(analysis, signalId);
         }
@@ -260,31 +273,23 @@ class TradingEngine {
       try {
         const parsed = JSON.parse(data);
         if (!parsed.data || !parsed.data.k) return;
-
         const kline    = parsed.data.k;
         const symbol   = kline.s;
         const isClosed = kline.x;
-
         const newCandle = [
           kline.t, kline.o, kline.h, kline.l, kline.c, kline.v,
           kline.T, kline.q, kline.n, kline.V, kline.Q, '0'
         ];
-
         if (!this.candleBuffers[symbol]) return;
-
         if (isClosed) {
           this.candleBuffers[symbol].push(newCandle);
-          if (this.candleBuffers[symbol].length > 100) {
-            this.candleBuffers[symbol].shift();
-          }
+          if (this.candleBuffers[symbol].length > 100) this.candleBuffers[symbol].shift();
           await this.scanAllCoins(kline.T);
         } else {
           const buf = this.candleBuffers[symbol];
           buf[buf.length - 1] = newCandle;
         }
-      } catch (err) {
-        // Sessizce geç
-      }
+      } catch (err) {}
     });
 
     this.ws.on('error', (err) => {
@@ -311,27 +316,38 @@ class TradingEngine {
     const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(analysis.symbol);
     if (existing) return null;
     if (!this.checkDailyLimits(settings)) return null;
+
     try {
       const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
       const slippagePct = parseFloat(settings.slippage_rate || 0.05) / 100;
-      const quantity    = parseFloat(settings.trade_amount_usdt || 100) / (analysis.price * (1 + slippagePct));
-      const order       = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
-      const fillPrice   = parseFloat(order.fills?.[0]?.price || analysis.price);
-      const fillQty     = parseFloat(order.executedQty);
-      const stopLoss    = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
-      const posResult   = db.prepare(`
+
+      // Dinamik pozisyon boyutu
+      const tradeAmount = this.calculatePositionSize(analysis, settings);
+      const quantity    = tradeAmount / (analysis.price * (1 + slippagePct));
+
+      const order     = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
+      const fillPrice = parseFloat(order.fills?.[0]?.price || analysis.price);
+      const fillQty   = parseFloat(order.executedQty);
+      const stopLoss  = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
+
+      const posResult = db.prepare(`
         INSERT INTO positions (symbol, side, quantity, entry_price, current_price, stop_loss, take_profit, signal_id)
         VALUES (?, 'BUY', ?, ?, ?, ?, 0, ?)
       `).run(analysis.symbol, fillQty, fillPrice, fillPrice, stopLoss, signalId);
+
       db.prepare(`INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id) VALUES (?,?,'BUY',?,?,?,?)`)
         .run(posResult.lastInsertRowid, analysis.symbol, fillQty, fillPrice, fillQty * fillPrice, order.orderId);
+
       this.trailingStops[analysis.symbol] = { highestPrice: fillPrice, entryPrice: fillPrice, quantity: fillQty };
-      console.log(`✅ Pozisyon açıldı: ${analysis.symbol} @ ${fillPrice}`);
+
+      console.log(`✅ Pozisyon açıldı: ${analysis.symbol} @ ${fillPrice} | Miktar: ${tradeAmount} USDT`);
+
       const telegram = this.getTelegram();
       if (telegram) {
         await telegram.sendMessage(
           `✅ <b>POZİSYON AÇILDI — ${analysis.symbol}</b>\n` +
           `💰 Fiyat: <code>${fillPrice}</code>\n` +
+          `💵 Miktar: <b>${tradeAmount} USDT</b>\n` +
           `🛑 Stop: <code>${stopLoss}</code>\n` +
           `📊 Skor: ${analysis.score} | 1H: ${analysis.trend1H}`
         );
@@ -355,6 +371,7 @@ class TradingEngine {
     const komisyonPct  = parseFloat(settings.commission_rate || 0.1) / 100;
     const slippagePct  = parseFloat(settings.slippage_rate || 0.05) / 100;
     const timeStopMin  = parseInt(settings.time_stop_minutes || 0);
+
     for (const pos of positions) {
       try {
         const currentPrice = await binance.getPrice(pos.symbol);
@@ -362,15 +379,19 @@ class TradingEngine {
         const totalCost    = (komisyonPct + slippagePct) * 2;
         const netPnlPct    = brutoPnlPct - (totalCost * 100);
         const netPnl       = (currentPrice - pos.entry_price) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
+
         if (!this.trailingStops[pos.symbol]) {
           this.trailingStops[pos.symbol] = { highestPrice: pos.entry_price, entryPrice: pos.entry_price, quantity: pos.quantity };
         }
         const trailing = this.trailingStops[pos.symbol];
         if (currentPrice > trailing.highestPrice) trailing.highestPrice = currentPrice;
+
         const trailingStopPrice = parseFloat((trailing.highestPrice * (1 - trailingPct)).toFixed(8));
         const hardStopPrice     = parseFloat((pos.entry_price * (1 - hardStopPct)).toFixed(8));
+
         db.prepare('UPDATE positions SET current_price=?, pnl=?, pnl_percent=?, stop_loss=? WHERE id=?')
           .run(currentPrice, netPnl, netPnlPct, Math.max(trailingStopPrice, hardStopPrice), pos.id);
+
         if (timeStopMin > 0 && Date.now() - new Date(pos.opened_at).getTime() > timeStopMin * 60 * 1000) {
           await this.closePosition(pos, binance, 'TIME_STOP', currentPrice, komisyonPct, slippagePct); continue;
         }
@@ -406,9 +427,7 @@ class TradingEngine {
     }
   }
 
-  async runAnalysis() {
-    // WebSocket kullanıyoruz
-  }
+  async runAnalysis() {}
 
   async start() {
     if (this.running) return;
@@ -420,18 +439,10 @@ class TradingEngine {
     try {
       const symbols = await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
-
-      // 5M ve 1H mumları yükle
       await this.loadHistoricalCandles(symbols, interval, limit);
       await this.load1HCandles(symbols);
-
-      // WebSocket başlat
       this.startWebSocket(symbols, interval);
-
-      // Pozisyon kontrolü her 30 saniyede bir
       this.positionInterval = setInterval(() => this.checkPositions(), 30000);
-
-      // Her saatte coin listesi + 1H mumları yenile
       this.symbolRefreshInterval = setInterval(async () => {
         console.log('🔄 Coin listesi ve 1H mumlar yenileniyor...');
         const newSymbols = await this.fetchSymbols();
@@ -439,8 +450,7 @@ class TradingEngine {
         await this.load1HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-
-      console.log('✅ Engine hazır — 5M WebSocket + 1H konfirmasyon aktif');
+      console.log('✅ Engine hazır — 5M WebSocket + 1H konfirmasyon + Dinamik pozisyon aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
