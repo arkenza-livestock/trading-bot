@@ -11,11 +11,11 @@ class TradingEngine {
     this.symbolRefreshInterval = null;
     this.trailingStops = {};
     this.ws = null;
-    this.candleBuffers = {};
+    this.candleBuffers = {};   // 5M mumlar
+    this.candle1HBuffers = {}; // 1H mumlar
     this.tickers = {};
     this.lastSignalTime = {};
     this.closedCandles = new Set();
-    this.lastScanTime = 0;
   }
 
   getSettings() {
@@ -47,9 +47,9 @@ class TradingEngine {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       analysis.symbol, analysis.signal, analysis.score, analysis.risk, analysis.price,
-      analysis.rsi, analysis.momentum || 0, 'MOMENTUM',
+      analysis.rsi, analysis.momentum || 0, analysis.trend1H || 'BELIRSIZ',
       JSON.stringify(analysis.positive), JSON.stringify(analysis.negative),
-      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | ATR:%${analysis.atrPct}`
+      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H}`
     );
     return result.lastInsertRowid;
   }
@@ -94,7 +94,7 @@ class TradingEngine {
 
   async loadHistoricalCandles(symbols, interval, limit) {
     const binance = new BinanceService('', '');
-    console.log(`${symbols.length} coin için geçmiş mumlar yükleniyor...`);
+    console.log(`${symbols.length} coin için ${interval} geçmiş mumlar yükleniyor...`);
     for (const ticker of symbols) {
       try {
         const candles = await binance.getKlines(ticker.symbol, interval, limit);
@@ -106,7 +106,24 @@ class TradingEngine {
         console.error(`${ticker.symbol} geçmiş veri hatası:`, err.message);
       }
     }
-    console.log(`✅ ${Object.keys(this.candleBuffers).length} coin için geçmiş mumlar hazır`);
+    console.log(`✅ ${interval} geçmiş mumlar hazır`);
+  }
+
+  async load1HCandles(symbols) {
+    const binance = new BinanceService('', '');
+    console.log(`${symbols.length} coin için 1H mumlar yükleniyor...`);
+    for (const ticker of symbols) {
+      try {
+        const candles = await binance.getKlines(ticker.symbol, '1h', 50);
+        if (candles && candles.length > 0) {
+          this.candle1HBuffers[ticker.symbol] = candles;
+        }
+        await new Promise(r => setTimeout(r, 60));
+      } catch (err) {
+        console.error(`${ticker.symbol} 1H veri hatası:`, err.message);
+      }
+    }
+    console.log(`✅ 1H mumlar hazır`);
   }
 
   async scanAllCoins(candleCloseTime) {
@@ -124,7 +141,7 @@ class TradingEngine {
 
     console.log(`[${zaman}] Mum kapandı — tüm coinler analiz ediliyor...`);
 
-    // Her taramada sinyalleri temizle — sadece bu taramanın sinyalleri görünsün
+    // Her taramada sinyalleri temizle
     db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
@@ -133,46 +150,78 @@ class TradingEngine {
 
     for (const symbol of symbols) {
       try {
-        const candles = this.candleBuffers[symbol];
-        const ticker  = this.tickers[symbol];
+        const candles   = this.candleBuffers[symbol];
+        const candles1H = this.candle1HBuffers[symbol];
+        const ticker    = this.tickers[symbol];
         if (!candles || candles.length < 20 || !ticker) continue;
 
+        // 5M analiz
         const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
         if (!analysis) continue;
+        if (analysis.signal !== 'ALIM') continue;
 
-        if (analysis.signal === 'ALIM') {
-          const now      = Date.now();
-          const lastTime = this.lastSignalTime[symbol] || 0;
-          if (now - lastTime < 5 * 60 * 1000) continue;
+        // 1H trend konfirmasyonu
+        const trend1H = TechnicalAnalysis.analyze1H(candles1H);
+        analysis.trend1H = trend1H.trend;
+        analysis.trend1HPuan = trend1H.puan;
 
-          this.lastSignalTime[symbol] = now;
-          signalCount++;
-          signalsFound.push(`${symbol}(${analysis.score})`);
-
-          console.log(`🚨 ALIM: ${symbol} | Skor: ${analysis.score} | RSI: ${analysis.rsi}`);
-
-          const signalId = this.saveSignal(analysis);
-
-          // Telegram — sadece telegram_min_score üstü
-          const telegram = this.getTelegram();
-          if (telegram && analysis.score >= telegramMinScore) {
-            await telegram.sendSignal(analysis);
-          }
-
-          // WebSocket arayüze bildir
-          if (global.wss) {
-            global.wss.clients.forEach(client => {
-              if (client.readyState === 1) {
-                client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
-              }
-            });
-          }
-
-          // Otomatik alım
-          if (settings.auto_trade_enabled === 'true') {
-            await this.openPosition(analysis, signalId);
-          }
+        // 1H aşağı trendse sinyali reddet
+        if (trend1H.trend === 'ASAGI') {
+          console.log(`⛔ ${symbol} — 5M ALIM ama 1H ASAGI trend, sinyal reddedildi`);
+          continue;
         }
+
+        // 1H yukarı trendse skoru artır
+        if (trend1H.trend === 'YUKARI') {
+          analysis.score = Math.min(100, analysis.score + 15);
+          analysis.positive.push(`✅ 1H Trend: YUKARI (${trend1H.puan} puan)`);
+        } else if (trend1H.trend === 'HAFIF_YUKARI') {
+          analysis.score = Math.min(100, analysis.score + 8);
+          analysis.positive.push(`📈 1H Trend: HAFIF YUKARI`);
+        } else if (trend1H.trend === 'YATAY') {
+          analysis.positive.push(`➡️ 1H Trend: YATAY — devam`);
+        } else if (trend1H.trend === 'HAFIF_ASAGI') {
+          analysis.score = Math.max(0, analysis.score - 10);
+          analysis.negative.push(`⚠️ 1H Trend: HAFIF ASAGI — dikkat`);
+        }
+
+        // Min skor kontrolü
+        const minScore = parseFloat(settings.min_score || 10);
+        if (analysis.score < minScore) continue;
+
+        // Son 5 dakikada aynı coin için sinyal verildi mi?
+        const now      = Date.now();
+        const lastTime = this.lastSignalTime[symbol] || 0;
+        if (now - lastTime < 5 * 60 * 1000) continue;
+
+        this.lastSignalTime[symbol] = now;
+        signalCount++;
+        signalsFound.push(`${symbol}(${analysis.score})`);
+
+        console.log(`🚨 ALIM: ${symbol} | 5M Skor: ${analysis.score} | 1H: ${trend1H.trend} | RSI: ${analysis.rsi}`);
+
+        const signalId = this.saveSignal(analysis);
+
+        // Telegram
+        const telegram = this.getTelegram();
+        if (telegram && analysis.score >= telegramMinScore) {
+          await telegram.sendSignal(analysis);
+        }
+
+        // WebSocket arayüze bildir
+        if (global.wss) {
+          global.wss.clients.forEach(client => {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
+            }
+          });
+        }
+
+        // Otomatik alım
+        if (settings.auto_trade_enabled === 'true') {
+          await this.openPosition(analysis, signalId);
+        }
+
       } catch (err) {
         console.error(`${symbol} analiz hatası:`, err.message);
       }
@@ -180,7 +229,6 @@ class TradingEngine {
 
     const sure = Date.now() - baslangic;
     this.saveScanLog(symbols.length, signalCount, sure, signalsFound);
-    this.lastScanTime = Date.now();
 
     const mesaj = signalCount > 0
       ? `✅ ${signalCount} sinyal: ${signalsFound.join(', ')}`
@@ -285,7 +333,7 @@ class TradingEngine {
           `✅ <b>POZİSYON AÇILDI — ${analysis.symbol}</b>\n` +
           `💰 Fiyat: <code>${fillPrice}</code>\n` +
           `🛑 Stop: <code>${stopLoss}</code>\n` +
-          `📊 Skor: ${analysis.score}`
+          `📊 Skor: ${analysis.score} | 1H: ${analysis.trend1H}`
         );
       }
       return posResult.lastInsertRowid;
@@ -372,16 +420,27 @@ class TradingEngine {
     try {
       const symbols = await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
+
+      // 5M ve 1H mumları yükle
       await this.loadHistoricalCandles(symbols, interval, limit);
+      await this.load1HCandles(symbols);
+
+      // WebSocket başlat
       this.startWebSocket(symbols, interval);
+
+      // Pozisyon kontrolü her 30 saniyede bir
       this.positionInterval = setInterval(() => this.checkPositions(), 30000);
+
+      // Her saatte coin listesi + 1H mumları yenile
       this.symbolRefreshInterval = setInterval(async () => {
-        console.log('🔄 Coin listesi yenileniyor...');
+        console.log('🔄 Coin listesi ve 1H mumlar yenileniyor...');
         const newSymbols = await this.fetchSymbols();
         await this.loadHistoricalCandles(newSymbols, interval, limit);
+        await this.load1HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-      console.log('✅ Engine hazır — WebSocket ile anlık mum takibi aktif');
+
+      console.log('✅ Engine hazır — 5M WebSocket + 1H konfirmasyon aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
@@ -394,6 +453,7 @@ class TradingEngine {
     if (this.symbolRefreshInterval) clearInterval(this.symbolRefreshInterval);
     this.running = false;
     this.candleBuffers = {};
+    this.candle1HBuffers = {};
     this.tickers = {};
     this.closedCandles = new Set();
     console.log('Engine durduruldu.');
