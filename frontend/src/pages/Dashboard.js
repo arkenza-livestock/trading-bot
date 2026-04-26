@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+const trSaat = (tarih) => new Date(tarih + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+
 export default function Dashboard({ api, stats }) {
   const [signals, setSignals] = useState([]);
   const [positions, setPositions] = useState([]);
@@ -41,7 +43,7 @@ export default function Dashboard({ api, stats }) {
           <div className="page-sub">Gerçek zamanlı kripto sinyal takibi</div>
         </div>
         <div style={{ fontSize: 12, color: '#718096', textAlign: 'right' }}>
-          {new Date().toLocaleString('tr-TR')}
+          {new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}
         </div>
       </div>
 
@@ -52,7 +54,7 @@ export default function Dashboard({ api, stats }) {
           <div>
             <div style={{ fontSize: 12, color: '#718096' }}>Son Tarama</div>
             <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>
-              {lastScan ? new Date(lastScan.created_at).toLocaleString('tr-TR') : 'Henüz tarama yok'}
+              {lastScan ? trSaat(lastScan.created_at) : 'Henüz tarama yok'}
             </div>
           </div>
         </div>
@@ -117,9 +119,7 @@ export default function Dashboard({ api, stats }) {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr>
-                  <th>Coin</th><th>Skor</th><th>Risk</th><th>Fiyat</th><th>Saat</th>
-                </tr>
+                <tr><th>Coin</th><th>Skor</th><th>Risk</th><th>Fiyat</th><th>Saat</th></tr>
               </thead>
               <tbody>
                 {signals.length === 0 ? (
@@ -128,22 +128,14 @@ export default function Dashboard({ api, stats }) {
                   <tr key={s.id}>
                     <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</td>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181', fontWeight: 700 }}>
-                          {s.score}
-                        </span>
-                        <div className="score-bar" style={{ width: 50 }}>
-                          <div className="score-fill" style={{
-                            width: `${Math.max(0, Math.min(100, s.score))}%`,
-                            background: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181'
-                          }} />
-                        </div>
-                      </div>
+                      <span style={{ color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181', fontWeight: 700 }}>
+                        {s.score}
+                      </span>
                     </td>
                     <td>{getRiskBadge(s.risk)}</td>
                     <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(s.price).toFixed(6)}</td>
                     <td style={{ color: '#4a5568', fontSize: 11 }}>
-                      {new Date(s.created_at).toLocaleTimeString('tr-TR')}
+                      {trSaat(s.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -166,7 +158,7 @@ export default function Dashboard({ api, stats }) {
               }}>
                 <div>
                   <div style={{ fontSize: 12, color: '#e2e8f0' }}>
-                    {new Date(log.created_at).toLocaleString('tr-TR')}
+                    {trSaat(log.created_at)}
                   </div>
                   {log.signal_count > 0 && log.signals_found?.length > 0 && (
                     <div style={{ fontSize: 11, color: '#68d391', marginTop: 2 }}>
@@ -189,7 +181,7 @@ export default function Dashboard({ api, stats }) {
 
       {/* Açık Pozisyonlar */}
       {positions.length > 0 && (
-        <div className="card">
+        <div className="card" style={{ marginTop: 20 }}>
           <div className="card-title">Açık Pozisyonlar</div>
           <div className="table-wrap">
             <table>
@@ -213,7 +205,7 @@ export default function Dashboard({ api, stats }) {
                       </span>
                     </td>
                     <td style={{ color: '#4a5568', fontSize: 11 }}>
-                      {Math.floor((Date.now() - new Date(p.opened_at).getTime()) / 60000)} dk
+                      {Math.floor((Date.now() - new Date(p.opened_at + 'Z').getTime()) / 60000)} dk
                     </td>
                   </tr>
                 ))}
