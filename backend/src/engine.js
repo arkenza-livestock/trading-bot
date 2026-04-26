@@ -14,7 +14,7 @@ class TradingEngine {
     this.candleBuffers = {};
     this.tickers = {};
     this.lastSignalTime = {};
-    this.closedCandles = new Set(); // İşlenen mumları takip et
+    this.closedCandles = new Set();
   }
 
   getSettings() {
@@ -74,8 +74,7 @@ class TradingEngine {
     const settings = this.getSettings();
     const binance  = new BinanceService('', '');
     const tickers  = await binance.getAllTickers();
-
-    const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
+    const STABLES  = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
 
     const filtered = tickers
       .filter(t => {
@@ -113,13 +112,9 @@ class TradingEngine {
     console.log(`✅ ${Object.keys(this.candleBuffers).length} coin için geçmiş mumlar hazır`);
   }
 
-  // Her mum kapanış zamanında tüm coinleri tara
   async scanAllCoins(candleCloseTime) {
-    // Aynı mum için tekrar tarama yapma
     if (this.closedCandles.has(candleCloseTime)) return;
     this.closedCandles.add(candleCloseTime);
-
-    // 10'dan fazla kayıt tutma
     if (this.closedCandles.size > 10) {
       const first = this.closedCandles.values().next().value;
       this.closedCandles.delete(first);
@@ -128,14 +123,14 @@ class TradingEngine {
     const baslangic = Date.now();
     const settings  = this.getSettings();
     const zaman     = new Date().toLocaleTimeString('tr-TR');
+    const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
     console.log(`[${zaman}] Mum kapandı — tüm coinler analiz ediliyor...`);
-
     this.clearOldSignals();
 
-    let signalCount  = 0;
+    let signalCount    = 0;
     const signalsFound = [];
-    const symbols    = Object.keys(this.candleBuffers);
+    const symbols      = Object.keys(this.candleBuffers);
 
     for (const symbol of symbols) {
       try {
@@ -147,8 +142,7 @@ class TradingEngine {
         if (!analysis) continue;
 
         if (analysis.signal === 'ALIM') {
-          // Son 5 dakikada aynı coin için sinyal verildi mi?
-          const now = Date.now();
+          const now      = Date.now();
           const lastTime = this.lastSignalTime[symbol] || 0;
           if (now - lastTime < 5 * 60 * 1000) continue;
 
@@ -160,9 +154,11 @@ class TradingEngine {
 
           const signalId = this.saveSignal(analysis);
 
-          // Telegram
+          // Telegram — sadece telegram_min_score üstü
           const telegram = this.getTelegram();
-          if (telegram) await telegram.sendSignal(analysis);
+          if (telegram && analysis.score >= telegramMinScore) {
+            await telegram.sendSignal(analysis);
+          }
 
           // WebSocket arayüze bildir
           if (global.wss) {
@@ -229,15 +225,12 @@ class TradingEngine {
         if (!this.candleBuffers[symbol]) return;
 
         if (isClosed) {
-          // Mum kapandı → buffer'a ekle
           this.candleBuffers[symbol].push(newCandle);
           if (this.candleBuffers[symbol].length > 100) {
             this.candleBuffers[symbol].shift();
           }
-          // Tüm coinleri tara — sadece bir kez tetikle
           await this.scanAllCoins(kline.T);
         } else {
-          // Mum devam ediyor → son mumu güncelle
           const buf = this.candleBuffers[symbol];
           buf[buf.length - 1] = newCandle;
         }
@@ -366,7 +359,7 @@ class TradingEngine {
   }
 
   async runAnalysis() {
-    // WebSocket kullanıyoruz, bu fonksiyon artık boş
+    // WebSocket kullanıyoruz
   }
 
   async start() {
