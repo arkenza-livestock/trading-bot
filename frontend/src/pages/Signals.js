@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+const trSaat = (tarih) => new Date(tarih + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+
 export default function Signals({ api }) {
   const [signals, setSignals] = useState([]);
   const [filter, setFilter] = useState('ALL');
@@ -47,7 +49,7 @@ export default function Signals({ api }) {
                     <td><span className={`badge badge-${s.signal_type?.toLowerCase()}`}>{s.signal_type}</span></td>
                     <td><span style={{ color: s.score >= 70 ? '#68d391' : s.score >= 50 ? '#f6ad55' : '#fc8181', fontWeight: 600 }}>{s.score}</span></td>
                     <td style={{ color: '#a0aec0' }}>{parseFloat(s.price).toFixed(6)}</td>
-                    <td style={{ color: '#4a5568', fontSize: 11 }}>{new Date(s.created_at).toLocaleString('tr-TR')}</td>
+                    <td style={{ color: '#4a5568', fontSize: 11 }}>{trSaat(s.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -60,7 +62,7 @@ export default function Signals({ api }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <div>
                   <div style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0' }}>{selected.symbol}</div>
-                  <div style={{ fontSize: 13, color: '#718096' }}>{new Date(selected.created_at).toLocaleString('tr-TR')}</div>
+                  <div style={{ fontSize: 13, color: '#718096' }}>{trSaat(selected.created_at)}</div>
                 </div>
                 <span className={`badge badge-${selected.signal_type?.toLowerCase()}`} style={{ fontSize: 14, padding: '6px 12px' }}>{selected.signal_type}</span>
               </div>
@@ -82,18 +84,22 @@ export default function Signals({ api }) {
               {selected.positive_signals?.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: '#68d391', marginBottom: 6, fontWeight: 600 }}>✅ POZİTİF SİNYALLER</div>
-                  {selected.positive_signals.map((p, i) => <div key={i} style={{ fontSize: 12, color: '#a0aec0', padding: '3px 0' }}>• {p}</div>)}
+                  {selected.positive_signals.map((p, i) => (
+                    <div key={i} style={{ fontSize: 12, color: '#a0aec0', padding: '3px 0', borderBottom: '1px solid #111827' }}>• {p}</div>
+                  ))}
                 </div>
               )}
               {selected.negative_signals?.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: '#fc8181', marginBottom: 6, fontWeight: 600 }}>⚠️ RİSK FAKTÖRLERİ</div>
-                  {selected.negative_signals.map((n, i) => <div key={i} style={{ fontSize: 12, color: '#a0aec0', padding: '3px 0' }}>• {n}</div>)}
+                  {selected.negative_signals.map((n, i) => (
+                    <div key={i} style={{ fontSize: 12, color: '#a0aec0', padding: '3px 0', borderBottom: '1px solid #111827' }}>• {n}</div>
+                  ))}
                 </div>
               )}
               {selected.ai_comment && (
                 <div style={{ background: '#0a0e1a', padding: 12, borderRadius: 8, border: '1px solid #1e2736' }}>
-                  <div style={{ fontSize: 11, color: '#718096', marginBottom: 6 }}>🤖 AI YORUMU</div>
+                  <div style={{ fontSize: 11, color: '#718096', marginBottom: 6 }}>📊 DETAY</div>
                   <div style={{ fontSize: 13, color: '#a0aec0', lineHeight: 1.6 }}>{selected.ai_comment}</div>
                 </div>
               )}
