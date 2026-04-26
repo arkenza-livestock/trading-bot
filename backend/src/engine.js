@@ -49,20 +49,19 @@ class TradingEngine {
       analysis.symbol, analysis.signal, analysis.score, analysis.risk, analysis.price,
       analysis.rsi, analysis.momentum || 0, analysis.trend1H || 'BELIRSIZ',
       JSON.stringify(analysis.positive), JSON.stringify(analysis.negative),
-      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H}`
+      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H} | ADX:${analysis.adx1H}`
     );
     return result.lastInsertRowid;
   }
 
-  // Dinamik pozisyon boyutu — skora ve 1H trende göre
   calculatePositionSize(analysis, settings) {
     const baseAmount = parseFloat(settings.trade_amount_usdt || 100);
     const score      = analysis.score;
     const trend1H    = analysis.trend1H || 'BELIRSIZ';
+    const guclu1H    = analysis.guclu1H || false;
 
     let multiplier = 1.0;
 
-    // Skora göre çarpan
     if      (score >= 80) multiplier = 2.0;
     else if (score >= 70) multiplier = 1.5;
     else if (score >= 60) multiplier = 1.25;
@@ -71,17 +70,15 @@ class TradingEngine {
     else                  multiplier = 0.5;
 
     // 1H trend bonusu
-    if      (trend1H === 'YUKARI')       multiplier *= 1.2;
-    else if (trend1H === 'HAFIF_YUKARI') multiplier *= 1.0;
-    else if (trend1H === 'YATAY')        multiplier *= 0.85;
-    else if (trend1H === 'HAFIF_ASAGI')  multiplier *= 0.7;
+    if      (trend1H === 'YUKARI' && guclu1H)  multiplier *= 1.3;
+    else if (trend1H === 'YUKARI')             multiplier *= 1.2;
+    else if (trend1H === 'HAFIF_YUKARI')       multiplier *= 1.0;
+    else if (trend1H === 'YATAY')              multiplier *= 0.75;
+    else if (trend1H === 'HAFIF_ASAGI')        multiplier *= 0.5;
 
-    // Max 2x, min 0.25x
     multiplier = Math.min(2.0, Math.max(0.25, multiplier));
-
     const finalAmount = parseFloat((baseAmount * multiplier).toFixed(2));
-
-    console.log(`💰 Pozisyon boyutu: ${finalAmount} USDT (${multiplier}x) | Skor: ${score} | 1H: ${trend1H}`);
+    console.log(`💰 Pozisyon: ${finalAmount} USDT (${multiplier.toFixed(2)}x) | Skor:${score} | 1H:${trend1H}`);
     return finalAmount;
   }
 
@@ -129,13 +126,9 @@ class TradingEngine {
     for (const ticker of symbols) {
       try {
         const candles = await binance.getKlines(ticker.symbol, interval, limit);
-        if (candles && candles.length > 0) {
-          this.candleBuffers[ticker.symbol] = candles;
-        }
+        if (candles && candles.length > 0) this.candleBuffers[ticker.symbol] = candles;
         await new Promise(r => setTimeout(r, 60));
-      } catch (err) {
-        console.error(`${ticker.symbol} geçmiş veri hatası:`, err.message);
-      }
+      } catch (err) { console.error(`${ticker.symbol} veri hatası:`, err.message); }
     }
     console.log(`✅ ${interval} geçmiş mumlar hazır`);
   }
@@ -145,14 +138,10 @@ class TradingEngine {
     console.log(`${symbols.length} coin için 1H mumlar yükleniyor...`);
     for (const ticker of symbols) {
       try {
-        const candles = await binance.getKlines(ticker.symbol, '1h', 50);
-        if (candles && candles.length > 0) {
-          this.candle1HBuffers[ticker.symbol] = candles;
-        }
+        const candles = await binance.getKlines(ticker.symbol, '1h', 200);
+        if (candles && candles.length > 0) this.candle1HBuffers[ticker.symbol] = candles;
         await new Promise(r => setTimeout(r, 60));
-      } catch (err) {
-        console.error(`${ticker.symbol} 1H veri hatası:`, err.message);
-      }
+      } catch (err) { console.error(`${ticker.symbol} 1H hatası:`, err.message); }
     }
     console.log(`✅ 1H mumlar hazır`);
   }
@@ -170,7 +159,7 @@ class TradingEngine {
     const zaman     = new Date().toLocaleTimeString('tr-TR');
     const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
-    console.log(`[${zaman}] Mum kapandı — tüm coinler analiz ediliyor...`);
+    console.log(`[${zaman}] Mum kapandı — analiz başlıyor...`);
     db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
@@ -188,20 +177,41 @@ class TradingEngine {
         if (!analysis) continue;
         if (analysis.signal !== 'ALIM') continue;
 
-        // 1H konfirmasyon
+        // Güçlendirilmiş 1H trend analizi
         const trend1H = TechnicalAnalysis.analyze1H(candles1H);
-        analysis.trend1H     = trend1H.trend;
+        analysis.trend1H    = trend1H.trend;
         analysis.trend1HPuan = trend1H.puan;
+        analysis.guclu1H    = trend1H.guclu;
+        analysis.adx1H      = trend1H.adx;
 
+        // Sıkı trend filtresi
         if (trend1H.trend === 'ASAGI') {
-          console.log(`⛔ ${symbol} — 1H ASAGI, reddedildi`);
+          console.log(`⛔ ${symbol} — 1H güçlü ASAGI (ADX:${trend1H.adx}), reddedildi`);
           continue;
         }
 
-        if      (trend1H.trend === 'YUKARI')       { analysis.score = Math.min(100, analysis.score + 15); analysis.positive.push(`✅ 1H Trend: YUKARI`); }
-        else if (trend1H.trend === 'HAFIF_YUKARI') { analysis.score = Math.min(100, analysis.score + 8);  analysis.positive.push(`📈 1H Trend: HAFIF YUKARI`); }
-        else if (trend1H.trend === 'YATAY')        { analysis.positive.push(`➡️ 1H Trend: YATAY`); }
-        else if (trend1H.trend === 'HAFIF_ASAGI')  { analysis.score = Math.max(0, analysis.score - 10); analysis.negative.push(`⚠️ 1H Trend: HAFIF ASAGI`); }
+        if (trend1H.trend === 'HAFIF_ASAGI') {
+          // Hafif düşüşte sadece çok yüksek skor geçer
+          if (analysis.score < 70) {
+            console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz (${analysis.score}<70)`);
+            continue;
+          }
+        }
+
+        if (trend1H.trend === 'YATAY') {
+          // Yatayda sadece yüksek skor geçer
+          if (analysis.score < 55) {
+            console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz (${analysis.score}<55)`);
+            continue;
+          }
+        }
+
+        // Skor bonusu
+        if      (trend1H.trend === 'YUKARI' && trend1H.guclu) { analysis.score = Math.min(100, analysis.score + 20); analysis.positive.push(`✅ 1H Güçlü YUKARI (ADX:${trend1H.adx})`); }
+        else if (trend1H.trend === 'YUKARI')                   { analysis.score = Math.min(100, analysis.score + 12); analysis.positive.push(`✅ 1H YUKARI`); }
+        else if (trend1H.trend === 'HAFIF_YUKARI')             { analysis.score = Math.min(100, analysis.score + 5);  analysis.positive.push(`📈 1H Hafif YUKARI`); }
+        else if (trend1H.trend === 'YATAY')                    { analysis.positive.push(`➡️ 1H YATAY`); }
+        else if (trend1H.trend === 'HAFIF_ASAGI')              { analysis.score = Math.max(0, analysis.score - 15);   analysis.negative.push(`⚠️ 1H HAFIF_ASAGI — dikkat`); }
 
         const minScore = parseFloat(settings.min_score || 10);
         if (analysis.score < minScore) continue;
@@ -214,7 +224,7 @@ class TradingEngine {
         signalCount++;
         signalsFound.push(`${symbol}(${analysis.score})`);
 
-        console.log(`🚨 ALIM: ${symbol} | Skor: ${analysis.score} | 1H: ${trend1H.trend} | RSI: ${analysis.rsi}`);
+        console.log(`🚨 ALIM: ${symbol} | Skor:${analysis.score} | 1H:${trend1H.trend} | ADX:${trend1H.adx} | RSI:${analysis.rsi}`);
 
         const signalId = this.saveSignal(analysis);
 
@@ -225,9 +235,7 @@ class TradingEngine {
 
         if (global.wss) {
           global.wss.clients.forEach(client => {
-            if (client.readyState === 1) {
-              client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
-            }
+            if (client.readyState === 1) client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
           });
         }
 
@@ -251,35 +259,24 @@ class TradingEngine {
   }
 
   startWebSocket(symbols, interval) {
-    if (this.ws) {
-      try { this.ws.terminate(); } catch(e) {}
-      this.ws = null;
-    }
+    if (this.ws) { try { this.ws.terminate(); } catch(e) {} this.ws = null; }
 
-    const streams = symbols
-      .map(s => `${s.symbol.toLowerCase()}@kline_${interval}`)
-      .join('/');
-
-    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    const streams = symbols.map(s => `${s.symbol.toLowerCase()}@kline_${interval}`).join('/');
+    const wsUrl   = `wss://stream.binance.com:9443/stream?streams=${streams}`;
     console.log(`🔌 WebSocket başlatılıyor: ${symbols.length} coin, ${interval}`);
 
     this.ws = new WebSocket(wsUrl);
 
-    this.ws.on('open', () => {
-      console.log('✅ WebSocket bağlantısı kuruldu — anlık mum takibi aktif');
-    });
+    this.ws.on('open', () => console.log('✅ WebSocket bağlantısı kuruldu'));
 
     this.ws.on('message', async (data) => {
       try {
         const parsed = JSON.parse(data);
-        if (!parsed.data || !parsed.data.k) return;
+        if (!parsed.data?.k) return;
         const kline    = parsed.data.k;
         const symbol   = kline.s;
         const isClosed = kline.x;
-        const newCandle = [
-          kline.t, kline.o, kline.h, kline.l, kline.c, kline.v,
-          kline.T, kline.q, kline.n, kline.V, kline.Q, '0'
-        ];
+        const newCandle = [kline.t, kline.o, kline.h, kline.l, kline.c, kline.v, kline.T, kline.q, kline.n, kline.V, kline.Q, '0'];
         if (!this.candleBuffers[symbol]) return;
         if (isClosed) {
           this.candleBuffers[symbol].push(newCandle);
@@ -292,9 +289,7 @@ class TradingEngine {
       } catch (err) {}
     });
 
-    this.ws.on('error', (err) => {
-      console.error('WebSocket hatası:', err.message);
-    });
+    this.ws.on('error', (err) => console.error('WebSocket hatası:', err.message));
 
     this.ws.on('close', () => {
       console.log('⚠️ WebSocket kapandı');
@@ -316,32 +311,23 @@ class TradingEngine {
     const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(analysis.symbol);
     if (existing) return null;
     if (!this.checkDailyLimits(settings)) return null;
-
     try {
       const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
       const slippagePct = parseFloat(settings.slippage_rate || 0.05) / 100;
-
-      // Dinamik pozisyon boyutu
       const tradeAmount = this.calculatePositionSize(analysis, settings);
       const quantity    = tradeAmount / (analysis.price * (1 + slippagePct));
-
-      const order     = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
-      const fillPrice = parseFloat(order.fills?.[0]?.price || analysis.price);
-      const fillQty   = parseFloat(order.executedQty);
-      const stopLoss  = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
-
-      const posResult = db.prepare(`
+      const order       = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
+      const fillPrice   = parseFloat(order.fills?.[0]?.price || analysis.price);
+      const fillQty     = parseFloat(order.executedQty);
+      const stopLoss    = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
+      const posResult   = db.prepare(`
         INSERT INTO positions (symbol, side, quantity, entry_price, current_price, stop_loss, take_profit, signal_id)
         VALUES (?, 'BUY', ?, ?, ?, ?, 0, ?)
       `).run(analysis.symbol, fillQty, fillPrice, fillPrice, stopLoss, signalId);
-
       db.prepare(`INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id) VALUES (?,?,'BUY',?,?,?,?)`)
         .run(posResult.lastInsertRowid, analysis.symbol, fillQty, fillPrice, fillQty * fillPrice, order.orderId);
-
       this.trailingStops[analysis.symbol] = { highestPrice: fillPrice, entryPrice: fillPrice, quantity: fillQty };
-
-      console.log(`✅ Pozisyon açıldı: ${analysis.symbol} @ ${fillPrice} | Miktar: ${tradeAmount} USDT`);
-
+      console.log(`✅ Pozisyon açıldı: ${analysis.symbol} @ ${fillPrice} | ${tradeAmount} USDT`);
       const telegram = this.getTelegram();
       if (telegram) {
         await telegram.sendMessage(
@@ -349,7 +335,7 @@ class TradingEngine {
           `💰 Fiyat: <code>${fillPrice}</code>\n` +
           `💵 Miktar: <b>${tradeAmount} USDT</b>\n` +
           `🛑 Stop: <code>${stopLoss}</code>\n` +
-          `📊 Skor: ${analysis.score} | 1H: ${analysis.trend1H}`
+          `📊 Skor: ${analysis.score} | 1H: ${analysis.trend1H} | ADX: ${analysis.adx1H}`
         );
       }
       return posResult.lastInsertRowid;
@@ -371,7 +357,6 @@ class TradingEngine {
     const komisyonPct  = parseFloat(settings.commission_rate || 0.1) / 100;
     const slippagePct  = parseFloat(settings.slippage_rate || 0.05) / 100;
     const timeStopMin  = parseInt(settings.time_stop_minutes || 0);
-
     for (const pos of positions) {
       try {
         const currentPrice = await binance.getPrice(pos.symbol);
@@ -379,19 +364,15 @@ class TradingEngine {
         const totalCost    = (komisyonPct + slippagePct) * 2;
         const netPnlPct    = brutoPnlPct - (totalCost * 100);
         const netPnl       = (currentPrice - pos.entry_price) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
-
         if (!this.trailingStops[pos.symbol]) {
           this.trailingStops[pos.symbol] = { highestPrice: pos.entry_price, entryPrice: pos.entry_price, quantity: pos.quantity };
         }
         const trailing = this.trailingStops[pos.symbol];
         if (currentPrice > trailing.highestPrice) trailing.highestPrice = currentPrice;
-
         const trailingStopPrice = parseFloat((trailing.highestPrice * (1 - trailingPct)).toFixed(8));
         const hardStopPrice     = parseFloat((pos.entry_price * (1 - hardStopPct)).toFixed(8));
-
         db.prepare('UPDATE positions SET current_price=?, pnl=?, pnl_percent=?, stop_loss=? WHERE id=?')
           .run(currentPrice, netPnl, netPnlPct, Math.max(trailingStopPrice, hardStopPrice), pos.id);
-
         if (timeStopMin > 0 && Date.now() - new Date(pos.opened_at).getTime() > timeStopMin * 60 * 1000) {
           await this.closePosition(pos, binance, 'TIME_STOP', currentPrice, komisyonPct, slippagePct); continue;
         }
@@ -450,7 +431,7 @@ class TradingEngine {
         await this.load1HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-      console.log('✅ Engine hazır — 5M WebSocket + 1H konfirmasyon + Dinamik pozisyon aktif');
+      console.log('✅ Engine hazır — 5M WebSocket + Güçlü 1H trend filtresi + ADX aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
