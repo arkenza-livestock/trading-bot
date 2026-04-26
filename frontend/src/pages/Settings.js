@@ -128,11 +128,14 @@ export default function Settings({ api }) {
                   value={settings.telegram_token || ''} onChange={e => update('telegram_token', e.target.value)} />
               </F>
               <F label="Chat ID">
-                <input className="form-input" type="text" placeholder="-1001234567890"
+                <input className="form-input" type="text" placeholder="123456789"
                   value={settings.telegram_chat_id || ''} onChange={e => update('telegram_chat_id', e.target.value)} />
               </F>
             </R2>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <R2>
+              <N k="telegram_min_score" label="Telegram Min Skor" desc="Bu skorun altı Telegram'a gitmez" placeholder="50" />
+            </R2>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
               <button className="btn btn-ghost" onClick={testTelegram}>
                 📤 Test Mesajı Gönder
               </button>
@@ -156,17 +159,6 @@ export default function Settings({ api }) {
 
           <S title="⏱️ Tarama">
             <R2>
-              <F label="Tarama Aralığı">
-                <select className="form-input" value={settings.check_interval || '5'} onChange={e => update('check_interval', e.target.value)}>
-                  <option value="1">1 dakika</option>
-                  <option value="3">3 dakika</option>
-                  <option value="5">5 dakika</option>
-                  <option value="10">10 dakika</option>
-                  <option value="15">15 dakika</option>
-                  <option value="20">20 dakika</option>
-                  <option value="30">30 dakika</option>
-                </select>
-              </F>
               <F label="Mum Zaman Dilimi">
                 <select className="form-input" value={settings.candle_interval || '5m'} onChange={e => update('candle_interval', e.target.value)}>
                   <option value="1m">1 Dakika</option>
@@ -177,6 +169,7 @@ export default function Settings({ api }) {
                   <option value="1h">1 Saat</option>
                 </select>
               </F>
+              <N k="candle_limit" label="Mum Sayısı" placeholder="50" />
             </R2>
           </S>
 
@@ -201,30 +194,18 @@ export default function Settings({ api }) {
       {/* İNDİKATÖR */}
       {tab === 'İndikatör' && (
         <div>
-          <S title="📊 Genel">
+          <S title="📊 Sinyal">
             <R2>
-              <N k="min_score" label="Min Sinyal Skoru" desc="Bu altı sinyal yok" placeholder="10" />
-              <N k="candle_limit" label="Mum Sayısı" placeholder="50" />
+              <N k="min_score" label="Min Sinyal Skoru" desc="Web'de göster" placeholder="10" />
             </R2>
           </S>
           <S title="📈 Momentum">
             <R2>
-              <N k="momentum_roc3_threshold" label="ROC3 Eşiği (%)" step={0.1} placeholder="0.5" />
-              <N k="momentum_roc5_threshold" label="ROC5 Eşiği (%)" step={0.1} placeholder="1.0" />
-            </R2>
-          </S>
-          <S title="📉 RSI">
-            <R2>
               <N k="rsi_period" label="RSI Periyot" placeholder="7" />
-              <N k="rsi_oversold" label="Aşırı Satım Eşiği" placeholder="50" />
+              <N k="rsi_oversold" label="RSI Aşırı Satım" placeholder="50" />
             </R2>
             <R2>
-              <N k="rsi_overbought" label="Aşırı Alım Eşiği" placeholder="75" />
-            </R2>
-          </S>
-          <S title="💧 Hacim">
-            <R2>
-              <N k="volume_spike_threshold" label="Spike Eşiği (x)" step={0.1} placeholder="2.0" />
+              <N k="rsi_overbought" label="RSI Aşırı Alım" placeholder="75" />
             </R2>
           </S>
           <S title="📍 Destek/Direnç">
@@ -250,8 +231,8 @@ export default function Settings({ api }) {
               <N k="trailing_stop_percent" label="Trailing Stop (%)" step={0.1} placeholder="0.5" />
             </R2>
             <R2>
-              <N k="min_profit_percent" label="Min Kar (trailing için)" step={0.1} placeholder="0.5" />
-              <N k="time_stop_minutes" label="Zaman Stop (dakika)" placeholder="60" />
+              <N k="min_profit_percent" label="Min Kar (trailing için %)" step={0.1} placeholder="0.5" />
+              <N k="time_stop_minutes" label="Zaman Stop (dakika)" desc="0 = kapalı" placeholder="60" />
             </R2>
           </S>
           <S title="⚖️ Günlük Limit">
