@@ -15,6 +15,7 @@ class TradingEngine {
     this.tickers = {};
     this.lastSignalTime = {};
     this.closedCandles = new Set();
+    this.lastScanTime = 0;
   }
 
   getSettings() {
@@ -31,10 +32,6 @@ class TradingEngine {
     const settings = this.getSettings();
     if (!settings.telegram_token || !settings.telegram_chat_id) return null;
     return new TelegramService(settings.telegram_token, settings.telegram_chat_id);
-  }
-
-  clearOldSignals() {
-    db.prepare("DELETE FROM signals WHERE created_at < datetime('now', '-30 minutes')").run();
   }
 
   saveScanLog(coinCount, signalCount, durationMs, signalsFound = []) {
@@ -126,7 +123,9 @@ class TradingEngine {
     const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
     console.log(`[${zaman}] Mum kapandı — tüm coinler analiz ediliyor...`);
-    this.clearOldSignals();
+
+    // Her taramada sinyalleri temizle — sadece bu taramanın sinyalleri görünsün
+    db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
     const signalsFound = [];
@@ -181,6 +180,7 @@ class TradingEngine {
 
     const sure = Date.now() - baslangic;
     this.saveScanLog(symbols.length, signalCount, sure, signalsFound);
+    this.lastScanTime = Date.now();
 
     const mesaj = signalCount > 0
       ? `✅ ${signalCount} sinyal: ${signalsFound.join(', ')}`
