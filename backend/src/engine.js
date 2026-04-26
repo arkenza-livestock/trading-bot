@@ -2,13 +2,18 @@ const BinanceService = require('./binance');
 const TechnicalAnalysis = require('./analysis');
 const TelegramService = require('./telegram');
 const db = require('./database');
+const WebSocket = require('ws');
 
 class TradingEngine {
   constructor() {
     this.running = false;
-    this.interval = null;
     this.positionInterval = null;
+    this.symbolRefreshInterval = null;
     this.trailingStops = {};
+    this.ws = null;
+    this.candleBuffers = {};
+    this.tickers = {};
+    this.lastSignalTime = {};
   }
 
   getSettings() {
@@ -53,12 +58,8 @@ class TradingEngine {
 
   checkDailyLimits(settings) {
     const bugun = new Date().toISOString().split('T')[0];
-    const gunlukZarar = db.prepare(`
-      SELECT COALESCE(SUM(pnl), 0) as toplam FROM positions WHERE date(closed_at) = ? AND pnl < 0
-    `).get(bugun);
-    const gunlukIslem = db.prepare(`
-      SELECT COUNT(*) as count FROM positions WHERE date(opened_at) = ?
-    `).get(bugun);
+    const gunlukZarar = db.prepare(`SELECT COALESCE(SUM(pnl),0) as toplam FROM positions WHERE date(closed_at)=? AND pnl<0`).get(bugun);
+    const gunlukIslem = db.prepare(`SELECT COUNT(*) as count FROM positions WHERE date(opened_at)=?`).get(bugun);
     const maxZarar = parseFloat(settings.max_daily_loss_percent || 5);
     const maxIslem = parseInt(settings.max_daily_trades || 20);
     const bakiye   = parseFloat(settings.trade_amount_usdt || 100) * parseInt(settings.max_open_positions || 5);
@@ -68,35 +69,205 @@ class TradingEngine {
     return true;
   }
 
+  // Filtrelenmiş coin listesini çek
+  async fetchSymbols() {
+    const settings = this.getSettings();
+    const binance  = new BinanceService('', '');
+    const tickers  = await binance.getAllTickers();
+
+    const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
+
+    const filtered = tickers
+      .filter(t => {
+        if (!t.symbol.endsWith('USDT')) return false;
+        if (STABLES.has(t.symbol)) return false;
+        const vol   = parseFloat(t.quoteVolume) || 0;
+        const price = parseFloat(t.lastPrice) || 0;
+        return price > 0 && vol >= parseFloat(settings.min_volume || 1000000);
+      })
+      .sort((a, b) => {
+        const sA = parseFloat(a.quoteVolume) * Math.abs(parseFloat(a.priceChangePercent));
+        const sB = parseFloat(b.quoteVolume) * Math.abs(parseFloat(b.priceChangePercent));
+        return sB - sA;
+      })
+      .slice(0, parseInt(settings.max_coins || 50));
+
+    // Ticker haritasını güncelle
+    filtered.forEach(t => { this.tickers[t.symbol] = t; });
+
+    return filtered;
+  }
+
+  // Geçmiş mum verilerini yükle
+  async loadHistoricalCandles(symbols, interval, limit) {
+    const binance = new BinanceService('', '');
+    console.log(`${symbols.length} coin için geçmiş mumlar yükleniyor...`);
+
+    for (const ticker of symbols) {
+      try {
+        const candles = await binance.getKlines(ticker.symbol, interval, limit);
+        if (candles && candles.length > 0) {
+          this.candleBuffers[ticker.symbol] = candles;
+        }
+        await new Promise(r => setTimeout(r, 60));
+      } catch (err) {
+        console.error(`${ticker.symbol} geçmiş veri hatası:`, err.message);
+      }
+    }
+    console.log(`✅ ${Object.keys(this.candleBuffers).length} coin için geçmiş mumlar hazır`);
+  }
+
+  // WebSocket başlat
+  startWebSocket(symbols, interval) {
+    if (this.ws) {
+      try { this.ws.terminate(); } catch(e) {}
+      this.ws = null;
+    }
+
+    // Binance combined stream
+    const streams = symbols
+      .map(s => `${s.symbol.toLowerCase()}@kline_${interval}`)
+      .join('/');
+
+    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    console.log(`🔌 WebSocket başlatılıyor: ${symbols.length} coin, ${interval}`);
+
+    this.ws = new WebSocket(wsUrl);
+
+    this.ws.on('open', () => {
+      console.log('✅ WebSocket bağlantısı kuruldu — anlık mum takibi aktif');
+    });
+
+    this.ws.on('message', async (data) => {
+      try {
+        const parsed = JSON.parse(data);
+        if (!parsed.data || !parsed.data.k) return;
+
+        const kline    = parsed.data.k;
+        const symbol   = kline.s;
+        const isClosed = kline.x;
+
+        const newCandle = [
+          kline.t, kline.o, kline.h, kline.l, kline.c, kline.v,
+          kline.T, kline.q, kline.n, kline.V, kline.Q, '0'
+        ];
+
+        if (!this.candleBuffers[symbol]) return;
+
+        if (isClosed) {
+          // Mum kapandı → buffer'a ekle
+          this.candleBuffers[symbol].push(newCandle);
+          if (this.candleBuffers[symbol].length > 100) {
+            this.candleBuffers[symbol].shift();
+          }
+          // Analiz yap
+          await this.analyzeSymbol(symbol);
+        } else {
+          // Mum devam ediyor → son mumu güncelle
+          const buf = this.candleBuffers[symbol];
+          buf[buf.length - 1] = newCandle;
+        }
+      } catch (err) {
+        // Sessizce geç
+      }
+    });
+
+    this.ws.on('error', (err) => {
+      console.error('WebSocket hatası:', err.message);
+    });
+
+    this.ws.on('close', () => {
+      console.log('⚠️ WebSocket kapandı');
+      if (this.running) {
+        console.log('5 saniye sonra yeniden bağlanıyor...');
+        setTimeout(async () => {
+          const syms = await this.fetchSymbols();
+          this.startWebSocket(syms, this.getSetting('candle_interval') || '5m');
+        }, 5000);
+      }
+    });
+  }
+
+  // Tek coin analizi — mum kapanışında
+  async analyzeSymbol(symbol) {
+    try {
+      const settings = this.getSettings();
+      const candles  = this.candleBuffers[symbol];
+      const ticker   = this.tickers[symbol];
+
+      if (!candles || candles.length < 20 || !ticker) return;
+
+      // Aynı coin için son 5 dakikada sinyal verildi mi?
+      const now = Date.now();
+      const lastTime = this.lastSignalTime[symbol] || 0;
+      if (now - lastTime < 5 * 60 * 1000) return;
+
+      const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
+      if (!analysis) return;
+
+      if (analysis.signal === 'ALIM') {
+        this.lastSignalTime[symbol] = now;
+        console.log(`🚨 ALIM: ${symbol} | Skor: ${analysis.score} | RSI: ${analysis.rsi}`);
+
+        this.clearOldSignals();
+        const signalId = this.saveSignal(analysis);
+        this.saveScanLog(1, 1, 0, [`${symbol}(${analysis.score})`]);
+
+        // Telegram
+        const telegram = this.getTelegram();
+        if (telegram) await telegram.sendSignal(analysis);
+
+        // WebSocket arayüze bildir
+        if (global.wss) {
+          global.wss.clients.forEach(client => {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
+            }
+          });
+        }
+
+        // Otomatik alım
+        if (settings.auto_trade_enabled === 'true') {
+          await this.openPosition(analysis, signalId);
+        }
+      }
+    } catch (err) {
+      console.error(`${symbol} analiz hatası:`, err.message);
+    }
+  }
+
   async openPosition(analysis, signalId) {
     const settings = this.getSettings();
     if (settings.auto_trade_enabled !== 'true') return null;
     if (!settings.binance_api_key || !settings.binance_api_secret) return null;
-    const openCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'").get();
+    const openCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
     if (openCount.count >= parseInt(settings.max_open_positions || 5)) return null;
-    const existing = db.prepare("SELECT id FROM positions WHERE symbol = ? AND status = 'OPEN'").get(analysis.symbol);
+    const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(analysis.symbol);
     if (existing) return null;
     if (!this.checkDailyLimits(settings)) return null;
+
     try {
-      const binance = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
+      const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
       const slippagePct = parseFloat(settings.slippage_rate || 0.05) / 100;
-      const quantity = parseFloat(settings.trade_amount_usdt || 100) / (analysis.price * (1 + slippagePct));
-      const order = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
-      const fillPrice = parseFloat(order.fills?.[0]?.price || analysis.price);
-      const fillQty   = parseFloat(order.executedQty);
-      const stopLoss  = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
+      const quantity    = parseFloat(settings.trade_amount_usdt || 100) / (analysis.price * (1 + slippagePct));
+      const order       = await binance.placeOrder(analysis.symbol, 'BUY', quantity);
+      const fillPrice   = parseFloat(order.fills?.[0]?.price || analysis.price);
+      const fillQty     = parseFloat(order.executedQty);
+      const stopLoss    = parseFloat((fillPrice * (1 - parseFloat(settings.stop_loss_percent || 0.75) / 100)).toFixed(8));
+
       const posResult = db.prepare(`
         INSERT INTO positions (symbol, side, quantity, entry_price, current_price, stop_loss, take_profit, signal_id)
         VALUES (?, 'BUY', ?, ?, ?, ?, 0, ?)
       `).run(analysis.symbol, fillQty, fillPrice, fillPrice, stopLoss, signalId);
+
       db.prepare(`
         INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id)
         VALUES (?, ?, 'BUY', ?, ?, ?, ?)
       `).run(posResult.lastInsertRowid, analysis.symbol, fillQty, fillPrice, fillQty * fillPrice, order.orderId);
+
       this.trailingStops[analysis.symbol] = { highestPrice: fillPrice, entryPrice: fillPrice, quantity: fillQty };
       console.log(`✅ Pozisyon açıldı: ${analysis.symbol} @ ${fillPrice}`);
 
-      // Telegram bildirimi
       const telegram = this.getTelegram();
       if (telegram) {
         await telegram.sendMessage(
@@ -117,7 +288,7 @@ class TradingEngine {
   async checkPositions() {
     const settings = this.getSettings();
     if (!settings.binance_api_key || !settings.binance_api_secret) return;
-    const positions = db.prepare("SELECT * FROM positions WHERE status = 'OPEN'").all();
+    const positions = db.prepare("SELECT * FROM positions WHERE status='OPEN'").all();
     if (!positions.length) return;
 
     const binance      = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
@@ -182,115 +353,66 @@ class TradingEngine {
 
       console.log(`${reason}: ${pos.symbol} | Net:%${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT`);
 
-      // Telegram bildirimi
       const telegram = this.getTelegram();
-      if (telegram) {
-        await telegram.sendPositionClosed(pos.symbol, reason, netPnlPct, netPnl);
-      }
+      if (telegram) await telegram.sendPositionClosed(pos.symbol, reason, netPnlPct, netPnl);
 
     } catch (err) {
       console.error(`${pos.symbol} kapatma hatası:`, err.message);
     }
   }
 
+  // Periyodik tarama — WebSocket'e ek olarak yedek
   async runAnalysis() {
-    const baslangic = Date.now();
-    console.log(`[${new Date().toLocaleTimeString('tr-TR')}] Analiz başlatılıyor...`);
+    console.log(`[${new Date().toLocaleTimeString('tr-TR')}] Periyodik tarama...`);
+  }
+
+  async start() {
+    if (this.running) return;
+    this.running = true;
+
     const settings = this.getSettings();
+    const interval  = settings.candle_interval || '5m';
+    const limit     = parseInt(settings.candle_limit || 50);
+
+    console.log(`Engine başlatılıyor... Interval: ${interval}`);
 
     try {
-      const binance = new BinanceService('', '');
-      const tickers = await binance.getAllTickers();
-      const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
+      // Coin listesini çek
+      const symbols = await this.fetchSymbols();
+      console.log(`${symbols.length} coin seçildi`);
 
-      const filtered = tickers
-        .filter(t => {
-          if (!t.symbol.endsWith('USDT')) return false;
-          if (STABLES.has(t.symbol)) return false;
-          const vol   = parseFloat(t.quoteVolume) || 0;
-          const price = parseFloat(t.lastPrice) || 0;
-          return price > 0 && vol >= parseFloat(settings.min_volume || 1000000);
-        })
-        .sort((a, b) => {
-          const sA = parseFloat(a.quoteVolume) * Math.abs(parseFloat(a.priceChangePercent));
-          const sB = parseFloat(b.quoteVolume) * Math.abs(parseFloat(b.priceChangePercent));
-          return sB - sA;
-        })
-        .slice(0, parseInt(settings.max_coins || 50));
+      // Geçmiş mumları yükle
+      await this.loadHistoricalCandles(symbols, interval, limit);
 
-      console.log(`[${new Date().toLocaleTimeString('tr-TR')}] ${filtered.length} coin analiz ediliyor...`);
-      this.clearOldSignals();
+      // WebSocket başlat
+      this.startWebSocket(symbols, interval);
 
-      const interval = settings.candle_interval || '5m';
-      const limit    = parseInt(settings.candle_limit || 50);
-      let signalCount = 0;
-      const signalsFound = [];
-      const telegram = this.getTelegram();
+      // Pozisyon kontrolü her 30 saniyede bir
+      this.positionInterval = setInterval(() => this.checkPositions(), 30000);
 
-      for (const ticker of filtered) {
-        try {
-          const candles  = await binance.getKlines(ticker.symbol, interval, limit);
-          if (!candles || candles.length < 20) continue;
-          const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
-          if (!analysis) continue;
+      // Coin listesini her saatte yenile
+      this.symbolRefreshInterval = setInterval(async () => {
+        console.log('🔄 Coin listesi yenileniyor...');
+        const newSymbols = await this.fetchSymbols();
+        await this.loadHistoricalCandles(newSymbols, interval, limit);
+        this.startWebSocket(newSymbols, interval);
+      }, 60 * 60 * 1000);
 
-          if (analysis.signal === 'ALIM') {
-            signalCount++;
-            signalsFound.push(`${analysis.symbol}(${analysis.score})`);
-            const signalId = this.saveSignal(analysis);
-
-            // Telegram sinyal bildirimi
-            if (telegram) await telegram.sendSignal(analysis);
-
-            if (settings.auto_trade_enabled === 'true') {
-              await this.openPosition(analysis, signalId);
-            }
-
-            if (global.wss) {
-              global.wss.clients.forEach(client => {
-                if (client.readyState === 1) {
-                  client.send(JSON.stringify({ type: 'NEW_SIGNAL', data: analysis }));
-                }
-              });
-            }
-          }
-          await new Promise(r => setTimeout(r, 80));
-        } catch (err) {
-          console.error(`${ticker.symbol} hata:`, err.message);
-        }
-      }
-
-      const sure = Date.now() - baslangic;
-      this.saveScanLog(filtered.length, signalCount, sure, signalsFound);
-
-      const mesaj = signalCount > 0
-        ? `✅ ${signalCount} sinyal: ${signalsFound.join(', ')}`
-        : `❌ Sinyal bulunamadı`;
-
-      console.log(`[${new Date().toLocaleTimeString('tr-TR')}] Tarama bitti (${(sure/1000).toFixed(1)}s) — ${filtered.length} coin — ${mesaj}`);
-
-      await this.checkPositions();
+      console.log('✅ Engine hazır — WebSocket ile anlık mum takibi aktif');
 
     } catch (err) {
-      console.error('Analiz hatası:', err.message);
+      console.error('Engine başlatma hatası:', err.message);
+      this.running = false;
     }
   }
 
-  start() {
-    if (this.running) return;
-    this.running = true;
-    const intervalMin = parseInt(this.getSetting('check_interval') || 5);
-    const intervalMs  = intervalMin * 60 * 1000;
-    this.runAnalysis();
-    this.interval = setInterval(() => this.runAnalysis(), intervalMs);
-    this.positionInterval = setInterval(() => this.checkPositions(), 30000);
-    console.log(`Engine başlatıldı. Tarama: ${intervalMin} dakika | Pozisyon: 30 saniye`);
-  }
-
   stop() {
-    if (this.interval) clearInterval(this.interval);
+    if (this.ws) { try { this.ws.terminate(); } catch(e) {} this.ws = null; }
     if (this.positionInterval) clearInterval(this.positionInterval);
+    if (this.symbolRefreshInterval) clearInterval(this.symbolRefreshInterval);
     this.running = false;
+    this.candleBuffers = {};
+    this.tickers = {};
     console.log('Engine durduruldu.');
   }
 }
