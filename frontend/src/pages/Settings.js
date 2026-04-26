@@ -124,6 +124,7 @@ export default function Settings({ api }) {
         ))}
       </div>
 
+      {/* GENEL */}
       {tab === 'Genel' && (
         <div>
           <S title="🔑 Binance API">
@@ -220,35 +221,73 @@ export default function Settings({ api }) {
         </div>
       )}
 
+      {/* İNDİKATÖR */}
       {tab === 'İndikatör' && (
         <div>
-          <S title="📊 Sinyal">
+          <S title="📊 Genel Sinyal">
             <R2>
-              <NumInput label="Min Sinyal Skoru" desc="Web'de göster" placeholder="10"
+              <NumInput label="Min Sinyal Skoru" desc="Bu altı web'de gösterilmez" placeholder="10"
                 value={settings.min_score} onChange={v => update('min_score', v)} />
             </R2>
           </S>
-          <S title="📈 RSI">
+
+          <S title="📈 Momentum (1-3-5 Mum)">
+            <div style={{ background: '#0a0e1a', border: '1px solid #1e2736', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#718096', lineHeight: 1.8 }}>
+              Fiyatın 1, 3 ve 5 mum öncesine göre değişim hızını ölçer. Ardışık yeşil mumlar ve EMA5&gt;EMA10 ekstra puan alır.
+            </div>
             <R2>
-              <NumInput label="RSI Periyot" placeholder="7"
+              <NumInput label="ROC1 Min Eşik (%)" desc="1 mum değişim eşiği" step={0.1} placeholder="0.2"
+                value={settings.momentum_roc1_threshold} onChange={v => update('momentum_roc1_threshold', v)} />
+              <NumInput label="ROC3 Min Eşik (%)" desc="3 mum değişim eşiği" step={0.1} placeholder="0.5"
+                value={settings.momentum_roc3_threshold} onChange={v => update('momentum_roc3_threshold', v)} />
+            </R2>
+            <R2>
+              <NumInput label="ROC5 Min Eşik (%)" desc="5 mum değişim eşiği" step={0.1} placeholder="1.0"
+                value={settings.momentum_roc5_threshold} onChange={v => update('momentum_roc5_threshold', v)} />
+            </R2>
+          </S>
+
+          <S title="📉 RSI (Göreceli Güç Endeksi)">
+            <div style={{ background: '#0a0e1a', border: '1px solid #1e2736', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#718096', lineHeight: 1.8 }}>
+              RSI düşükse aşırı satım (alım fırsatı), yüksekse aşırı alım (riskli). İdeal alım bölgesi: 25-50 arası.
+            </div>
+            <R2>
+              <NumInput label="RSI Periyot" desc="Varsayılan: 7" placeholder="7"
                 value={settings.rsi_period} onChange={v => update('rsi_period', v)} />
-              <NumInput label="RSI Aşırı Satım" placeholder="50"
+              <NumInput label="Aşırı Satım Eşiği" desc="Altı = güçlü alım sinyali" placeholder="40"
                 value={settings.rsi_oversold} onChange={v => update('rsi_oversold', v)} />
             </R2>
             <R2>
-              <NumInput label="RSI Aşırı Alım" placeholder="75"
+              <NumInput label="Aşırı Alım Eşiği" desc="Üstü = alım uygun değil" placeholder="70"
                 value={settings.rsi_overbought} onChange={v => update('rsi_overbought', v)} />
             </R2>
           </S>
-          <S title="📍 Destek/Direnç">
+
+          <S title="💧 Hacim Analizi">
+            <div style={{ background: '#0a0e1a', border: '1px solid #1e2736', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#718096', lineHeight: 1.8 }}>
+              Anlık hacmin 20 mum ortalamasına oranı. Yüksek hacim = güçlü hareket. Alım baskısı oranı da hesaplanır.
+            </div>
             <R2>
-              <NumInput label="Bakış Periyotu" placeholder="20"
+              <NumInput label="Spike Eşiği (x)" desc="Ortalamanın kaç katı" step={0.1} placeholder="2.0"
+                value={settings.volume_spike_threshold} onChange={v => update('volume_spike_threshold', v)} />
+              <NumInput label="Min Hacim (USDT)" desc="24s min işlem hacmi" placeholder="1000000"
+                value={settings.min_volume} onChange={v => update('min_volume', v)} />
+            </R2>
+          </S>
+
+          <S title="📍 Destek / Direnç">
+            <div style={{ background: '#0a0e1a', border: '1px solid #1e2736', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#718096', lineHeight: 1.8 }}>
+              Fiyatın son N mumda oluşan destek/direnç bandındaki konumu. Desteğe yakınsa alım, direce yakınsa riskli.
+            </div>
+            <R2>
+              <NumInput label="Bakış Periyotu" desc="Kaç mum geriye bak" placeholder="20"
                 value={settings.sr_lookback} onChange={v => update('sr_lookback', v)} />
             </R2>
           </S>
         </div>
       )}
 
+      {/* RİSK */}
       {tab === 'Risk' && (
         <div>
           <S title="💰 İşlem">
