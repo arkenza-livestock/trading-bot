@@ -72,7 +72,6 @@ class TradingEngine {
     else if (score >= 35) multiplier = 0.75;
     else                  multiplier = 0.5;
 
-    // 1H + 4H trend bonusu
     if (trend4H === 'YUKARI' && trend1H === 'YUKARI') {
       multiplier *= guclu4H && guclu1H ? 1.5 : 1.3;
     } else if (trend4H === 'YUKARI') {
@@ -83,7 +82,6 @@ class TradingEngine {
       multiplier *= 0.7;
     }
 
-    // BTC trend bonusu/cezası
     if      (btc4H === 'YUKARI') multiplier *= 1.1;
     else if (btc4H === 'YATAY')  multiplier *= 0.8;
 
@@ -170,7 +168,6 @@ class TradingEngine {
     console.log(`✅ 4H mumlar hazır`);
   }
 
-  // BTC trend güncelle — her 4 saatte bir
   async updateBTCTrend() {
     try {
       const binance = new BinanceService('', '');
@@ -187,10 +184,24 @@ class TradingEngine {
         adx4H:   trend4H.adx,
         lastUpdate: Date.now()
       };
-      console.log(`📊 BTC Trend → 1H:${trend1H.trend}(ADX:${trend1H.adx}) | 4H:${trend4H.trend}(ADX:${trend4H.adx})`);
+      console.log(`📊 BTC → 1H:${trend1H.trend}(ADX:${trend1H.adx}) | 4H:${trend4H.trend}(ADX:${trend4H.adx})`);
     } catch (err) {
       console.error('BTC trend güncelleme hatası:', err.message);
     }
+  }
+
+  // BTC ani düşüş kontrolü
+  checkBTCDrop() {
+    const btcCandles = this.candleBuffers['BTCUSDT'];
+    if (!btcCandles || btcCandles.length < 4) return false;
+    const btcNow  = parseFloat(btcCandles[btcCandles.length-1][4]);
+    const btc3ago = parseFloat(btcCandles[btcCandles.length-4][4]);
+    const btcDrop = ((btcNow - btc3ago) / btc3ago) * 100;
+    if (btcDrop < -1.0) {
+      console.log(`⚠️ BTC son 3 mumda ${btcDrop.toFixed(2)}% düştü`);
+      return true;
+    }
+    return false;
   }
 
   async scanAllCoins(candleCloseTime) {
@@ -206,9 +217,15 @@ class TradingEngine {
     const zaman     = new Date().toLocaleTimeString('tr-TR');
     const telegramMinScore = parseInt(settings.telegram_min_score || 50);
 
-    // BTC trend kontrolü — piyasa durumu
     const btc4H = this.btcTrend.trend4H;
     const btc1H = this.btcTrend.trend1H;
+
+    // BTC ani düşüş → tüm alımları durdur
+    if (this.checkBTCDrop()) {
+      console.log(`[${zaman}] ⛔ BTC ani düşüş — tüm alımlar durduruldu`);
+      this.saveScanLog(0, 0, 0, []);
+      return;
+    }
 
     // BTC güçlü düşüşte → hiç alım yapma
     if (btc4H === 'ASAGI' && btc1H === 'ASAGI') {
@@ -217,25 +234,31 @@ class TradingEngine {
       return;
     }
 
-    // BTC 4H düşüşte → sadece çok güçlü sinyaller
-    const btcMinScore = btc4H === 'ASAGI' ? 75
+    // BTC durumuna göre min skor override
+    const btcMinScore = btc4H === 'ASAGI'       ? 75
       : btc4H === 'HAFIF_ASAGI' ? 65
       : btc4H === 'YATAY'       ? 55
       : btc4H === 'BELIRSIZ'    ? 60
-      : 0; // YUKARI veya HAFIF_YUKARI → normal skor
+      : 0;
 
-    console.log(`[${zaman}] Mum kapandı — BTC:${btc4H}/${btc1H} | Min skor override: ${btcMinScore || 'yok'}`);
+    console.log(`[${zaman}] Mum kapandı — BTC:${btc4H}/${btc1H}`);
     db.prepare("DELETE FROM signals").run();
 
     let signalCount    = 0;
     const signalsFound = [];
     const symbols      = Object.keys(this.candleBuffers);
 
+    // Max açık pozisyon kontrolü
+    const maxPositions = parseInt(settings.max_open_positions || 5);
+    const openCount    = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
+    if (openCount.count >= maxPositions) {
+      console.log(`[${zaman}] Max pozisyon doldu (${openCount.count}/${maxPositions})`);
+      this.saveScanLog(symbols.length, 0, Date.now() - baslangic, []);
+      return;
+    }
+
     for (const symbol of symbols) {
       try {
-        // BTC kendisi zaten kendi trendiyle analiz edilir
-        if (symbol === 'BTCUSDT') continue;
-
         const candles   = this.candleBuffers[symbol];
         const candles1H = this.candle1HBuffers[symbol];
         const candles4H = this.candle4HBuffers[symbol];
@@ -246,9 +269,8 @@ class TradingEngine {
         if (!analysis) continue;
         if (analysis.signal !== 'ALIM') continue;
 
-        // BTC override min skor
+        // BTC min skor filtresi
         if (btcMinScore > 0 && analysis.score < btcMinScore) {
-          console.log(`⛔ ${symbol} — BTC ${btc4H}, skor yetersiz (${analysis.score}<${btcMinScore})`);
           continue;
         }
 
@@ -259,14 +281,9 @@ class TradingEngine {
         analysis.adx4H   = trend4H.adx;
 
         if (['ASAGI', 'HAFIF_ASAGI', 'BELIRSIZ'].includes(trend4H.trend)) {
-          console.log(`⛔ ${symbol} — 4H ${trend4H.trend}, reddedildi`);
           continue;
         }
-
-        if (trend4H.trend === 'YATAY' && analysis.score < 65) {
-          console.log(`⛔ ${symbol} — 4H YATAY, skor yetersiz (${analysis.score}<65)`);
-          continue;
-        }
+        if (trend4H.trend === 'YATAY' && analysis.score < 65) continue;
 
         // 1H trend filtresi
         const trend1H = TechnicalAnalysis.analyze1H(candles1H);
@@ -274,20 +291,9 @@ class TradingEngine {
         analysis.guclu1H = trend1H.guclu;
         analysis.adx1H   = trend1H.adx;
 
-        if (['ASAGI', 'BELIRSIZ'].includes(trend1H.trend)) {
-          console.log(`⛔ ${symbol} — 1H ${trend1H.trend}, reddedildi`);
-          continue;
-        }
-
-        if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) {
-          console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz`);
-          continue;
-        }
-
-        if (trend1H.trend === 'YATAY' && analysis.score < 55) {
-          console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz`);
-          continue;
-        }
+        if (['ASAGI', 'BELIRSIZ'].includes(trend1H.trend)) continue;
+        if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) continue;
+        if (trend1H.trend === 'YATAY' && analysis.score < 55) continue;
 
         // Skor bonusu
         if (trend4H.trend === 'YUKARI' && trend1H.trend === 'YUKARI') {
@@ -302,7 +308,6 @@ class TradingEngine {
           analysis.positive.push(`📈 1H YUKARI`);
         }
 
-        // BTC YUKARI ise bonus
         if (btc4H === 'YUKARI') {
           analysis.score = Math.min(100, analysis.score + 5);
           analysis.positive.push(`₿ BTC 4H YUKARI`);
@@ -337,6 +342,10 @@ class TradingEngine {
         if (settings.auto_trade_enabled === 'true') {
           await this.openPosition(analysis, signalId);
         }
+
+        // Max pozisyon doluysa dur
+        const newOpenCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
+        if (newOpenCount.count >= maxPositions) break;
 
       } catch (err) {
         console.error(`${symbol} analiz hatası:`, err.message);
@@ -515,19 +524,12 @@ class TradingEngine {
     try {
       const symbols = await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
-
-      // BTC trend güncelle
       await this.updateBTCTrend();
-
       await this.loadHistoricalCandles(symbols, interval, limit);
       await this.load1HCandles(symbols);
       await this.load4HCandles(symbols);
       this.startWebSocket(symbols, interval);
-
-      // Pozisyon kontrolü her 30 saniyede
-      this.positionInterval = setInterval(() => this.checkPositions(), 30000);
-
-      // Her saatte coin listesi + mumlar yenile
+      this.positionInterval      = setInterval(() => this.checkPositions(), 30000);
       this.symbolRefreshInterval = setInterval(async () => {
         console.log('🔄 Yenileniyor...');
         await this.updateBTCTrend();
@@ -537,11 +539,8 @@ class TradingEngine {
         await this.load4HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-
-      // BTC trend her 4 saatte güncelle
       setInterval(() => this.updateBTCTrend(), 4 * 60 * 60 * 1000);
-
-      console.log('✅ Engine hazır — 5M + 1H + 4H + BTC Trend filtresi aktif');
+      console.log('✅ Engine hazır — 5M + 1H + 4H + BTC Trend + BTC Ani Düşüş filtresi aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
@@ -553,11 +552,11 @@ class TradingEngine {
     if (this.positionInterval) clearInterval(this.positionInterval);
     if (this.symbolRefreshInterval) clearInterval(this.symbolRefreshInterval);
     this.running = false;
-    this.candleBuffers = {};
-    this.candle1HBuffers = {};
-    this.candle4HBuffers = {};
-    this.tickers = {};
-    this.closedCandles = new Set();
+    this.candleBuffers    = {};
+    this.candle1HBuffers  = {};
+    this.candle4HBuffers  = {};
+    this.tickers          = {};
+    this.closedCandles    = new Set();
     console.log('Engine durduruldu.');
   }
 }
