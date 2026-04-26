@@ -60,10 +60,9 @@ export default function Settings({ api }) {
   const N = ({ k, label, desc, step = 1, placeholder }) => (
     <F label={label} desc={desc}>
       <input className="form-input" type="number" step={step} placeholder={placeholder}
-        value={settings[k] || ''} onChange={e => update(k, e.target.value)} />
+        value={settings[k] ?? ''} onChange={e => update(k, e.target.value)} />
     </F>
   );
-
   const R2 = ({ children }) => (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>{children}</div>
   );
