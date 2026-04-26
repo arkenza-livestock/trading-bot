@@ -1,4 +1,4 @@
-// v7 - 4H trend filtresi
+// v8 - ADX eşiği güçlendirildi
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 7) {
@@ -203,7 +203,7 @@ class TechnicalAnalysis {
     return { puan, desc: desc.join('\n'), pozisyon, resistance, support, riskOdul };
   }
 
-  // ── 1H TREND ANALİZİ ──────────────────────────────────────
+  // ── TREND ANALİZİ (1H ve 4H için ortak) ───────────────────
   static analyzeTF(candles, label = '1H') {
     if (!candles || candles.length < 50) return { trend: 'BELIRSIZ', puan: 0, guclu: false };
 
@@ -243,10 +243,13 @@ class TechnicalAnalysis {
     if (price > ema50)  puan += 20; else puan -= 20;
     if (price > ema200) puan += 15; else puan -= 15;
 
-    // ADX
-    if      (adxData.adx > 25 && adxData.diPlus > adxData.diMinus)  puan += 25;
+    // ADX — trend gücü (güçlendirildi)
+    if      (adxData.adx > 30 && adxData.diPlus > adxData.diMinus)  puan += 35;
+    else if (adxData.adx > 25 && adxData.diPlus > adxData.diMinus)  puan += 25;
+    else if (adxData.adx > 30 && adxData.diMinus > adxData.diPlus)  puan -= 35;
     else if (adxData.adx > 25 && adxData.diMinus > adxData.diPlus)  puan -= 25;
-    else if (adxData.adx < 20)                                        puan -= 10;
+    else if (adxData.adx < 15)                                        puan -= 30; // Çok zayıf trend
+    else if (adxData.adx < 20)                                        puan -= 15; // Zayıf trend
 
     // HH/HL yapısı
     if      (hhCount >= 5 && hlCount >= 5) puan += 20;
@@ -261,29 +264,36 @@ class TechnicalAnalysis {
     // Hacim
     if (volTrend && ema10 > ema20) puan += 10;
 
+    // Trend belirle — ADX eşiğine göre
     let trend = 'BELIRSIZ';
     let guclu = false;
 
-    if      (puan >= 70)  { trend = 'YUKARI';       guclu = true; }
-    else if (puan >= 40)  { trend = 'YUKARI'; }
-    else if (puan >= 15)  { trend = 'HAFIF_YUKARI'; }
-    else if (puan >= -15) { trend = 'YATAY'; }
-    else if (puan >= -40) { trend = 'HAFIF_ASAGI'; }
-    else if (puan >= -70) { trend = 'ASAGI'; }
-    else                  { trend = 'ASAGI'; guclu = true; }
+    if      (puan >= 80)                              { trend = 'YUKARI';       guclu = true; }
+    else if (puan >= 50 && adxData.adx >= 20)        { trend = 'YUKARI'; }
+    else if (puan >= 50 && adxData.adx < 20)         { trend = 'YATAY'; }   // EMA iyi ama trend gücü yok
+    else if (puan >= 20 && adxData.adx >= 20)        { trend = 'HAFIF_YUKARI'; }
+    else if (puan >= 20 && adxData.adx < 20)         { trend = 'YATAY'; }
+    else if (puan >= -20 && adxData.adx >= 20)       { trend = 'YATAY'; }
+    else if (puan >= -20)                             { trend = 'YATAY'; }
+    else if (puan >= -50 && adxData.adx >= 20)       { trend = 'HAFIF_ASAGI'; }
+    else if (puan >= -50)                             { trend = 'YATAY'; }
+    else if (puan >= -80 && adxData.adx >= 20)       { trend = 'ASAGI'; }
+    else if (puan >= -80)                             { trend = 'HAFIF_ASAGI'; }
+    else                                              { trend = 'ASAGI'; guclu = true; }
 
-    return { trend, puan, guclu, ema10, ema20, ema50, adx: adxData.adx, diPlus: adxData.diPlus, diMinus: adxData.diMinus, rsi: rsi14, hhCount, hlCount };
+    return {
+      trend, puan, guclu,
+      ema10, ema20, ema50,
+      adx: adxData.adx,
+      diPlus: adxData.diPlus,
+      diMinus: adxData.diMinus,
+      rsi: rsi14,
+      hhCount, hlCount
+    };
   }
 
-  // Geriye dönük uyumluluk için
-  static analyze1H(candles) {
-    return this.analyzeTF(candles, '1H');
-  }
-
-  // ── 4H TREND ANALİZİ ──────────────────────────────────────
-  static analyze4H(candles) {
-    return this.analyzeTF(candles, '4H');
-  }
+  static analyze1H(candles) { return this.analyzeTF(candles, '1H'); }
+  static analyze4H(candles) { return this.analyzeTF(candles, '4H'); }
 
   // ── ANA ANALİZ (5M) ────────────────────────────────────────
   static analyze(candles, ticker, settings = {}) {
