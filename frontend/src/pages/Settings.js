@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 const TABS = ['Genel', 'İndikatör', 'Risk'];
 
 export default function Settings({ api }) {
   const [tab, setTab] = useState('Genel');
-  const [settings, setSettings] = useState({});
+  const [settings, setSettings] = useState(null);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -15,7 +15,9 @@ export default function Settings({ api }) {
     axios.get(`${api}/api/settings`).then(res => setSettings(res.data));
   }, [api]);
 
-  const update = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
+  const update = (key, value) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
 
   const save = async () => {
     try {
@@ -48,6 +50,8 @@ export default function Settings({ api }) {
     }
   };
 
+  if (!settings) return <div style={{ padding: 40, color: '#718096' }}>Yükleniyor...</div>;
+
   const F = ({ label, desc, children }) => (
     <div style={{ marginBottom: 16 }}>
       <label style={{ display: 'block', fontSize: 13, color: '#a0aec0', marginBottom: 6 }}>
@@ -59,17 +63,28 @@ export default function Settings({ api }) {
 
   const N = ({ k, label, desc, step = 1, placeholder }) => (
     <F label={label} desc={desc}>
-      <input className="form-input" type="number" step={step} placeholder={placeholder}
-        value={settings[k] ?? ''} onChange={e => update(k, e.target.value)} />
+      <input
+        className="form-input"
+        type="number"
+        step={step}
+        placeholder={placeholder}
+        value={settings[k] ?? ''}
+        onChange={e => update(k, e.target.value)}
+      />
     </F>
   );
+
   const R2 = ({ children }) => (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>{children}</div>
   );
 
   const S = ({ title, children }) => (
     <div style={{ marginBottom: 28 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa', marginBottom: 14, paddingBottom: 6, borderBottom: '1px solid #1e2736', textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>
+      <div style={{
+        fontSize: 12, fontWeight: 700, color: '#60a5fa', marginBottom: 14,
+        paddingBottom: 6, borderBottom: '1px solid #1e2736',
+        textTransform: 'uppercase', letterSpacing: 1
+      }}>{title}</div>
       {children}
     </div>
   );
@@ -104,31 +119,55 @@ export default function Settings({ api }) {
           <S title="🔑 Binance API">
             <R2>
               <F label="API Key">
-                <input className="form-input" type="text" placeholder="API Key"
-                  value={settings.binance_api_key || ''} onChange={e => update('binance_api_key', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="API Key"
+                  value={settings.binance_api_key ?? ''}
+                  onChange={e => update('binance_api_key', e.target.value)}
+                />
               </F>
               <F label="API Secret">
-                <input className="form-input" type="password" placeholder="API Secret"
-                  value={settings.binance_api_secret || ''} onChange={e => update('binance_api_secret', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="password"
+                  placeholder="API Secret"
+                  value={settings.binance_api_secret ?? ''}
+                  onChange={e => update('binance_api_secret', e.target.value)}
+                />
               </F>
             </R2>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={testBinance} disabled={testing}>
                 {testing ? 'Test ediliyor...' : '🔌 Bağlantı Test Et'}
               </button>
-              {testResult && <span style={{ fontSize: 13, color: testResult.success ? '#68d391' : '#fc8181' }}>{testResult.message}</span>}
+              {testResult && (
+                <span style={{ fontSize: 13, color: testResult.success ? '#68d391' : '#fc8181' }}>
+                  {testResult.message}
+                </span>
+              )}
             </div>
           </S>
 
           <S title="📱 Telegram Bildirimi">
             <R2>
               <F label="Bot Token">
-                <input className="form-input" type="password" placeholder="1234567890:AAAA..."
-                  value={settings.telegram_token || ''} onChange={e => update('telegram_token', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="password"
+                  placeholder="1234567890:AAAA..."
+                  value={settings.telegram_token ?? ''}
+                  onChange={e => update('telegram_token', e.target.value)}
+                />
               </F>
               <F label="Chat ID">
-                <input className="form-input" type="text" placeholder="123456789"
-                  value={settings.telegram_chat_id || ''} onChange={e => update('telegram_chat_id', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="123456789"
+                  value={settings.telegram_chat_id ?? ''}
+                  onChange={e => update('telegram_chat_id', e.target.value)}
+                />
               </F>
             </R2>
             <R2>
@@ -138,14 +177,23 @@ export default function Settings({ api }) {
               <button className="btn btn-ghost" onClick={testTelegram}>
                 📤 Test Mesajı Gönder
               </button>
-              {telegramTest && <span style={{ fontSize: 13, color: telegramTest.success ? '#68d391' : '#fc8181' }}>{telegramTest.message}</span>}
+              {telegramTest && (
+                <span style={{ fontSize: 13, color: telegramTest.success ? '#68d391' : '#fc8181' }}>
+                  {telegramTest.message}
+                </span>
+              )}
             </div>
           </S>
 
           <S title="🤖 Groq AI">
             <F label="API Key" desc="(Opsiyonel)">
-              <input className="form-input" type="password" placeholder="gsk_..."
-                value={settings.groq_api_key || ''} onChange={e => update('groq_api_key', e.target.value)} />
+              <input
+                className="form-input"
+                type="password"
+                placeholder="gsk_..."
+                value={settings.groq_api_key ?? ''}
+                onChange={e => update('groq_api_key', e.target.value)}
+              />
             </F>
           </S>
 
@@ -159,7 +207,11 @@ export default function Settings({ api }) {
           <S title="⏱️ Tarama">
             <R2>
               <F label="Mum Zaman Dilimi">
-                <select className="form-input" value={settings.candle_interval || '5m'} onChange={e => update('candle_interval', e.target.value)}>
+                <select
+                  className="form-input"
+                  value={settings.candle_interval ?? '5m'}
+                  onChange={e => update('candle_interval', e.target.value)}
+                >
                   <option value="1m">1 Dakika</option>
                   <option value="3m">3 Dakika</option>
                   <option value="5m">5 Dakika</option>
@@ -178,8 +230,11 @@ export default function Settings({ api }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <label className="toggle">
-                <input type="checkbox" checked={settings.auto_trade_enabled === 'true'}
-                  onChange={e => update('auto_trade_enabled', e.target.checked ? 'true' : 'false')} />
+                <input
+                  type="checkbox"
+                  checked={settings.auto_trade_enabled === 'true'}
+                  onChange={e => update('auto_trade_enabled', e.target.checked ? 'true' : 'false')}
+                />
                 <span className="toggle-slider" />
               </label>
               <span style={{ fontSize: 14, fontWeight: 600, color: settings.auto_trade_enabled === 'true' ? '#68d391' : '#718096' }}>
@@ -198,7 +253,7 @@ export default function Settings({ api }) {
               <N k="min_score" label="Min Sinyal Skoru" desc="Web'de göster" placeholder="10" />
             </R2>
           </S>
-          <S title="📈 Momentum">
+          <S title="📈 RSI">
             <R2>
               <N k="rsi_period" label="RSI Periyot" placeholder="7" />
               <N k="rsi_oversold" label="RSI Aşırı Satım" placeholder="50" />
@@ -250,7 +305,11 @@ export default function Settings({ api }) {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
-        <button className={`btn ${saved ? 'btn-success' : 'btn-primary'}`} onClick={save} style={{ padding: '12px 32px', fontSize: 15 }}>
+        <button
+          className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
+          onClick={save}
+          style={{ padding: '12px 32px', fontSize: 15 }}
+        >
           {saved ? '✓ Kaydedildi' : '💾 Ayarları Kaydet'}
         </button>
       </div>
