@@ -13,6 +13,7 @@ class TradingEngine {
     this.ws = null;
     this.candleBuffers = {};
     this.candle1HBuffers = {};
+    this.candle4HBuffers = {};
     this.tickers = {};
     this.lastSignalTime = {};
     this.closedCandles = new Set();
@@ -35,10 +36,8 @@ class TradingEngine {
   }
 
   saveScanLog(coinCount, signalCount, durationMs, signalsFound = []) {
-    db.prepare(`
-      INSERT INTO scan_logs (coin_count, signal_count, duration_ms, signals_found)
-      VALUES (?, ?, ?, ?)
-    `).run(coinCount, signalCount, durationMs, JSON.stringify(signalsFound));
+    db.prepare(`INSERT INTO scan_logs (coin_count, signal_count, duration_ms, signals_found) VALUES (?, ?, ?, ?)`)
+      .run(coinCount, signalCount, durationMs, JSON.stringify(signalsFound));
   }
 
   saveSignal(analysis) {
@@ -47,9 +46,9 @@ class TradingEngine {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       analysis.symbol, analysis.signal, analysis.score, analysis.risk, analysis.price,
-      analysis.rsi, analysis.momentum || 0, analysis.trend1H || 'BELIRSIZ',
+      analysis.rsi, analysis.momentum || 0, `${analysis.trend1H}|${analysis.trend4H}`,
       JSON.stringify(analysis.positive), JSON.stringify(analysis.negative),
-      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H} | ADX:${analysis.adx1H}`
+      `Hacim:${analysis.hacimOran}x | Alım:%${analysis.alimOran?.toFixed(0)} | R/R:${analysis.riskOdul} | 1H:${analysis.trend1H} | 4H:${analysis.trend4H}`
     );
     return result.lastInsertRowid;
   }
@@ -58,7 +57,9 @@ class TradingEngine {
     const baseAmount = parseFloat(settings.trade_amount_usdt || 100);
     const score      = analysis.score;
     const trend1H    = analysis.trend1H || 'BELIRSIZ';
+    const trend4H    = analysis.trend4H || 'BELIRSIZ';
     const guclu1H    = analysis.guclu1H || false;
+    const guclu4H    = analysis.guclu4H || false;
 
     let multiplier = 1.0;
 
@@ -69,16 +70,20 @@ class TradingEngine {
     else if (score >= 35) multiplier = 0.75;
     else                  multiplier = 0.5;
 
-    // 1H trend bonusu
-    if      (trend1H === 'YUKARI' && guclu1H)  multiplier *= 1.3;
-    else if (trend1H === 'YUKARI')             multiplier *= 1.2;
-    else if (trend1H === 'HAFIF_YUKARI')       multiplier *= 1.0;
-    else if (trend1H === 'YATAY')              multiplier *= 0.75;
-    else if (trend1H === 'HAFIF_ASAGI')        multiplier *= 0.5;
+    // 1H + 4H her ikisi de YUKARI ise maksimum
+    if (trend1H === 'YUKARI' && trend4H === 'YUKARI') {
+      multiplier *= guclu1H && guclu4H ? 1.5 : 1.3;
+    } else if (trend1H === 'YUKARI') {
+      multiplier *= guclu1H ? 1.2 : 1.1;
+    } else if (trend1H === 'HAFIF_YUKARI') {
+      multiplier *= 0.9;
+    } else if (trend1H === 'YATAY') {
+      multiplier *= 0.7;
+    }
 
     multiplier = Math.min(2.0, Math.max(0.25, multiplier));
     const finalAmount = parseFloat((baseAmount * multiplier).toFixed(2));
-    console.log(`💰 Pozisyon: ${finalAmount} USDT (${multiplier.toFixed(2)}x) | Skor:${score} | 1H:${trend1H}`);
+    console.log(`💰 Pozisyon: ${finalAmount} USDT (${multiplier.toFixed(2)}x) | Skor:${score} | 1H:${trend1H} | 4H:${trend4H}`);
     return finalAmount;
   }
 
@@ -122,7 +127,7 @@ class TradingEngine {
 
   async loadHistoricalCandles(symbols, interval, limit) {
     const binance = new BinanceService('', '');
-    console.log(`${symbols.length} coin için ${interval} geçmiş mumlar yükleniyor...`);
+    console.log(`${symbols.length} coin için ${interval} mumlar yükleniyor...`);
     for (const ticker of symbols) {
       try {
         const candles = await binance.getKlines(ticker.symbol, interval, limit);
@@ -130,12 +135,12 @@ class TradingEngine {
         await new Promise(r => setTimeout(r, 60));
       } catch (err) { console.error(`${ticker.symbol} veri hatası:`, err.message); }
     }
-    console.log(`✅ ${interval} geçmiş mumlar hazır`);
+    console.log(`✅ ${interval} mumlar hazır`);
   }
 
   async load1HCandles(symbols) {
     const binance = new BinanceService('', '');
-    console.log(`${symbols.length} coin için 1H mumlar yükleniyor...`);
+    console.log(`1H mumlar yükleniyor...`);
     for (const ticker of symbols) {
       try {
         const candles = await binance.getKlines(ticker.symbol, '1h', 200);
@@ -144,6 +149,19 @@ class TradingEngine {
       } catch (err) { console.error(`${ticker.symbol} 1H hatası:`, err.message); }
     }
     console.log(`✅ 1H mumlar hazır`);
+  }
+
+  async load4HCandles(symbols) {
+    const binance = new BinanceService('', '');
+    console.log(`4H mumlar yükleniyor...`);
+    for (const ticker of symbols) {
+      try {
+        const candles = await binance.getKlines(ticker.symbol, '4h', 200);
+        if (candles && candles.length > 0) this.candle4HBuffers[ticker.symbol] = candles;
+        await new Promise(r => setTimeout(r, 60));
+      } catch (err) { console.error(`${ticker.symbol} 4H hatası:`, err.message); }
+    }
+    console.log(`✅ 4H mumlar hazır`);
   }
 
   async scanAllCoins(candleCloseTime) {
@@ -170,6 +188,7 @@ class TradingEngine {
       try {
         const candles   = this.candleBuffers[symbol];
         const candles1H = this.candle1HBuffers[symbol];
+        const candles4H = this.candle4HBuffers[symbol];
         const ticker    = this.tickers[symbol];
         if (!candles || candles.length < 20 || !ticker) continue;
 
@@ -177,41 +196,62 @@ class TradingEngine {
         if (!analysis) continue;
         if (analysis.signal !== 'ALIM') continue;
 
-        // Güçlendirilmiş 1H trend analizi
-        const trend1H = TechnicalAnalysis.analyze1H(candles1H);
-        analysis.trend1H    = trend1H.trend;
-        analysis.trend1HPuan = trend1H.puan;
-        analysis.guclu1H    = trend1H.guclu;
-        analysis.adx1H      = trend1H.adx;
+        // 4H trend — ana filtre
+        const trend4H = TechnicalAnalysis.analyze4H(candles4H);
+        analysis.trend4H  = trend4H.trend;
+        analysis.guclu4H  = trend4H.guclu;
+        analysis.adx4H    = trend4H.adx;
 
-        // Sıkı trend filtresi
-        if (trend1H.trend === 'ASAGI') {
-          console.log(`⛔ ${symbol} — 1H güçlü ASAGI (ADX:${trend1H.adx}), reddedildi`);
+        // 4H ASAGI veya HAFIF_ASAGI → kesinlikle alım yok
+        if (trend4H.trend === 'ASAGI' || trend4H.trend === 'HAFIF_ASAGI') {
+          console.log(`⛔ ${symbol} — 4H ${trend4H.trend} (ADX:${trend4H.adx}), reddedildi`);
           continue;
         }
 
-        if (trend1H.trend === 'HAFIF_ASAGI') {
-          // Hafif düşüşte sadece çok yüksek skor geçer
-          if (analysis.score < 70) {
-            console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz (${analysis.score}<70)`);
-            continue;
-          }
+        // 4H YATAY → sadece çok yüksek skor
+        if (trend4H.trend === 'YATAY' && analysis.score < 65) {
+          console.log(`⛔ ${symbol} — 4H YATAY, skor yetersiz (${analysis.score}<65)`);
+          continue;
         }
 
-        if (trend1H.trend === 'YATAY') {
-          // Yatayda sadece yüksek skor geçer
-          if (analysis.score < 55) {
-            console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz (${analysis.score}<55)`);
-            continue;
-          }
+        // 1H trend — ikinci filtre
+        const trend1H = TechnicalAnalysis.analyze1H(candles1H);
+        analysis.trend1H  = trend1H.trend;
+        analysis.guclu1H  = trend1H.guclu;
+        analysis.adx1H    = trend1H.adx;
+
+        // 1H ASAGI → alım yok
+        if (trend1H.trend === 'ASAGI') {
+          console.log(`⛔ ${symbol} — 1H ASAGI, reddedildi`);
+          continue;
         }
 
-        // Skor bonusu
-        if      (trend1H.trend === 'YUKARI' && trend1H.guclu) { analysis.score = Math.min(100, analysis.score + 20); analysis.positive.push(`✅ 1H Güçlü YUKARI (ADX:${trend1H.adx})`); }
-        else if (trend1H.trend === 'YUKARI')                   { analysis.score = Math.min(100, analysis.score + 12); analysis.positive.push(`✅ 1H YUKARI`); }
-        else if (trend1H.trend === 'HAFIF_YUKARI')             { analysis.score = Math.min(100, analysis.score + 5);  analysis.positive.push(`📈 1H Hafif YUKARI`); }
-        else if (trend1H.trend === 'YATAY')                    { analysis.positive.push(`➡️ 1H YATAY`); }
-        else if (trend1H.trend === 'HAFIF_ASAGI')              { analysis.score = Math.max(0, analysis.score - 15);   analysis.negative.push(`⚠️ 1H HAFIF_ASAGI — dikkat`); }
+        // 1H HAFIF_ASAGI → sadece çok yüksek skor
+        if (trend1H.trend === 'HAFIF_ASAGI' && analysis.score < 70) {
+          console.log(`⛔ ${symbol} — 1H HAFIF_ASAGI, skor yetersiz (${analysis.score}<70)`);
+          continue;
+        }
+
+        // 1H YATAY → yüksek skor
+        if (trend1H.trend === 'YATAY' && analysis.score < 55) {
+          console.log(`⛔ ${symbol} — 1H YATAY, skor yetersiz (${analysis.score}<55)`);
+          continue;
+        }
+
+        // Skor bonusu — her iki zaman dilimi de YUKARI ise maksimum bonus
+        if (trend4H.trend === 'YUKARI' && trend1H.trend === 'YUKARI') {
+          const bonus = trend4H.guclu && trend1H.guclu ? 25 : 15;
+          analysis.score = Math.min(100, analysis.score + bonus);
+          analysis.positive.push(`✅ 4H+1H YUKARI (ADX 4H:${trend4H.adx} 1H:${trend1H.adx})`);
+        } else if (trend4H.trend === 'YUKARI') {
+          analysis.score = Math.min(100, analysis.score + 10);
+          analysis.positive.push(`✅ 4H YUKARI (ADX:${trend4H.adx})`);
+        } else if (trend1H.trend === 'YUKARI') {
+          analysis.score = Math.min(100, analysis.score + 8);
+          analysis.positive.push(`📈 1H YUKARI`);
+        } else if (trend4H.trend === 'YATAY') {
+          analysis.negative.push(`⚠️ 4H YATAY — dikkat`);
+        }
 
         const minScore = parseFloat(settings.min_score || 10);
         if (analysis.score < minScore) continue;
@@ -224,7 +264,7 @@ class TradingEngine {
         signalCount++;
         signalsFound.push(`${symbol}(${analysis.score})`);
 
-        console.log(`🚨 ALIM: ${symbol} | Skor:${analysis.score} | 1H:${trend1H.trend} | ADX:${trend1H.adx} | RSI:${analysis.rsi}`);
+        console.log(`🚨 ALIM: ${symbol} | Skor:${analysis.score} | 4H:${trend4H.trend} | 1H:${trend1H.trend} | RSI:${analysis.rsi}`);
 
         const signalId = this.saveSignal(analysis);
 
@@ -263,7 +303,7 @@ class TradingEngine {
 
     const streams = symbols.map(s => `${s.symbol.toLowerCase()}@kline_${interval}`).join('/');
     const wsUrl   = `wss://stream.binance.com:9443/stream?streams=${streams}`;
-    console.log(`🔌 WebSocket başlatılıyor: ${symbols.length} coin, ${interval}`);
+    console.log(`🔌 WebSocket: ${symbols.length} coin, ${interval}`);
 
     this.ws = new WebSocket(wsUrl);
 
@@ -335,7 +375,7 @@ class TradingEngine {
           `💰 Fiyat: <code>${fillPrice}</code>\n` +
           `💵 Miktar: <b>${tradeAmount} USDT</b>\n` +
           `🛑 Stop: <code>${stopLoss}</code>\n` +
-          `📊 Skor: ${analysis.score} | 1H: ${analysis.trend1H} | ADX: ${analysis.adx1H}`
+          `📊 Skor: ${analysis.score} | 4H: ${analysis.trend4H} | 1H: ${analysis.trend1H}`
         );
       }
       return posResult.lastInsertRowid;
@@ -422,16 +462,18 @@ class TradingEngine {
       console.log(`${symbols.length} coin seçildi`);
       await this.loadHistoricalCandles(symbols, interval, limit);
       await this.load1HCandles(symbols);
+      await this.load4HCandles(symbols);
       this.startWebSocket(symbols, interval);
       this.positionInterval = setInterval(() => this.checkPositions(), 30000);
       this.symbolRefreshInterval = setInterval(async () => {
-        console.log('🔄 Coin listesi ve 1H mumlar yenileniyor...');
+        console.log('🔄 Coin listesi yenileniyor...');
         const newSymbols = await this.fetchSymbols();
         await this.loadHistoricalCandles(newSymbols, interval, limit);
         await this.load1HCandles(newSymbols);
+        await this.load4HCandles(newSymbols);
         this.startWebSocket(newSymbols, interval);
       }, 60 * 60 * 1000);
-      console.log('✅ Engine hazır — 5M WebSocket + Güçlü 1H trend filtresi + ADX aktif');
+      console.log('✅ Engine hazır — 5M + 1H + 4H trend filtresi aktif');
     } catch (err) {
       console.error('Engine başlatma hatası:', err.message);
       this.running = false;
@@ -445,6 +487,7 @@ class TradingEngine {
     this.running = false;
     this.candleBuffers = {};
     this.candle1HBuffers = {};
+    this.candle4HBuffers = {};
     this.tickers = {};
     this.closedCandles = new Set();
     console.log('Engine durduruldu.');
