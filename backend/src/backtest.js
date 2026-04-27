@@ -3,46 +3,44 @@ const TechnicalAnalysis = require('./analysis');
 
 class BacktestEngine {
 
-  async runOnce(params, coinData, btcMain, btcH1, btcH4) {
+  // ── 4H KAPANIŞINDA SİMÜLASYON ────────────────────────────
+  async runOnce(params, coinData, btcMain, btcH1, btcH4, btc1D) {
     const {
       stopLoss=2.0, trailingStop=0.5, minProfit=1.5,
       commission=0.1, slippage=0.05, minScore=40,
       tradeAmount=100, maxPositions=3, enableShort=true,
-      rsiPeriod=14, rsiOversold=40, rsiOverbought=70, srLookback=20
+      timeStopCandles=15
     } = params;
 
     const settings = {
-      rsi_period:rsiPeriod, rsi_oversold:rsiOversold,
-      rsi_overbought:rsiOverbought, sr_lookback:srLookback,
-      min_score:minScore, commission_rate:commission, slippage_rate:slippage,
+      commission_rate:commission, slippage_rate:slippage,
       min_profit_percent:minProfit, stop_loss_percent:stopLoss,
-      trailing_stop_percent:trailingStop, min_volume:0
+      trailing_stop_percent:trailingStop, min_volume:0, min_score:minScore
     };
 
     const availableCoins = Object.keys(coinData);
-    const refData = btcMain.length>=50 ? btcMain : coinData[availableCoins[0]].main;
+    // 4H mumları referans al — 4H kapanışında çalış
+    const refData = btcH4.length>=50 ? btcH4 : coinData[availableCoins[0]].h4;
     const totalCost = (commission+slippage)/100*2;
 
-    const coinIndex={};
-    for (const sym of availableCoins) {
-      coinIndex[sym]={};
-      for (const c of coinData[sym].main) coinIndex[sym][parseInt(c[0])]=c;
-    }
-
     const trades=[], openPositions={}, highestPrices={}, lowestPrices={};
-    let cachedBtc4H={trend:'BELIRSIZ',guclu:false};
-    let cachedBtc1H={trend:'BELIRSIZ',guclu:false};
-    let lastBtcUpdate=0;
+    const positionOpenTime={};
+
+    // 4H adaylar — önceki 4H'te LONG/SHORT aday seçilmiş coinler
+    const adaylar = {};
 
     for (let i=52; i<refData.length; i++) {
-      const candleTime=parseInt(refData[i][0]);
+      const candleTime = parseInt(refData[i][0]);
 
-      // Açık pozisyonları kontrol et
+      // ── Açık pozisyonları kontrol et (1H hassasiyetiyle) ─
       for (const sym of Object.keys(openPositions)) {
-        const pos=openPositions[sym];
-        const symCandle=coinIndex[sym]?.[candleTime];
-        if (!symCandle) continue;
-        const posPrice=parseFloat(symCandle[4]);
+        const pos = openPositions[sym];
+
+        // 1H mumlardan fiyat al
+        const symH1 = coinData[sym]?.h1||[];
+        const h1Slice = symH1.filter(c=>parseInt(c[0])<=candleTime);
+        if (!h1Slice.length) continue;
+        const posPrice = parseFloat(h1Slice[h1Slice.length-1][4]);
 
         if (pos.side==='LONG') {
           if (posPrice>(highestPrices[sym]||pos.entryPrice)) highestPrices[sym]=posPrice;
@@ -53,13 +51,17 @@ class BacktestEngine {
           let reason=null;
           if (net<=-stopLoss) reason='STOP_LOSS';
           else if (bruto>=minProfit&&posPrice<=trailStop) reason='TRAILING_STOP';
+          // Zaman aşımı — timeStopCandles 4H sonra
+          else if (timeStopCandles>0 && i-(positionOpenTime[sym]||i) >= timeStopCandles) {
+            reason = net > 0 ? 'TIME_STOP_KAR' : 'TIME_STOP_ZARAR';
+          }
           if (reason) {
             const pnl=(posPrice-pos.entryPrice)*pos.quantity-(pos.entryPrice*pos.quantity*totalCost);
             trades.push({ symbol:sym, side:'LONG', entryTime:pos.entryTime, exitTime:new Date(candleTime),
               entryPrice:pos.entryPrice, exitPrice:posPrice, quantity:pos.quantity, reason,
               netPnl:parseFloat(pnl.toFixed(4)), netPnlPct:parseFloat(net.toFixed(2)),
               score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend });
-            delete openPositions[sym]; delete highestPrices[sym];
+            delete openPositions[sym]; delete highestPrices[sym]; delete positionOpenTime[sym];
           }
         } else if (pos.side==='SHORT') {
           if (posPrice<(lowestPrices[sym]||pos.entryPrice)) lowestPrices[sym]=posPrice;
@@ -70,132 +72,124 @@ class BacktestEngine {
           let reason=null;
           if (net<=-stopLoss) reason='STOP_LOSS';
           else if (bruto>=minProfit&&posPrice>=trailStop) reason='TRAILING_STOP';
+          else if (timeStopCandles>0 && i-(positionOpenTime[sym]||i) >= timeStopCandles) {
+            reason = net > 0 ? 'TIME_STOP_KAR' : 'TIME_STOP_ZARAR';
+          }
           if (reason) {
             const pnl=(pos.entryPrice-posPrice)*pos.quantity-(pos.entryPrice*pos.quantity*totalCost);
             trades.push({ symbol:sym, side:'SHORT', entryTime:pos.entryTime, exitTime:new Date(candleTime),
               entryPrice:pos.entryPrice, exitPrice:posPrice, quantity:pos.quantity, reason,
               netPnl:parseFloat(pnl.toFixed(4)), netPnlPct:parseFloat(net.toFixed(2)),
               score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend });
-            delete openPositions[sym]; delete lowestPrices[sym];
+            delete openPositions[sym]; delete lowestPrices[sym]; delete positionOpenTime[sym];
           }
         }
       }
 
       // Koruma filtreleri
       if (Object.keys(openPositions).length>=maxPositions) continue;
-      const zararliVar=Object.values(openPositions).some(p=>(p.currentPnlPct||0)<-0.5);
-      if (zararliVar) continue;
-
-      // BTC trend cache
-      if (candleTime-lastBtcUpdate>=4*60*60*1000) {
-        const h1f=btcH1.filter(c=>parseInt(c[0])<=candleTime);
-        const h4f=btcH4.filter(c=>parseInt(c[0])<=candleTime);
-        if (h1f.length>=50) cachedBtc1H=TechnicalAnalysis.analyze1H(h1f);
-        if (h4f.length>=50) cachedBtc4H=TechnicalAnalysis.analyze4H(h4f);
-        lastBtcUpdate=candleTime;
-      }
 
       // BTC ani düşüş
       let btcAniDusus=false;
-      if (btcMain.length>=4) {
-        const btcSlice=btcMain.filter(c=>parseInt(c[0])<=candleTime);
-        if (btcSlice.length>=4) {
-          const now=parseFloat(btcSlice[btcSlice.length-1][4]);
-          const ago=parseFloat(btcSlice[btcSlice.length-4][4]);
-          if (((now-ago)/ago)*100<-1.0) btcAniDusus=true;
-        }
+      const btcSlice=btcH4.filter(c=>parseInt(c[0])<=candleTime);
+      if (btcSlice.length>=4) {
+        const now=parseFloat(btcSlice[btcSlice.length-1][4]);
+        const ago=parseFloat(btcSlice[btcSlice.length-4][4]);
+        if (((now-ago)/ago)*100<-1.5) btcAniDusus=true;
       }
 
-      const btcDusus    = cachedBtc4H.trend==='ASAGI'&&cachedBtc1H.trend==='ASAGI';
-      const btcYukselis = cachedBtc4H.trend==='YUKARI';
+      // BTC trend
+      const btcH4Slice = btcH4.filter(c=>parseInt(c[0])<=candleTime);
+      const btcH1Slice = btcH1.filter(c=>parseInt(c[0])<=candleTime);
+      const btc1DSlice = btc1D.filter(c=>parseInt(c[0])<=candleTime);
+      const btcTrend4H = TechnicalAnalysis.analyze4H(btcH4Slice);
+      const btcTrend1D = TechnicalAnalysis.analyze1D(btc1DSlice);
+      const btcDusus   = btcTrend4H.trend==='ASAGI'&&btcTrend1D.trend==='ASAGI';
+      const btcYukselis= btcTrend4H.trend==='YUKARI'&&btcTrend1D.guclu;
 
-      // Her coin için sinyal ara
+      // ── HER COİN İÇİN 4H SETUP KONTROL ──────────────────
       for (const sym of availableCoins) {
         if (openPositions[sym]) continue;
 
-        const symData=coinData[sym];
-        const symMain=symData.main.filter(c=>parseInt(c[0])<=candleTime);
-        if (symMain.length<52) continue;
+        const symData = coinData[sym];
+        const symH4   = symData.h4.filter(c=>parseInt(c[0])<=candleTime);
+        const symH1   = symData.h1.filter(c=>parseInt(c[0])<=candleTime);
+        const sym1D   = symData.d1?.filter(c=>parseInt(c[0])<=candleTime)||[];
 
-        const price=parseFloat(symMain[symMain.length-1][4]);
-        const ticker={symbol:sym, priceChangePercent:'0', quoteVolume:'999999999'};
-        const analysis=TechnicalAnalysis.analyze(symMain,ticker,settings);
-        if (!analysis) continue;
+        if (symH4.length<52) continue;
 
-        // 4H trend hesapla
-        const symH4=symData.h4.filter(c=>parseInt(c[0])<=candleTime);
-        const symH1=symData.h1.filter(c=>parseInt(c[0])<=candleTime);
-        const trend4H=TechnicalAnalysis.analyze4H(symH4);
-        const trend1H=TechnicalAnalysis.analyze1H(symH1);
+        const ticker = { symbol:sym, priceChangePercent:'0', quoteVolume:'999999999' };
 
-        // ── LONG SİNYALİ ─────────────────────────────────
-        if (analysis.signal==='ALIM') {
-          // BTC korumaları
+        // 4H setup analizi
+        const setup4H = TechnicalAnalysis.analyze4HSetup(symH4, sym1D, ticker, settings);
+        if (!setup4H) continue;
+
+        // Adayları kaydet — bir sonraki 1H'te giriş aranacak
+        if (setup4H.setup==='LONG_ADAY' || setup4H.setup==='SHORT_ADAY') {
+          adaylar[sym] = { setup4H, time4H:candleTime };
+        }
+
+        // 1H giriş zamanlaması — aday varsa kontrol et
+        const aday = adaylar[sym];
+        if (!aday) continue;
+        if (candleTime - aday.time4H > 8*60*60*1000) {
+          // 8 saatten eski adayı sil
+          delete adaylar[sym];
+          continue;
+        }
+
+        // 1H'te giriş sinyali ara
+        if (symH1.length<52) continue;
+        const timing = TechnicalAnalysis.analyze1HTiming(symH1, aday.setup4H, settings);
+        if (!timing||timing.signal==='BEKLE') continue;
+
+        // ── LONG GİRİŞ ───────────────────────────────────
+        if (timing.signal==='ALIM') {
           if (btcDusus||btcAniDusus) continue;
+          if (['ASAGI','HAFIF_ASAGI'].includes(setup4H.trend4H)) continue;
+          if (btcTrend1D.trend==='ASAGI') continue;
 
-          // 4H konfirmasyon — LONG için yükseliş veya hafif yükseliş şart
-          if (['ASAGI','HAFIF_ASAGI','BELIRSIZ'].includes(trend4H.trend)) continue;
-          if (trend4H.trend==='YATAY' && analysis.longSkor<55) continue;
-
-          // 1H konfirmasyon
-          if (['ASAGI','BELIRSIZ'].includes(trend1H.trend)) continue;
-
-          if (analysis.longSkor<minScore) continue;
-
-          // Pozisyon boyutu — skora ve trende göre
+          const price=parseFloat(symH1[symH1.length-1][4]);
           let mult=1.0;
-          if      (analysis.longSkor>=80) mult=2.0;
-          else if (analysis.longSkor>=65) mult=1.5;
-          else if (analysis.longSkor>=55) mult=1.25;
-          else                            mult=1.0;
-
-          if (trend4H.trend==='YUKARI'&&trend4H.guclu) mult=Math.min(2.0,mult*1.3);
-          else if (trend4H.trend==='YUKARI')            mult=Math.min(2.0,mult*1.1);
+          if      (timing.score>=90) mult=2.0;
+          else if (timing.score>=80) mult=1.5;
+          else if (timing.score>=70) mult=1.25;
           if (btcYukselis) mult=Math.min(2.0,mult*1.1);
           mult=Math.min(2.0,Math.max(0.5,mult));
 
           openPositions[sym]={
             side:'LONG', entryTime:new Date(candleTime), entryPrice:price,
-            quantity:(tradeAmount*mult)/price, score:analysis.longSkor,
-            trend1H:trend1H.trend, trend4H:trend4H.trend, btcTrend:cachedBtc4H.trend,
+            quantity:(tradeAmount*mult)/price, score:timing.score,
+            trend1H:timing.trend1H, trend4H:setup4H.trend4H, btcTrend:btcTrend4H.trend,
             amount:tradeAmount*mult, currentPnlPct:0
           };
           highestPrices[sym]=price;
+          positionOpenTime[sym]=i;
+          delete adaylar[sym];
         }
 
-        // ── SHORT SİNYALİ ────────────────────────────────
-        else if (enableShort && analysis.signal==='SATIS') {
-          // 4H konfirmasyon — SHORT için düşüş veya hafif düşüş şart
-          if (['YUKARI','BELIRSIZ'].includes(trend4H.trend)) continue;
-          if (trend4H.trend==='HAFIF_YUKARI') continue;
-          if (trend4H.trend==='YATAY' && analysis.shortSkor<55) continue;
+        // ── SHORT GİRİŞ ──────────────────────────────────
+        else if (enableShort && timing.signal==='SATIS') {
+          if (btcYukselis) continue;
+          if (['YUKARI','HAFIF_YUKARI'].includes(setup4H.trend4H)) continue;
 
-          // 1H konfirmasyon
-          if (['YUKARI'].includes(trend1H.trend)) continue;
-
-          // BTC yükselişte güçlü short yapma
-          if (btcYukselis && trend4H.trend==='YATAY') continue;
-
-          if (Math.abs(analysis.shortSkor)<minScore) continue;
-
+          const price=parseFloat(symH1[symH1.length-1][4]);
           let mult=1.0;
-          if      (Math.abs(analysis.shortSkor)>=80) mult=2.0;
-          else if (Math.abs(analysis.shortSkor)>=65) mult=1.5;
-          else if (Math.abs(analysis.shortSkor)>=55) mult=1.25;
-          else                                        mult=1.0;
-
-          if (['ASAGI'].includes(trend4H.trend)&&trend4H.guclu) mult=Math.min(2.0,mult*1.3);
-          else if (['ASAGI','HAFIF_ASAGI'].includes(trend4H.trend)) mult=Math.min(2.0,mult*1.1);
+          if      (Math.abs(timing.score)>=90) mult=2.0;
+          else if (Math.abs(timing.score)>=80) mult=1.5;
+          else if (Math.abs(timing.score)>=70) mult=1.25;
           if (btcDusus) mult=Math.min(2.0,mult*1.2);
           mult=Math.min(2.0,Math.max(0.5,mult));
 
           openPositions[sym]={
             side:'SHORT', entryTime:new Date(candleTime), entryPrice:price,
-            quantity:(tradeAmount*mult)/price, score:analysis.score,
-            trend1H:trend1H.trend, trend4H:trend4H.trend, btcTrend:cachedBtc4H.trend,
+            quantity:(tradeAmount*mult)/price, score:timing.score,
+            trend1H:timing.trend1H, trend4H:setup4H.trend4H, btcTrend:btcTrend4H.trend,
             amount:tradeAmount*mult, currentPnlPct:0
           };
           lowestPrices[sym]=price;
+          positionOpenTime[sym]=i;
+          delete adaylar[sym];
         }
 
         if (Object.keys(openPositions).length>=maxPositions) break;
@@ -205,8 +199,8 @@ class BacktestEngine {
     // Açık pozisyonları kapat
     for (const sym of Object.keys(openPositions)) {
       const pos=openPositions[sym];
-      const symMain=coinData[sym]?.main||[];
-      const lastPrice=symMain.length>0?parseFloat(symMain[symMain.length-1][4]):pos.entryPrice;
+      const symH1=coinData[sym]?.h1||[];
+      const lastPrice=symH1.length>0?parseFloat(symH1[symH1.length-1][4]):pos.entryPrice;
       let pnl=0, pnlPct=0;
       if (pos.side==='LONG') {
         pnl=(lastPrice-pos.entryPrice)*pos.quantity-(pos.entryPrice*pos.quantity*totalCost);
@@ -215,13 +209,11 @@ class BacktestEngine {
         pnl=(pos.entryPrice-lastPrice)*pos.quantity-(pos.entryPrice*pos.quantity*totalCost);
         pnlPct=((pos.entryPrice-lastPrice)/pos.entryPrice*100)-(totalCost*100);
       }
-      trades.push({
-        symbol:sym, side:pos.side, entryTime:pos.entryTime,
+      trades.push({ symbol:sym, side:pos.side, entryTime:pos.entryTime,
         exitTime:new Date(parseInt(refData[refData.length-1][0])),
         entryPrice:pos.entryPrice, exitPrice:lastPrice, quantity:pos.quantity, reason:'OPEN',
         netPnl:parseFloat(pnl.toFixed(4)), netPnlPct:parseFloat(pnlPct.toFixed(2)),
-        score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend
-      });
+        score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend });
     }
 
     return this.calcStats(trades);
@@ -262,66 +254,68 @@ class BacktestEngine {
         ...c, totalPnl:parseFloat(c.totalPnl.toFixed(4)),
         winRate:c.wins+c.losses>0?parseFloat((c.wins/(c.wins+c.losses)*100).toFixed(1)):0
       })).sort((a,b)=>b.totalPnl-a.totalPnl),
-      trades:trades.sort((a,b)=>new Date(b.entryTime)-new Date(a.entryTime)).slice(0,50)
+      trades:trades.sort((a,b)=>new Date(b.entryTime)-new Date(a.entryTime)).slice(0,100)
     };
   }
 
   async run(params={}) {
     const {
-      symbol='BTCUSDT', interval='1h', days=30,
+      symbol='BTCUSDT', days=60,
       stopLoss=2.0, trailingStop=0.5, minProfit=1.5,
       commission=0.1, slippage=0.05, minScore=40,
       tradeAmount=100, maxPositions=3, enableShort=true,
-      rsiPeriod=14, rsiOversold=40, rsiOverbought=70, srLookback=20,
-      optimize=false, symbols=null
+      timeStopCandles=15, symbols=null
     } = params;
 
-    const intervalMinutes=this.getIntervalMinutes(interval);
-    const totalCandles=Math.ceil((days*24*60)/intervalMinutes)+100;
-    const limit=Math.min(totalCandles,1000);
     const coinList=(symbols&&symbols.length>0)?symbols:[symbol];
-
-    console.log(`Backtest: ${coinList.length} coin | ${interval} | ${days}g | 4H konfirmasyon aktif`);
+    console.log(`Backtest v19: ${coinList.length} coin | ${days}g | 4H setup + 1H timing`);
 
     const getKlines=async(sym,tf,lim)=>{
       try { const b=new BinanceService('',''); return await b.getKlines(sym,tf,lim)||[]; }
       catch(e) { console.error(`${sym} ${tf}:`,e.message); return []; }
     };
 
+    const h4Limit = Math.min(Math.ceil(days*24/4)+50, 1000);
+    const h1Limit = Math.min(days*24+100, 1000);
+    const d1Limit = Math.min(days+50, 365);
+
     const coinData={};
     for (const sym of coinList) {
-      await new Promise(r=>setTimeout(r,150));
-      const main=await getKlines(sym,interval,limit);
+      await new Promise(r=>setTimeout(r,200));
+      const h4 = await getKlines(sym,'4h',h4Limit);
       await new Promise(r=>setTimeout(r,100));
-      const h1=await getKlines(sym,'1h',500);
+      const h1 = await getKlines(sym,'1h',h1Limit);
       await new Promise(r=>setTimeout(r,100));
-      const h4=await getKlines(sym,'4h',300);
-      if (main.length>=52) { coinData[sym]={main,h1,h4}; console.log(`✅${sym}:${main.length}`); }
-      else console.log(`⚠️${sym}:${main.length}`);
+      const d1 = await getKlines(sym,'1d',d1Limit);
+      if (h4.length>=52) {
+        coinData[sym]={h4,h1,d1};
+        console.log(`✅${sym}: 4H:${h4.length} 1H:${h1.length} 1D:${d1.length}`);
+      } else {
+        console.log(`⚠️${sym}: yetersiz(${h4.length})`);
+      }
     }
 
     const available=Object.keys(coinData);
-    if (available.length===0) throw new Error('Hiçbir coin için veri çekilemedi');
+    if (available.length===0) throw new Error('Veri çekilemedi');
 
-    let btcMain=[],btcH1=[],btcH4=[];
+    // BTC verileri
+    let btcH4=[],btcH1=[],btc1D=[];
     if (coinData['BTCUSDT']) {
-      btcMain=coinData['BTCUSDT'].main;
-      btcH1=coinData['BTCUSDT'].h1;
       btcH4=coinData['BTCUSDT'].h4;
+      btcH1=coinData['BTCUSDT'].h1;
+      btc1D=coinData['BTCUSDT'].d1;
     } else {
-      await new Promise(r=>setTimeout(r,150));
-      btcMain=await getKlines('BTCUSDT',interval,limit);
-      await new Promise(r=>setTimeout(r,100));
-      btcH1=await getKlines('BTCUSDT','1h',500);
-      await new Promise(r=>setTimeout(r,100));
-      btcH4=await getKlines('BTCUSDT','4h',300);
+      await new Promise(r=>setTimeout(r,200));
+      btcH4=await getKlines('BTCUSDT','4h',h4Limit);
+      btcH1=await getKlines('BTCUSDT','1h',h1Limit);
+      btc1D=await getKlines('BTCUSDT','1d',d1Limit);
     }
 
-    const runP={stopLoss,trailingStop,minProfit,commission,slippage,minScore,tradeAmount,maxPositions,enableShort,rsiPeriod,rsiOversold,rsiOverbought,srLookback};
-    const result=await this.runOnce(runP,coinData,btcMain,btcH1,btcH4);
+    const runP={stopLoss,trailingStop,minProfit,commission,slippage,minScore,tradeAmount,maxPositions,enableShort,timeStopCandles};
+    const result=await this.runOnce(runP,coinData,btcH4,btcH1,btcH4,btc1D);
 
     return {
-      params:{ symbol:coinList.join(','), interval, days, stopLoss, trailingStop, minScore, tradeAmount, maxPositions, enableShort },
+      params:{ symbol:coinList.join(','), days, stopLoss, trailingStop, minScore, tradeAmount, maxPositions, enableShort, timeStopCandles },
       isMulti:coinList.length>1, optimization:null,
       summary:{
         totalCoins:available.length,
@@ -336,10 +330,6 @@ class BacktestEngine {
       coinSummaries:result.coinSummaries,
       trades:result.trades
     };
-  }
-
-  getIntervalMinutes(i) {
-    return {'1m':1,'3m':3,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440}[i]||60;
   }
 }
 
