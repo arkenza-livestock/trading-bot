@@ -34,10 +34,10 @@ class BacktestEngine {
     let cachedBtc1H={trend:'BELIRSIZ',guclu:false};
     let lastBtcUpdate=0;
 
-    for (let i=50; i<refData.length; i++) {
+    for (let i=52; i<refData.length; i++) {
       const candleTime=parseInt(refData[i][0]);
 
-      // ── Açık pozisyonları kontrol et ─────────────────────
+      // Açık pozisyonları kontrol et
       for (const sym of Object.keys(openPositions)) {
         const pos=openPositions[sym];
         const symCandle=coinIndex[sym]?.[candleTime];
@@ -61,9 +61,7 @@ class BacktestEngine {
               score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend });
             delete openPositions[sym]; delete highestPrices[sym];
           }
-        }
-
-        else if (pos.side==='SHORT') {
+        } else if (pos.side==='SHORT') {
           if (posPrice<(lowestPrices[sym]||pos.entryPrice)) lowestPrices[sym]=posPrice;
           const trailStop=(lowestPrices[sym]||pos.entryPrice)*(1+trailingStop/100);
           const bruto=((pos.entryPrice-posPrice)/pos.entryPrice)*100;
@@ -83,12 +81,12 @@ class BacktestEngine {
         }
       }
 
-      // ── Koruma filtreleri ─────────────────────────────────
+      // Koruma filtreleri
       if (Object.keys(openPositions).length>=maxPositions) continue;
       const zararliVar=Object.values(openPositions).some(p=>(p.currentPnlPct||0)<-0.5);
       if (zararliVar) continue;
 
-      // BTC trend cache — 4H güncelle
+      // BTC trend cache
       if (candleTime-lastBtcUpdate>=4*60*60*1000) {
         const h1f=btcH1.filter(c=>parseInt(c[0])<=candleTime);
         const h4f=btcH4.filter(c=>parseInt(c[0])<=candleTime);
@@ -97,100 +95,106 @@ class BacktestEngine {
         lastBtcUpdate=candleTime;
       }
 
-      const btcDusus    = cachedBtc4H.trend==='ASAGI' && cachedBtc1H.trend==='ASAGI';
-      const btcYukselis = cachedBtc4H.trend==='YUKARI';
-      const btcHafifDus = cachedBtc4H.trend==='HAFIF_ASAGI' || cachedBtc4H.trend==='ASAGI';
-
-      // BTC ani düşüş kontrolü
-      let btcAniDusus = false;
+      // BTC ani düşüş
+      let btcAniDusus=false;
       if (btcMain.length>=4) {
         const btcSlice=btcMain.filter(c=>parseInt(c[0])<=candleTime);
         if (btcSlice.length>=4) {
           const now=parseFloat(btcSlice[btcSlice.length-1][4]);
           const ago=parseFloat(btcSlice[btcSlice.length-4][4]);
-          if (((now-ago)/ago)*100 < -1.0) btcAniDusus=true;
+          if (((now-ago)/ago)*100<-1.0) btcAniDusus=true;
         }
       }
 
-      const btcMinLongScore = cachedBtc4H.trend==='ASAGI'       ? 75
-        : cachedBtc4H.trend==='HAFIF_ASAGI' ? 65
-        : cachedBtc4H.trend==='YATAY'       ? 55
-        : cachedBtc4H.trend==='BELIRSIZ'    ? 60
-        : 0;
+      const btcDusus    = cachedBtc4H.trend==='ASAGI'&&cachedBtc1H.trend==='ASAGI';
+      const btcYukselis = cachedBtc4H.trend==='YUKARI';
 
-      // ── Her coin için sinyal ara ──────────────────────────
+      // Her coin için sinyal ara
       for (const sym of availableCoins) {
         if (openPositions[sym]) continue;
 
         const symData=coinData[sym];
         const symMain=symData.main.filter(c=>parseInt(c[0])<=candleTime);
-        if (symMain.length<50) continue;
+        if (symMain.length<52) continue;
 
         const price=parseFloat(symMain[symMain.length-1][4]);
         const ticker={symbol:sym, priceChangePercent:'0', quoteVolume:'999999999'};
         const analysis=TechnicalAnalysis.analyze(symMain,ticker,settings);
         if (!analysis) continue;
 
+        // 4H trend hesapla
         const symH4=symData.h4.filter(c=>parseInt(c[0])<=candleTime);
         const symH1=symData.h1.filter(c=>parseInt(c[0])<=candleTime);
         const trend4H=TechnicalAnalysis.analyze4H(symH4);
         const trend1H=TechnicalAnalysis.analyze1H(symH1);
 
-        // ── LONG ─────────────────────────────────────────────
+        // ── LONG SİNYALİ ─────────────────────────────────
         if (analysis.signal==='ALIM') {
-          if (btcDusus || btcAniDusus) continue;
-          if (btcMinLongScore>0 && analysis.score<btcMinLongScore) continue;
+          // BTC korumaları
+          if (btcDusus||btcAniDusus) continue;
+
+          // 4H konfirmasyon — LONG için yükseliş veya hafif yükseliş şart
           if (['ASAGI','HAFIF_ASAGI','BELIRSIZ'].includes(trend4H.trend)) continue;
-          if (trend4H.trend==='YATAY' && analysis.score<65) continue;
+          if (trend4H.trend==='YATAY' && analysis.longSkor<55) continue;
+
+          // 1H konfirmasyon
           if (['ASAGI','BELIRSIZ'].includes(trend1H.trend)) continue;
-          if (trend1H.trend==='HAFIF_ASAGI' && analysis.score<70) continue;
-          if (trend1H.trend==='YATAY' && analysis.score<55) continue;
 
-          let finalScore=analysis.score;
-          if (trend4H.trend==='YUKARI'&&trend1H.trend==='YUKARI') finalScore=Math.min(100,finalScore+(trend4H.guclu&&trend1H.guclu?25:15));
-          else if (trend4H.trend==='YUKARI') finalScore=Math.min(100,finalScore+10);
-          else if (trend1H.trend==='YUKARI') finalScore=Math.min(100,finalScore+8);
-          if (btcYukselis) finalScore=Math.min(100,finalScore+5);
-          if (finalScore<minScore) continue;
+          if (analysis.longSkor<minScore) continue;
 
-          let mult=finalScore>=80?2.0:finalScore>=70?1.5:finalScore>=60?1.25:finalScore>=50?1.0:0.75;
-          if (trend4H.trend==='YUKARI'&&trend1H.trend==='YUKARI') mult*=trend4H.guclu&&trend1H.guclu?1.5:1.3;
-          else if (trend4H.trend==='YUKARI') mult*=1.1;
-          else if (trend1H.trend==='YATAY')  mult*=0.7;
-          if (btcYukselis) mult*=1.1;
-          else if (cachedBtc4H.trend==='YATAY') mult*=0.8;
-          mult=Math.min(2.0,Math.max(0.25,mult));
+          // Pozisyon boyutu — skora ve trende göre
+          let mult=1.0;
+          if      (analysis.longSkor>=80) mult=2.0;
+          else if (analysis.longSkor>=65) mult=1.5;
+          else if (analysis.longSkor>=55) mult=1.25;
+          else                            mult=1.0;
 
-          openPositions[sym]={ side:'LONG', entryTime:new Date(candleTime), entryPrice:price,
-            quantity:(tradeAmount*mult)/price, score:finalScore,
+          if (trend4H.trend==='YUKARI'&&trend4H.guclu) mult=Math.min(2.0,mult*1.3);
+          else if (trend4H.trend==='YUKARI')            mult=Math.min(2.0,mult*1.1);
+          if (btcYukselis) mult=Math.min(2.0,mult*1.1);
+          mult=Math.min(2.0,Math.max(0.5,mult));
+
+          openPositions[sym]={
+            side:'LONG', entryTime:new Date(candleTime), entryPrice:price,
+            quantity:(tradeAmount*mult)/price, score:analysis.longSkor,
             trend1H:trend1H.trend, trend4H:trend4H.trend, btcTrend:cachedBtc4H.trend,
-            amount:tradeAmount*mult, currentPnlPct:0 };
+            amount:tradeAmount*mult, currentPnlPct:0
+          };
           highestPrices[sym]=price;
         }
 
-        // ── SHORT ─────────────────────────────────────────────
+        // ── SHORT SİNYALİ ────────────────────────────────
         else if (enableShort && analysis.signal==='SATIS') {
-          // Her iki trend de güçlü YUKARI ise short yapma
-          if (trend4H.trend==='YUKARI' && trend1H.trend==='YUKARI' && trend4H.guclu) continue;
-          // Çok güçlü BTC yükselişte short yapma
-          if (btcYukselis && trend4H.trend==='YUKARI') continue;
+          // 4H konfirmasyon — SHORT için düşüş veya hafif düşüş şart
+          if (['YUKARI','BELIRSIZ'].includes(trend4H.trend)) continue;
+          if (trend4H.trend==='HAFIF_YUKARI') continue;
+          if (trend4H.trend==='YATAY' && analysis.shortSkor<55) continue;
 
-          // Short skor eşiği — sabit 20
-          if (Math.abs(analysis.score) < 20) continue;
+          // 1H konfirmasyon
+          if (['YUKARI'].includes(trend1H.trend)) continue;
 
-          // BTC düşüşte ise short güçlü — büyük pozisyon
-          let mult = Math.abs(analysis.score)>=60?1.5:Math.abs(analysis.score)>=40?1.2:1.0;
-          if (['ASAGI','HAFIF_ASAGI'].includes(trend4H.trend)) mult*=1.2;
-          if (['ASAGI','HAFIF_ASAGI'].includes(trend1H.trend)) mult*=1.1;
-          if (btcDusus)     mult*=1.3;
-          if (btcHafifDus)  mult*=1.1;
-          if (btcAniDusus)  mult*=1.2;
-          mult=Math.min(2.0,Math.max(0.25,mult));
+          // BTC yükselişte güçlü short yapma
+          if (btcYukselis && trend4H.trend==='YATAY') continue;
 
-          openPositions[sym]={ side:'SHORT', entryTime:new Date(candleTime), entryPrice:price,
+          if (Math.abs(analysis.shortSkor)<minScore) continue;
+
+          let mult=1.0;
+          if      (Math.abs(analysis.shortSkor)>=80) mult=2.0;
+          else if (Math.abs(analysis.shortSkor)>=65) mult=1.5;
+          else if (Math.abs(analysis.shortSkor)>=55) mult=1.25;
+          else                                        mult=1.0;
+
+          if (['ASAGI'].includes(trend4H.trend)&&trend4H.guclu) mult=Math.min(2.0,mult*1.3);
+          else if (['ASAGI','HAFIF_ASAGI'].includes(trend4H.trend)) mult=Math.min(2.0,mult*1.1);
+          if (btcDusus) mult=Math.min(2.0,mult*1.2);
+          mult=Math.min(2.0,Math.max(0.5,mult));
+
+          openPositions[sym]={
+            side:'SHORT', entryTime:new Date(candleTime), entryPrice:price,
             quantity:(tradeAmount*mult)/price, score:analysis.score,
             trend1H:trend1H.trend, trend4H:trend4H.trend, btcTrend:cachedBtc4H.trend,
-            amount:tradeAmount*mult, currentPnlPct:0 };
+            amount:tradeAmount*mult, currentPnlPct:0
+          };
           lowestPrices[sym]=price;
         }
 
@@ -211,11 +215,13 @@ class BacktestEngine {
         pnl=(pos.entryPrice-lastPrice)*pos.quantity-(pos.entryPrice*pos.quantity*totalCost);
         pnlPct=((pos.entryPrice-lastPrice)/pos.entryPrice*100)-(totalCost*100);
       }
-      trades.push({ symbol:sym, side:pos.side, entryTime:pos.entryTime,
+      trades.push({
+        symbol:sym, side:pos.side, entryTime:pos.entryTime,
         exitTime:new Date(parseInt(refData[refData.length-1][0])),
         entryPrice:pos.entryPrice, exitPrice:lastPrice, quantity:pos.quantity, reason:'OPEN',
         netPnl:parseFloat(pnl.toFixed(4)), netPnlPct:parseFloat(pnlPct.toFixed(2)),
-        score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend });
+        score:pos.score, trend1H:pos.trend1H, trend4H:pos.trend4H, btcTrend:pos.btcTrend
+      });
     }
 
     return this.calcStats(trades);
@@ -260,18 +266,6 @@ class BacktestEngine {
     };
   }
 
-  async optimizeScore(params, coinData, btcMain, btcH1, btcH4) {
-    const scores=[20,30,35,40,45,50,55,60,65,70];
-    let bestScore=40, bestPF=0;
-    const results=[];
-    for (const score of scores) {
-      const r=await this.runOnce({...params,minScore:score},coinData,btcMain,btcH1,btcH4);
-      results.push({ minScore:score, profitFactor:r.profitFactor, totalPnl:r.totalPnl, winRate:r.winRate, totalTrades:r.totalTrades });
-      if (r.totalTrades>=3&&r.profitFactor>bestPF) { bestPF=r.profitFactor; bestScore=score; }
-    }
-    return { bestScore, bestPF, results };
-  }
-
   async run(params={}) {
     const {
       symbol='BTCUSDT', interval='1h', days=30,
@@ -287,7 +281,7 @@ class BacktestEngine {
     const limit=Math.min(totalCandles,1000);
     const coinList=(symbols&&symbols.length>0)?symbols:[symbol];
 
-    console.log(`Backtest: ${coinList.length} coin | ${interval} | ${days}g`);
+    console.log(`Backtest: ${coinList.length} coin | ${interval} | ${days}g | 4H konfirmasyon aktif`);
 
     const getKlines=async(sym,tf,lim)=>{
       try { const b=new BinanceService('',''); return await b.getKlines(sym,tf,lim)||[]; }
@@ -302,7 +296,7 @@ class BacktestEngine {
       const h1=await getKlines(sym,'1h',500);
       await new Promise(r=>setTimeout(r,100));
       const h4=await getKlines(sym,'4h',300);
-      if (main.length>=50) { coinData[sym]={main,h1,h4}; console.log(`✅${sym}:${main.length}`); }
+      if (main.length>=52) { coinData[sym]={main,h1,h4}; console.log(`✅${sym}:${main.length}`); }
       else console.log(`⚠️${sym}:${main.length}`);
     }
 
@@ -324,20 +318,11 @@ class BacktestEngine {
     }
 
     const runP={stopLoss,trailingStop,minProfit,commission,slippage,minScore,tradeAmount,maxPositions,enableShort,rsiPeriod,rsiOversold,rsiOverbought,srLookback};
-
-    let optimization=null, finalScore=minScore;
-    if (optimize) {
-      console.log('🔍 Optimizasyon...');
-      optimization=await this.optimizeScore(runP,coinData,btcMain,btcH1,btcH4);
-      finalScore=optimization.bestScore;
-      console.log(`✅ En iyi: ${finalScore}`);
-    }
-
-    const result=await this.runOnce({...runP,minScore:finalScore},coinData,btcMain,btcH1,btcH4);
+    const result=await this.runOnce(runP,coinData,btcMain,btcH1,btcH4);
 
     return {
-      params:{ symbol:coinList.join(','), interval, days, stopLoss, trailingStop, minScore:finalScore, tradeAmount, maxPositions, enableShort },
-      isMulti:coinList.length>1, optimization,
+      params:{ symbol:coinList.join(','), interval, days, stopLoss, trailingStop, minScore, tradeAmount, maxPositions, enableShort },
+      isMulti:coinList.length>1, optimization:null,
       summary:{
         totalCoins:available.length,
         totalTrades:result.totalTrades, wins:result.wins, losses:result.losses,
