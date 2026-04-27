@@ -1,4 +1,4 @@
-// v16 - Hacim eşiği düşürüldü, koşullar dengelendi
+// v17 - 4/6 minimum + 4H konfirmasyon
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 14) {
@@ -85,8 +85,7 @@ class TechnicalAnalysis {
     const bulutUzaklik = aboveCloud ? (price-kumoUpper)/price*100 : belowCloud ? (kumoLower-price)/price*100 : 0;
     return {
       tenkan, kijun, spanA, spanB, kumoUpper, kumoLower, kumoKalinlik,
-      aboveCloud, belowCloud, insideCloud: !aboveCloud&&!belowCloud,
-      bulutUzaklik,
+      aboveCloud, belowCloud, insideCloud: !aboveCloud&&!belowCloud, bulutUzaklik,
       tkBull: tenkan>kijun, tkBear: tenkan<kijun,
       chikouBull: price>chikouRef, chikouBear: price<chikouRef,
       kumoBull: spanA>spanB, kumoBear: spanA<spanB,
@@ -96,40 +95,28 @@ class TechnicalAnalysis {
 
   static ichimokuLongKontrol(ichimoku, rsi) {
     if (!ichimoku) return { gecti:false, puan:0, guclu:false, detay:[] };
-    const kontroller = [
-      { isim:'Fiyat bulut üstü',  gecti:ichimoku.aboveCloud,  guclu:ichimoku.aboveCloud&&ichimoku.bulutUzaklik>1 },
-      { isim:'Tenkan > Kijun',    gecti:ichimoku.tkBull,       guclu:ichimoku.tkBull&&(ichimoku.tenkan-ichimoku.kijun)/ichimoku.kijun*100>0.3 },
-      { isim:'Chikou pozitif',    gecti:ichimoku.chikouBull,   guclu:ichimoku.chikouBull },
-      { isim:'Kumo yeşil',        gecti:ichimoku.kumoBull,     guclu:ichimoku.kumoBull&&ichimoku.kumoKalinlik>0.5 },
-      { isim:`RSI uyumu(${rsi})`, gecti:rsi>=30&&rsi<=72,      guclu:rsi>=35&&rsi<=65 }
+    const k = [
+      { isim:'Bulut üstü',    gecti:ichimoku.aboveCloud,  guclu:ichimoku.aboveCloud&&ichimoku.bulutUzaklik>0.5 },
+      { isim:'Tenkan>Kijun',  gecti:ichimoku.tkBull,       guclu:ichimoku.tkBull&&(ichimoku.tenkan-ichimoku.kijun)/ichimoku.kijun*100>0.2 },
+      { isim:'Chikou+',       gecti:ichimoku.chikouBull,   guclu:ichimoku.chikouBull },
+      { isim:'Kumo yeşil',    gecti:ichimoku.kumoBull,     guclu:ichimoku.kumoBull&&ichimoku.kumoKalinlik>0.3 },
+      { isim:`RSI(${rsi})`,   gecti:rsi>=25&&rsi<=72,      guclu:rsi>=30&&rsi<=65 }
     ];
-    const gecenler=kontroller.filter(k=>k.gecti).length;
-    const gucluler=kontroller.filter(k=>k.guclu).length;
-    return {
-      gecti: gecenler>=3,
-      guclu: gecenler>=4||gucluler>=3,
-      puan: gecenler,
-      detay: kontroller.map(k=>`${k.gecti?'✅':'❌'}${k.isim}`)
-    };
+    const gec=k.filter(x=>x.gecti).length, guc=k.filter(x=>x.guclu).length;
+    return { gecti:gec>=3, guclu:gec>=4||guc>=3, puan:gec, detay:k.map(x=>`${x.gecti?'✅':'❌'}${x.isim}`) };
   }
 
   static ichimokuShortKontrol(ichimoku, rsi) {
     if (!ichimoku) return { gecti:false, puan:0, guclu:false, detay:[] };
-    const kontroller = [
-      { isim:'Fiyat bulut altı',  gecti:ichimoku.belowCloud,  guclu:ichimoku.belowCloud&&ichimoku.bulutUzaklik>1 },
-      { isim:'Tenkan < Kijun',    gecti:ichimoku.tkBear,       guclu:ichimoku.tkBear&&(ichimoku.kijun-ichimoku.tenkan)/ichimoku.kijun*100>0.3 },
-      { isim:'Chikou negatif',    gecti:ichimoku.chikouBear,   guclu:ichimoku.chikouBear },
-      { isim:'Kumo kırmızı',      gecti:ichimoku.kumoBear,     guclu:ichimoku.kumoBear&&ichimoku.kumoKalinlik>0.5 },
-      { isim:`RSI uyumu(${rsi})`, gecti:rsi>=28&&rsi<=65,      guclu:rsi>=35&&rsi<=60 }
+    const k = [
+      { isim:'Bulut altı',    gecti:ichimoku.belowCloud,  guclu:ichimoku.belowCloud&&ichimoku.bulutUzaklik>0.5 },
+      { isim:'Tenkan<Kijun',  gecti:ichimoku.tkBear,       guclu:ichimoku.tkBear&&(ichimoku.kijun-ichimoku.tenkan)/ichimoku.kijun*100>0.2 },
+      { isim:'Chikou-',       gecti:ichimoku.chikouBear,   guclu:ichimoku.chikouBear },
+      { isim:'Kumo kırmızı',  gecti:ichimoku.kumoBear,     guclu:ichimoku.kumoBear&&ichimoku.kumoKalinlik>0.3 },
+      { isim:`RSI(${rsi})`,   gecti:rsi>=28&&rsi<=68,      guclu:rsi>=35&&rsi<=62 }
     ];
-    const gecenler=kontroller.filter(k=>k.gecti).length;
-    const gucluler=kontroller.filter(k=>k.guclu).length;
-    return {
-      gecti: gecenler>=3,
-      guclu: gecenler>=4||gucluler>=3,
-      puan: gecenler,
-      detay: kontroller.map(k=>`${k.gecti?'✅':'❌'}${k.isim}`)
-    };
+    const gec=k.filter(x=>x.gecti).length, guc=k.filter(x=>x.guclu).length;
+    return { gecti:gec>=3, guclu:gec>=4||guc>=3, puan:gec, detay:k.map(x=>`${x.gecti?'✅':'❌'}${x.isim}`) };
   }
 
   static calculateRSIDivergence(closes, lows, highs, period=14, lookback=25) {
@@ -211,6 +198,7 @@ class TechnicalAnalysis {
   static analyze1H(candles) { return this.analyzeTF(candles); }
   static analyze4H(candles) { return this.analyzeTF(candles); }
 
+  // ── ANA ANALİZ — 4/6 MİNİMUM + AĞIRLIKLI SKOR ───────────
   static analyze(candles, ticker, settings={}) {
     if (!candles||candles.length<52) return null;
 
@@ -242,17 +230,16 @@ class TechnicalAnalysis {
     const avg20  = volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
     const sonVol = volumes[len-1];
     const hacimOran = avg20>0 ? sonVol/avg20 : 0;
-    const avg5   = volumes.slice(-6,-1).reduce((a,b)=>a+b,0)/5;
-    const hacimTrend = avg5 > avg20 * 1.1; // Son 5 mum ortalaması yükseliyor
+    const avg5  = volumes.slice(-6,-1).reduce((a,b)=>a+b,0)/5;
+    const hacimTrend = avg5 > avg20 * 1.1;
 
-    // Alım/Satış hacim oranı
+    // Alım/Satış hacim
     let alimVol=0, satisVol=0;
     for (let i=len-5; i<len; i++) {
       if (i>0&&closes[i]>=closes[i-1]) alimVol+=volumes[i];
       else if (i>0) satisVol+=volumes[i];
     }
-    const toplamVol=alimVol+satisVol;
-    const alimOran=toplamVol>0?(alimVol/toplamVol)*100:50;
+    const alimOran=(alimVol+satisVol)>0?(alimVol/(alimVol+satisVol))*100:50;
 
     // Destek/Direnç
     const lookback  = parseInt(settings.sr_lookback||20);
@@ -271,77 +258,82 @@ class TechnicalAnalysis {
     const ichimokuShort = this.ichimokuShortKontrol(ichimoku, rsi);
 
     // ── 6 LONG KOŞULU ────────────────────────────────────
-    const longKosullar = {
-      // K1: RSI satım bölgesinde (50 altı)
-      k1_rsi: rsi < 50,
-
-      // K2: MACD pozitif (bullish veya crossover)
-      k2_macd: macd.bullish || macd.crossover,
-
-      // K3: Hacim normal veya üstünde (1.0x yeterli, spike bonus)
-      k3_hacim: hacimOran >= 1.0 || hacimTrend,
-
-      // K4: Fiyat alt yarıda (%50 altı)
-      k4_destek: pozisyon < 50,
-
-      // K5: Ichimoku long konfirmasyonu (3/5 koşul)
+    const longK = {
+      k1_rsi:      rsi < 52,
+      k2_macd:     macd.bullish || macd.crossover,
+      k3_hacim:    hacimOran >= 1.0 || hacimTrend,
+      k4_destek:   pozisyon < 55,
       k5_ichimoku: ichimokuLong.gecti,
-
-      // K6: EMA momentum pozitif
       k6_momentum: ema5 > ema10 && roc1 > 0
     };
 
     // ── 6 SHORT KOŞULU ───────────────────────────────────
-    const shortKosullar = {
-      // K1: RSI alım bölgesinde (55 üstü — daha sıkı)
-      k1_rsi: rsi > 55,
-
-      // K2: MACD negatif (bearish veya crossunder)
-      k2_macd: macd.bearish || macd.crossunder,
-
-      // K3: Hacim normal veya üstünde
-      k3_hacim: hacimOran >= 1.0 || hacimTrend,
-
-      // K4: Fiyat üst yarıda (%50 üstü)
-      k4_direnc: pozisyon > 50,
-
-      // K5: Ichimoku short konfirmasyonu (3/5 koşul)
+    const shortK = {
+      k1_rsi:      rsi > 50,
+      k2_macd:     macd.bearish || macd.crossunder,
+      k3_hacim:    hacimOran >= 1.0 || hacimTrend,
+      k4_direnc:   pozisyon > 45,
       k5_ichimoku: ichimokuShort.gecti,
-
-      // K6: EMA momentum negatif
       k6_momentum: ema5 < ema10 && roc1 < 0
     };
 
-    const longTutulan  = Object.values(longKosullar).filter(Boolean).length;
-    const shortTutulan = Object.values(shortKosullar).filter(Boolean).length;
+    const longTutulan  = Object.values(longK).filter(Boolean).length;
+    const shortTutulan = Object.values(shortK).filter(Boolean).length;
 
-    const isLong  = longTutulan  === 6;
-    const isShort = shortTutulan === 6;
+    // ── SİNYAL KARAR MEKANİZMASI ─────────────────────────
+    // 6/6 → çok güçlü
+    // 5/6 → güçlü
+    // 4/6 → orta (minimum)
+    // 3/6 veya altı → sinyal yok
 
-    // Skor
-    let score = 0;
-    if (isLong) {
-      score = 50 + longTutulan * 5;
-      if (ichimokuLong.guclu)  score += 10;
-      if (divergence.bullish)  score += 10;
-      if (macd.crossover)      score += 5;
-      if (hacimOran >= 1.5)    score += 5; // Hacim spike bonusu
-      score = Math.min(100, score);
+    const LONG_MIN  = 4;
+    const SHORT_MIN = 4;
+
+    // Ichimoku şart — en az 3/5 tutmalı
+    const longIchimokuOK  = ichimokuLong.puan  >= 3;
+    const shortIchimokuOK = ichimokuShort.puan >= 3;
+
+    const isLong  = longTutulan  >= LONG_MIN  && longIchimokuOK;
+    const isShort = shortTutulan >= SHORT_MIN && shortIchimokuOK;
+
+    // Çakışma varsa daha güçlü olanı seç
+    let signal = 'BEKLE';
+    if (isLong && isShort) {
+      signal = longTutulan >= shortTutulan ? 'ALIM' : 'SATIS';
+    } else if (isLong) {
+      signal = 'ALIM';
+    } else if (isShort) {
+      signal = 'SATIS';
     }
-    if (isShort) {
-      score = -(50 + shortTutulan * 5);
-      if (ichimokuShort.guclu) score -= 10;
-      if (divergence.bearish)  score -= 10;
-      if (macd.crossunder)     score -= 5;
-      if (hacimOran >= 1.5)    score -= 5;
+
+    // ── SKOR HESAPLA ─────────────────────────────────────
+    let score = 0;
+    if (signal === 'ALIM') {
+      // Baz skor: kaç koşul tuttu
+      score = 30 + longTutulan * 10;
+      // Ichimoku kalitesi
+      if (ichimokuLong.guclu)    score += 10;
+      else if (ichimokuLong.puan>=3) score += 5;
+      // Bonus
+      if (divergence.bullish)    score += 8;
+      if (macd.crossover)        score += 7;
+      if (hacimOran >= 2.0)      score += 5;
+      if (rsi < 35)              score += 5;
+      if (pozisyon < 20)         score += 5;
+      score = Math.min(100, score);
+    } else if (signal === 'SATIS') {
+      score = -(30 + shortTutulan * 10);
+      if (ichimokuShort.guclu)   score -= 10;
+      else if (ichimokuShort.puan>=3) score -= 5;
+      if (divergence.bearish)    score -= 8;
+      if (macd.crossunder)       score -= 7;
+      if (hacimOran >= 2.0)      score -= 5;
+      if (rsi > 68)              score -= 5;
+      if (pozisyon > 80)         score -= 5;
       score = Math.max(-100, score);
     }
 
-    let signal = 'BEKLE';
-    if (isLong)  signal = 'ALIM';
-    if (isShort) signal = 'SATIS';
-
-    const risk = isLong||isShort ? (ichimokuLong.guclu||ichimokuShort.guclu?'DUSUK':'ORTA') : 'YUKSEK';
+    const risk = Math.abs(score)>=80?'DUSUK':Math.abs(score)>=60?'ORTA':'YUKSEK';
 
     const komisyon  = parseFloat(settings.commission_rate||0.1);
     const slippage  = parseFloat(settings.slippage_rate||0.05);
@@ -352,40 +344,32 @@ class TechnicalAnalysis {
 
     const positive=[], negative=[];
 
-    if (isLong) {
-      positive.push(`✅ 6/6 LONG koşulu`);
-      positive.push(`📊 RSI(${rsi})<50`);
-      positive.push(macd.crossover?'🚀 MACD Cross↑':'📈 MACD+');
-      positive.push(`💧 Hacim ${hacimOran.toFixed(1)}x${hacimOran>=1.5?' 🔥':''}`);
-      positive.push(`📍 SR:%${pozisyon.toFixed(0)}`);
-      positive.push(...ichimokuLong.detay.filter(d=>d.startsWith('✅')));
-      positive.push(`📈 EMA↑ +${roc1.toFixed(2)}%`);
+    if (signal==='ALIM') {
+      positive.push(`✅ ${longTutulan}/6 LONG koşulu`);
+      if (longK.k1_rsi)      positive.push(`📊 RSI(${rsi})<52`);
+      if (longK.k2_macd)     positive.push(macd.crossover?'🚀 MACD Cross↑':'📈 MACD+');
+      if (longK.k3_hacim)    positive.push(`💧 Hacim ${hacimOran.toFixed(1)}x`);
+      if (longK.k4_destek)   positive.push(`📍 SR:%${pozisyon.toFixed(0)}`);
+      positive.push(`☁️ Ichimoku ${ichimokuLong.puan}/5${ichimokuLong.guclu?' 💪':''}`);
+      if (longK.k6_momentum) positive.push(`📈 EMA↑ +${roc1.toFixed(2)}%`);
       if (divergence.bullish) positive.push('🔀 Bullish Div');
-      if (ichimokuLong.guclu) positive.push('💪 Ichimoku güçlü');
-    }
-
-    if (isShort) {
-      negative.push(`⚠️ 6/6 SHORT koşulu`);
-      negative.push(`📊 RSI(${rsi})>55`);
-      negative.push(macd.crossunder?'💀 MACD Cross↓':'📉 MACD-');
-      negative.push(`💧 Hacim ${hacimOran.toFixed(1)}x${hacimOran>=1.5?' 🔥':''}`);
-      negative.push(`📍 SR:%${pozisyon.toFixed(0)}`);
-      negative.push(...ichimokuShort.detay.filter(d=>d.startsWith('✅')));
-      negative.push(`📉 EMA↓ ${roc1.toFixed(2)}%`);
-      if (divergence.bearish) negative.push('🔀 Bearish Div');
-      if (ichimokuShort.guclu) negative.push('💪 Ichimoku güçlü');
-    }
-
-    // Bekle durumunda eksik koşulları göster
-    if (!isLong&&!isShort) {
-      if (longTutulan>=shortTutulan) {
-        const eksik=Object.entries(longKosullar).filter(([,v])=>!v).map(([k])=>k);
-        negative.push(`Long ${longTutulan}/6 (eksik: ${eksik.join(',')})`);
-        if (ichimoku) negative.push(`Ichimoku: ${ichimokuLong.puan}/5`);
+    } else if (signal==='SATIS') {
+      negative.push(`⚠️ ${shortTutulan}/6 SHORT koşulu`);
+      if (shortK.k1_rsi)      negative.push(`📊 RSI(${rsi})>50`);
+      if (shortK.k2_macd)     negative.push(macd.crossunder?'💀 MACD Cross↓':'📉 MACD-');
+      if (shortK.k3_hacim)    negative.push(`💧 Hacim ${hacimOran.toFixed(1)}x`);
+      if (shortK.k4_direnc)   negative.push(`📍 SR:%${pozisyon.toFixed(0)}`);
+      negative.push(`☁️ Ichimoku ${ichimokuShort.puan}/5${ichimokuShort.guclu?' 💪':''}`);
+      if (shortK.k6_momentum) negative.push(`📉 EMA↓ ${roc1.toFixed(2)}%`);
+      if (divergence.bearish)  negative.push('🔀 Bearish Div');
+    } else {
+      // Bekle — en yakın sinyali göster
+      if (longTutulan >= shortTutulan) {
+        const eksik=Object.entries(longK).filter(([,v])=>!v).map(([k])=>k);
+        negative.push(`Long ${longTutulan}/6 Ichimoku:${ichimokuLong.puan}/5 (eksik:${eksik.join(',')})`);
       } else {
-        const eksik=Object.entries(shortKosullar).filter(([,v])=>!v).map(([k])=>k);
-        negative.push(`Short ${shortTutulan}/6 (eksik: ${eksik.join(',')})`);
-        if (ichimoku) negative.push(`Ichimoku: ${ichimokuShort.puan}/5`);
+        const eksik=Object.entries(shortK).filter(([,v])=>!v).map(([k])=>k);
+        negative.push(`Short ${shortTutulan}/6 Ichimoku:${ichimokuShort.puan}/5 (eksik:${eksik.join(',')})`);
       }
     }
 
@@ -395,7 +379,7 @@ class TechnicalAnalysis {
       volume24h:vol24h, signal, score, risk, rsi,
       momentum:roc1,
       longTutulan, shortTutulan,
-      longKosullar, shortKosullar,
+      longKosullar:longK, shortKosullar:shortK,
       ichimokuLongPuan:ichimokuLong.puan,
       ichimokuShortPuan:ichimokuShort.puan,
       ichimokuLongGuclu:ichimokuLong.guclu,
@@ -412,7 +396,6 @@ class TechnicalAnalysis {
       ichimokuChikouBear:ichimoku?.chikouBear||false,
       ichimokuKumoBull:ichimoku?.kumoBull||false,
       ichimokuKumoBear:ichimoku?.kumoBear||false,
-      ichimokuKalinlik:ichimoku?.kumoKalinlik||0,
       rsiDivBull:divergence.bullish, rsiDivBear:divergence.bearish,
       hacimOran:parseFloat(hacimOran.toFixed(2)),
       hacimTrend,
