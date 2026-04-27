@@ -9,15 +9,20 @@ class TradingEngine {
     this.running = false;
     this.positionInterval = null;
     this.symbolRefreshInterval = null;
+    this.btcUpdateInterval = null;
     this.trailingStops = {};
     this.ws = null;
-    this.candleBuffers = {};
-    this.candle1HBuffers = {};
+    // Mum bufferları
     this.candle4HBuffers = {};
+    this.candle1HBuffers = {};
+    this.candle1DBuffers = {};
     this.tickers = {};
-    this.lastSignalTime = {};
-    this.closedCandles = new Set();
-    this.btcTrend = { trend1H:'BELIRSIZ', trend4H:'BELIRSIZ', lastUpdate:0 };
+    this.closedCandles4H = new Set();
+    this.closedCandles1H = new Set();
+    // 4H'te aday olan coinler
+    this.adaylar = {};
+    // BTC trend
+    this.btcTrend = { trend4H:'BELIRSIZ', trend1H:'BELIRSIZ', trend1D:'BELIRSIZ', lastUpdate:0 };
   }
 
   getSettings() {
@@ -31,9 +36,9 @@ class TradingEngine {
   }
 
   getTelegram() {
-    const settings = this.getSettings();
-    if (!settings.telegram_token || !settings.telegram_chat_id) return null;
-    return new TelegramService(settings.telegram_token, settings.telegram_chat_id);
+    const s = this.getSettings();
+    if (!s.telegram_token||!s.telegram_chat_id) return null;
+    return new TelegramService(s.telegram_token, s.telegram_chat_id);
   }
 
   saveScanLog(coinCount, signalCount, durationMs, signalsFound=[]) {
@@ -41,426 +46,277 @@ class TradingEngine {
       .run(coinCount, signalCount, durationMs, JSON.stringify(signalsFound));
   }
 
-  saveSignal(analysis, side) {
-    const result = db.prepare(`
-      INSERT INTO signals (symbol, signal_type, score, risk, price, rsi, macd, trend, positive_signals, negative_signals, ai_comment)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      analysis.symbol,
-      side === 'SHORT' ? 'SATIS' : 'ALIM',
-      analysis.score,
-      analysis.risk,
-      analysis.price,
-      analysis.rsi,
-      analysis.macdBullish ? 1 : -1,
-      `${analysis.trend1H||'?'}|${analysis.trend4H||'?'}`,
-      JSON.stringify(analysis.positive),
-      JSON.stringify(analysis.negative),
-      `Long:${analysis.longSkor} Short:${analysis.shortSkor} | BTC:${this.btcTrend.trend4H}`
-    );
-    return result.lastInsertRowid;
-  }
-
-  calculatePositionSize(analysis, settings, side) {
-    const baseAmount = parseFloat(settings.trade_amount_usdt || 100);
-    const skor = side === 'SHORT' ? Math.abs(analysis.shortSkor||50) : (analysis.longSkor||50);
-    const trend4H = analysis.trend4H || 'BELIRSIZ';
-    const btc4H   = this.btcTrend.trend4H;
-
-    let mult = 1.0;
-    if      (skor >= 80) mult = 2.0;
-    else if (skor >= 65) mult = 1.5;
-    else if (skor >= 55) mult = 1.25;
-    else                 mult = 1.0;
-
-    if (side === 'LONG') {
-      if (trend4H === 'YUKARI' && this.btcTrend.trend4H === 'YUKARI') mult = Math.min(2.0, mult*1.2);
-      else if (trend4H === 'YUKARI') mult = Math.min(2.0, mult*1.1);
-      if (btc4H === 'YUKARI') mult = Math.min(2.0, mult*1.05);
-    } else {
-      if (['ASAGI','HAFIF_ASAGI'].includes(trend4H)) mult = Math.min(2.0, mult*1.1);
-      if (btc4H === 'ASAGI') mult = Math.min(2.0, mult*1.1);
-    }
-
-    mult = Math.min(2.0, Math.max(0.5, mult));
-    const finalAmount = parseFloat((baseAmount * mult).toFixed(2));
-    console.log(`💰 ${side} pozisyon: ${finalAmount} USDT (${mult.toFixed(2)}x) | Skor:${skor} | 4H:${trend4H}`);
-    return finalAmount;
-  }
-
-  checkDailyLimits(settings) {
-    const bugun = new Date().toISOString().split('T')[0];
-    const gunlukZarar = db.prepare(`SELECT COALESCE(SUM(pnl),0) as toplam FROM positions WHERE date(closed_at)=? AND pnl<0`).get(bugun);
-    const gunlukIslem = db.prepare(`SELECT COUNT(*) as count FROM positions WHERE date(opened_at)=?`).get(bugun);
-    const maxZarar = parseFloat(settings.max_daily_loss_percent || 5);
-    const maxIslem = parseInt(settings.max_daily_trades || 20);
-    const bakiye   = parseFloat(settings.trade_amount_usdt || 100) * parseInt(settings.max_open_positions || 5);
-    const zararPct = Math.abs(gunlukZarar.toplam) / bakiye * 100;
-    if (zararPct >= maxZarar) { console.log(`⛔ Günlük zarar limiti: %${zararPct.toFixed(2)}`); return false; }
-    if (gunlukIslem.count >= maxIslem) { console.log(`⛔ Günlük işlem limiti: ${gunlukIslem.count}`); return false; }
-    return true;
-  }
-
-  async fetchSymbols() {
-    const settings = this.getSettings();
-    const binance  = new BinanceService('', '');
-    const tickers  = await binance.getAllTickers();
-    const STABLES  = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
-    const filtered = tickers
-      .filter(t => {
-        if (!t.symbol.endsWith('USDT')) return false;
-        if (STABLES.has(t.symbol)) return false;
-        const vol=parseFloat(t.quoteVolume)||0, price=parseFloat(t.lastPrice)||0;
-        return price>0 && vol>=parseFloat(settings.min_volume||1000000);
-      })
-      .sort((a,b) => {
-        const sA=parseFloat(a.quoteVolume)*Math.abs(parseFloat(a.priceChangePercent));
-        const sB=parseFloat(b.quoteVolume)*Math.abs(parseFloat(b.priceChangePercent));
-        return sB-sA;
-      })
-      .slice(0, parseInt(settings.max_coins||50));
-    filtered.forEach(t => { this.tickers[t.symbol]=t; });
-    return filtered;
-  }
-
-  async loadHistoricalCandles(symbols, interval, limit) {
-    const binance = new BinanceService('','');
-    console.log(`${symbols.length} coin için ${interval} mumlar yükleniyor...`);
-    for (const ticker of symbols) {
-      try {
-        const candles = await binance.getKlines(ticker.symbol, interval, limit);
-        if (candles&&candles.length>0) this.candleBuffers[ticker.symbol]=candles;
-        await new Promise(r=>setTimeout(r,60));
-      } catch(err) { console.error(`${ticker.symbol} veri hatası:`,err.message); }
-    }
-    console.log(`✅ ${interval} mumlar hazır`);
-  }
-
-  async load1HCandles(symbols) {
-    const binance = new BinanceService('','');
-    for (const ticker of symbols) {
-      try {
-        const candles = await binance.getKlines(ticker.symbol,'1h',200);
-        if (candles&&candles.length>0) this.candle1HBuffers[ticker.symbol]=candles;
-        await new Promise(r=>setTimeout(r,60));
-      } catch(err) { console.error(`${ticker.symbol} 1H hatası:`,err.message); }
-    }
-    console.log(`✅ 1H mumlar hazır`);
-  }
-
-  async load4HCandles(symbols) {
-    const binance = new BinanceService('','');
-    for (const ticker of symbols) {
-      try {
-        const candles = await binance.getKlines(ticker.symbol,'4h',200);
-        if (candles&&candles.length>0) this.candle4HBuffers[ticker.symbol]=candles;
-        await new Promise(r=>setTimeout(r,60));
-      } catch(err) { console.error(`${ticker.symbol} 4H hatası:`,err.message); }
-    }
-    console.log(`✅ 4H mumlar hazır`);
-  }
-
+  // ── BTC TREND GÜNCELLE ────────────────────────────────────
   async updateBTCTrend() {
     try {
-      const binance = new BinanceService('','');
-      const [btc1H,btc4H] = await Promise.all([
-        binance.getKlines('BTCUSDT','1h',200),
-        binance.getKlines('BTCUSDT','4h',200)
+      const b = new BinanceService('','');
+      const [h4,h1,d1] = await Promise.all([
+        b.getKlines('BTCUSDT','4h',200),
+        b.getKlines('BTCUSDT','1h',200),
+        b.getKlines('BTCUSDT','1d',100)
       ]);
-      const t1H = TechnicalAnalysis.analyze1H(btc1H);
-      const t4H = TechnicalAnalysis.analyze4H(btc4H);
-      this.btcTrend = { trend1H:t1H.trend, trend4H:t4H.trend, adx1H:t1H.adx, adx4H:t4H.adx, lastUpdate:Date.now() };
-      console.log(`📊 BTC → 1H:${t1H.trend}(ADX:${t1H.adx}) | 4H:${t4H.trend}(ADX:${t4H.adx})`);
-    } catch(err) { console.error('BTC trend hatası:',err.message); }
+      const t4H = TechnicalAnalysis.analyze4H(h4);
+      const t1H = TechnicalAnalysis.analyze1H(h1);
+      const t1D = TechnicalAnalysis.analyze1D(d1);
+      this.btcTrend = { trend4H:t4H.trend, trend1H:t1H.trend, trend1D:t1D.trend, guclu4H:t4H.guclu, guclu1D:t1D.guclu, lastUpdate:Date.now() };
+      this.candle4HBuffers['BTCUSDT'] = h4;
+      this.candle1HBuffers['BTCUSDT'] = h1;
+      this.candle1DBuffers['BTCUSDT'] = d1;
+      console.log(`📊 BTC → 1D:${t1D.trend} | 4H:${t4H.trend} | 1H:${t1H.trend}`);
+    } catch(e) { console.error('BTC trend hatası:',e.message); }
   }
 
   checkBTCDrop() {
-    const btcCandles = this.candleBuffers['BTCUSDT'];
-    if (!btcCandles||btcCandles.length<4) return false;
-    const btcNow  = parseFloat(btcCandles[btcCandles.length-1][4]);
-    const btc3ago = parseFloat(btcCandles[btcCandles.length-4][4]);
-    const drop    = ((btcNow-btc3ago)/btc3ago)*100;
-    if (drop < -1.0) { console.log(`⚠️ BTC ${drop.toFixed(2)}% düştü`); return true; }
+    const c = this.candle4HBuffers['BTCUSDT'];
+    if (!c||c.length<4) return false;
+    const now = parseFloat(c[c.length-1][4]);
+    const ago = parseFloat(c[c.length-4][4]);
+    const drop = ((now-ago)/ago)*100;
+    if (drop < -1.5) { console.log(`⚠️ BTC ani düşüş: ${drop.toFixed(2)}%`); return true; }
     return false;
   }
 
-  checkZararliPozisyon() {
-    const pozisyonlar = db.prepare("SELECT * FROM positions WHERE status='OPEN'").all();
-    if (!pozisyonlar.length) return false;
-    const zararli = pozisyonlar.filter(p=>(p.pnl_percent||0)<-0.5);
-    if (zararli.length>0) {
-      console.log(`⚠️ ${zararli.length} zararlı pozisyon: ${zararli.map(p=>`${p.symbol}(%${p.pnl_percent?.toFixed(1)})`).join(', ')}`);
-      return true;
-    }
-    return false;
-  }
-
-  async scanAllCoins(candleCloseTime) {
-    if (this.closedCandles.has(candleCloseTime)) return;
-    this.closedCandles.add(candleCloseTime);
-    if (this.closedCandles.size>10) {
-      const first=this.closedCandles.values().next().value;
-      this.closedCandles.delete(first);
+  // ── 4H MUM KAPANIŞINDA SETUP TARA ────────────────────────
+  async scan4HClose(candleCloseTime) {
+    if (this.closedCandles4H.has(candleCloseTime)) return;
+    this.closedCandles4H.add(candleCloseTime);
+    if (this.closedCandles4H.size>5) {
+      const first=this.closedCandles4H.values().next().value;
+      this.closedCandles4H.delete(first);
     }
 
-    const baslangic = Date.now();
-    const settings  = this.getSettings();
-    const zaman     = new Date().toLocaleTimeString('tr-TR');
-    const telegramMinScore = parseInt(settings.telegram_min_score||50);
-    const btc4H = this.btcTrend.trend4H;
-    const btc1H = this.btcTrend.trend1H;
+    const settings = this.getSettings();
+    const zaman    = new Date().toLocaleTimeString('tr-TR');
+    console.log(`\n[${zaman}] ═══ 4H KAPANIŞ — SETUP TARAMASI ═══`);
+    console.log(`BTC: 1D:${this.btcTrend.trend1D} | 4H:${this.btcTrend.trend4H} | 1H:${this.btcTrend.trend1H}`);
 
-    // 1 — BTC ani düşüş → sadece long dur, short devam
+    const btcDusus    = this.btcTrend.trend4H==='ASAGI'&&this.btcTrend.trend1D==='ASAGI';
+    const btcYukselis = this.btcTrend.trend4H==='YUKARI'&&this.btcTrend.guclu1D;
     const btcAniDusus = this.checkBTCDrop();
-    if (btcAniDusus && btc4H==='ASAGI'&&btc1H==='ASAGI') {
-      console.log(`[${zaman}] ⛔ BTC ani düşüş + trend aşağı — tüm alımlar durdu`);
-      this.saveScanLog(0,0,0,[]);
-      return;
-    }
 
-    // 2 — Zararlı pozisyon varsa yeni alım yapma
-    if (this.checkZararliPozisyon()) {
-      console.log(`[${zaman}] ⛔ Zararlı pozisyon — yeni alım durdu`);
-      this.saveScanLog(0,0,0,[]);
-      return;
-    }
-
-    // 3 — Max pozisyon
-    const maxPositions = parseInt(settings.max_open_positions||5);
-    const openCount    = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
-    if (openCount.count>=maxPositions) {
-      console.log(`[${zaman}] Max pozisyon doldu (${openCount.count}/${maxPositions})`);
-      this.saveScanLog(0,0,Date.now()-baslangic,[]);
-      return;
-    }
-
-    const btcDusus    = btc4H==='ASAGI'&&btc1H==='ASAGI';
-    const btcYukselis = btc4H==='YUKARI';
-
-    console.log(`[${zaman}] Tarama — BTC:${btc4H}/${btc1H} | Açık:${openCount.count}/${maxPositions}`);
-    db.prepare("DELETE FROM signals").run();
-
-    let signalCount=0;
-    const signalsFound=[];
-    const symbols=Object.keys(this.candleBuffers);
+    let adayCount = 0;
+    const symbols = Object.keys(this.candle4HBuffers).filter(s=>s!=='BTCUSDT');
 
     for (const symbol of symbols) {
       try {
-        const candles   = this.candleBuffers[symbol];
-        const candles1H = this.candle1HBuffers[symbol];
         const candles4H = this.candle4HBuffers[symbol];
+        const candles1D = this.candle1DBuffers[symbol]||[];
         const ticker    = this.tickers[symbol];
-        if (!candles||candles.length<52||!ticker) continue;
+        if (!candles4H||candles4H.length<52||!ticker) continue;
 
-        const analysis = TechnicalAnalysis.analyze(candles, ticker, settings);
-        if (!analysis) continue;
-        if (analysis.signal==='BEKLE') continue;
+        const setup = TechnicalAnalysis.analyze4HSetup(candles4H, candles1D, ticker, settings);
+        if (!setup||setup.setup==='BEKLE') continue;
 
-        // 4H trend hesapla
-        const trend4H = TechnicalAnalysis.analyze4H(candles4H);
-        const trend1H = TechnicalAnalysis.analyze1H(candles1H);
-        analysis.trend4H = trend4H.trend;
-        analysis.trend1H = trend1H.trend;
-
-        // ── LONG FİLTRELERİ ──────────────────────────────
-        if (analysis.signal==='ALIM') {
-          // BTC korumaları
+        // LONG adayı — BTC düşüşte değilse
+        if (setup.setup==='LONG_ADAY') {
           if (btcDusus||btcAniDusus) continue;
+          if (this.btcTrend.trend1D==='ASAGI') continue;
+          if (['ASAGI','HAFIF_ASAGI'].includes(setup.trend4H)) continue;
 
-          // 4H konfirmasyon — LONG için yükseliş şart
-          if (['ASAGI','HAFIF_ASAGI','BELIRSIZ'].includes(trend4H.trend)) {
-            console.log(`⛔ ${symbol} LONG — 4H ${trend4H.trend}`);
-            continue;
-          }
-          if (trend4H.trend==='YATAY'&&(analysis.longSkor||0)<55) {
-            console.log(`⛔ ${symbol} LONG — 4H YATAY, skor yetersiz`);
-            continue;
-          }
-
-          // 1H konfirmasyon
-          if (['ASAGI','BELIRSIZ'].includes(trend1H.trend)) {
-            console.log(`⛔ ${symbol} LONG — 1H ${trend1H.trend}`);
-            continue;
-          }
-
-          const minScore = parseFloat(settings.min_score||40);
-          if ((analysis.longSkor||0)<minScore) continue;
-
-          const now=Date.now(), lastTime=this.lastSignalTime[symbol]||0;
-          if (now-lastTime<5*60*1000) continue;
-          this.lastSignalTime[symbol]=now;
-
-          signalCount++;
-          signalsFound.push(`${symbol}L(${analysis.longSkor})`);
-          console.log(`🚀 LONG: ${symbol} | Long:${analysis.longSkor} | 4H:${trend4H.trend} | 1H:${trend1H.trend} | BTC:${btc4H}`);
-
-          const signalId = this.saveSignal(analysis, 'LONG');
-
-          const telegram = this.getTelegram();
-          if (telegram && (analysis.longSkor||0)>=telegramMinScore) {
-            await telegram.sendSignal({ ...analysis, signal:'ALIM', score:analysis.longSkor });
-          }
-
-          if (global.wss) {
-            global.wss.clients.forEach(client => {
-              if (client.readyState===1) client.send(JSON.stringify({ type:'NEW_SIGNAL', data:{ ...analysis, signal:'ALIM' } }));
-            });
-          }
-
-          if (settings.auto_trade_enabled==='true') {
-            await this.openPosition(analysis, signalId, 'LONG');
-          }
+          this.adaylar[symbol] = { setup, time:Date.now(), type:'LONG' };
+          adayCount++;
+          console.log(`🎯 LONG ADAY: ${symbol} | RSI:${setup.rsi} | Div:${setup.divergenceBull} | 4H:${setup.trend4H}`);
         }
 
-        // ── SHORT FİLTRELERİ ──────────────────────────────
-        else if (analysis.signal==='SATIS') {
-          // 4H konfirmasyon — SHORT için düşüş şart
-          if (['YUKARI','HAFIF_YUKARI','BELIRSIZ'].includes(trend4H.trend)) {
-            console.log(`⛔ ${symbol} SHORT — 4H ${trend4H.trend}`);
-            continue;
-          }
-          if (trend4H.trend==='YATAY'&&Math.abs(analysis.shortSkor||0)<55) {
-            console.log(`⛔ ${symbol} SHORT — 4H YATAY, skor yetersiz`);
-            continue;
-          }
+        // SHORT adayı — BTC yükselişte güçlü değilse
+        else if (setup.setup==='SHORT_ADAY') {
+          if (btcYukselis) continue;
+          if (['YUKARI','HAFIF_YUKARI'].includes(setup.trend4H)) continue;
 
-          // 1H konfirmasyon
-          if (['YUKARI'].includes(trend1H.trend)) {
-            console.log(`⛔ ${symbol} SHORT — 1H YUKARI`);
-            continue;
-          }
-
-          // BTC yükselişte yatay 4H'de short yapma
-          if (btcYukselis&&trend4H.trend==='YATAY') continue;
-
-          const minScore = parseFloat(settings.min_score||40);
-          if (Math.abs(analysis.shortSkor||0)<minScore) continue;
-
-          const now=Date.now(), lastTime=this.lastSignalTime[symbol]||0;
-          if (now-lastTime<5*60*1000) continue;
-          this.lastSignalTime[symbol]=now;
-
-          signalCount++;
-          signalsFound.push(`${symbol}S(${analysis.shortSkor})`);
-          console.log(`📉 SHORT: ${symbol} | Short:${analysis.shortSkor} | 4H:${trend4H.trend} | 1H:${trend1H.trend} | BTC:${btc4H}`);
-
-          const signalId = this.saveSignal(analysis, 'SHORT');
-
-          const telegram = this.getTelegram();
-          if (telegram && Math.abs(analysis.shortSkor||0)>=telegramMinScore) {
-            await telegram.sendSignal({ ...analysis, signal:'SATIS', score:analysis.shortSkor });
-          }
-
-          if (global.wss) {
-            global.wss.clients.forEach(client => {
-              if (client.readyState===1) client.send(JSON.stringify({ type:'NEW_SIGNAL', data:{ ...analysis, signal:'SATIS' } }));
-            });
-          }
-
-          if (settings.auto_trade_enabled==='true') {
-            await this.openPosition(analysis, signalId, 'SHORT');
-          }
+          this.adaylar[symbol] = { setup, time:Date.now(), type:'SHORT' };
+          adayCount++;
+          console.log(`🎯 SHORT ADAY: ${symbol} | RSI:${setup.rsi} | Div:${setup.divergenceBear} | 4H:${setup.trend4H}`);
         }
 
-        // Max pozisyon kontrolü
-        const newOpen = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
-        if (newOpen.count>=maxPositions) break;
-
-      } catch(err) { console.error(`${symbol} analiz hatası:`,err.message); }
+      } catch(e) { console.error(`${symbol} 4H setup hatası:`,e.message); }
     }
 
-    const sure = Date.now()-baslangic;
-    this.saveScanLog(symbols.length, signalCount, sure, signalsFound);
-    const mesaj = signalCount>0 ? `✅ ${signalCount}: ${signalsFound.join(',')}` : `❌ Sinyal yok`;
-    console.log(`[${zaman}] Tarama bitti (${(sure/1000).toFixed(1)}s) — ${mesaj}`);
+    console.log(`[${zaman}] 4H tarama bitti — ${adayCount} aday`);
+    this.saveScanLog(symbols.length, adayCount, 0, Object.keys(this.adaylar));
   }
 
-  startWebSocket(symbols, interval) {
-    if (this.ws) { try { this.ws.terminate(); } catch(e) {} this.ws=null; }
-    const streams = symbols.map(s=>`${s.symbol.toLowerCase()}@kline_${interval}`).join('/');
-    const wsUrl   = `wss://stream.binance.com:9443/stream?streams=${streams}`;
-    console.log(`🔌 WebSocket: ${symbols.length} coin, ${interval}`);
-    this.ws = new WebSocket(wsUrl);
-    this.ws.on('open', ()=>console.log('✅ WebSocket bağlandı'));
-    this.ws.on('message', async(data)=>{
-      try {
-        const parsed = JSON.parse(data);
-        if (!parsed.data?.k) return;
-        const kline=parsed.data.k, symbol=kline.s, isClosed=kline.x;
-        const newCandle=[kline.t,kline.o,kline.h,kline.l,kline.c,kline.v,kline.T,kline.q,kline.n,kline.V,kline.Q,'0'];
-        if (!this.candleBuffers[symbol]) return;
-        if (isClosed) {
-          this.candleBuffers[symbol].push(newCandle);
-          if (this.candleBuffers[symbol].length>100) this.candleBuffers[symbol].shift();
-          await this.scanAllCoins(kline.T);
-        } else {
-          const buf=this.candleBuffers[symbol];
-          buf[buf.length-1]=newCandle;
-        }
-      } catch(err) {}
-    });
-    this.ws.on('error', (err)=>console.error('WebSocket hatası:',err.message));
-    this.ws.on('close', ()=>{
-      console.log('⚠️ WebSocket kapandı');
-      if (this.running) {
-        setTimeout(async()=>{
-          const syms=await this.fetchSymbols();
-          this.startWebSocket(syms, this.getSetting('candle_interval')||'5m');
-        }, 5000);
+  // ── 1H MUM KAPANIŞINDA GİRİŞ ZAMANLAMASI ─────────────────
+  async scan1HClose(candleCloseTime) {
+    if (this.closedCandles1H.has(candleCloseTime)) return;
+    this.closedCandles1H.add(candleCloseTime);
+    if (this.closedCandles1H.size>10) {
+      const first=this.closedCandles1H.values().next().value;
+      this.closedCandles1H.delete(first);
+    }
+
+    // Aday yoksa tarama
+    if (Object.keys(this.adaylar).length===0) return;
+
+    const settings  = this.getSettings();
+    const zaman     = new Date().toLocaleTimeString('tr-TR');
+    const maxPos    = parseInt(settings.max_open_positions||5);
+    const openCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
+    if (openCount.count>=maxPos) return;
+
+    console.log(`[${zaman}] 1H kapanış — ${Object.keys(this.adaylar).length} aday kontrol ediliyor`);
+
+    // Eski adayları temizle (8 saatten eski)
+    const now8h = Date.now()-8*60*60*1000;
+    for (const sym of Object.keys(this.adaylar)) {
+      if (this.adaylar[sym].time < now8h) {
+        console.log(`⏰ ${sym} adayı süresi doldu`);
+        delete this.adaylar[sym];
       }
+    }
+
+    const btcDusus    = this.btcTrend.trend4H==='ASAGI'&&this.btcTrend.trend1D==='ASAGI';
+    const btcYukselis = this.btcTrend.trend4H==='YUKARI'&&this.btcTrend.guclu1D;
+    const btcAniDusus = this.checkBTCDrop();
+
+    let signalCount = 0;
+
+    for (const symbol of Object.keys(this.adaylar)) {
+      try {
+        const aday     = this.adaylar[symbol];
+        const candles1H= this.candle1HBuffers[symbol];
+        if (!candles1H||candles1H.length<52) continue;
+
+        // Zaten açık pozisyon varsa atla
+        const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(symbol);
+        if (existing) continue;
+
+        // 1H giriş zamanlaması
+        const timing = TechnicalAnalysis.analyze1HTiming(candles1H, aday.setup, settings);
+        if (!timing||timing.signal==='BEKLE') continue;
+
+        // ── LONG GİRİŞ ───────────────────────────────────
+        if (timing.signal==='ALIM' && aday.type==='LONG') {
+          if (btcDusus||btcAniDusus) continue;
+
+          signalCount++;
+          console.log(`🚀 LONG SİNYAL: ${symbol} | Skor:${timing.score} | 1H:${timing.trend1H} | 4H:${aday.setup.trend4H}`);
+
+          const signalId = this.saveSignal({ ...timing, ...aday.setup }, 'LONG');
+          await this.sendTelegramSignal(timing, aday.setup, 'LONG', settings);
+          this.broadcastSignal({ ...timing, signal:'ALIM' });
+
+          if (settings.auto_trade_enabled==='true') {
+            await this.openPosition(timing, aday.setup, signalId, 'LONG', settings);
+          }
+
+          delete this.adaylar[symbol];
+        }
+
+        // ── SHORT GİRİŞ ──────────────────────────────────
+        else if (timing.signal==='SATIS' && aday.type==='SHORT') {
+          if (btcYukselis) continue;
+
+          signalCount++;
+          console.log(`📉 SHORT SİNYAL: ${symbol} | Skor:${timing.score} | 1H:${timing.trend1H} | 4H:${aday.setup.trend4H}`);
+
+          const signalId = this.saveSignal({ ...timing, ...aday.setup }, 'SHORT');
+          await this.sendTelegramSignal(timing, aday.setup, 'SHORT', settings);
+          this.broadcastSignal({ ...timing, signal:'SATIS' });
+
+          if (settings.auto_trade_enabled==='true') {
+            await this.openPosition(timing, aday.setup, signalId, 'SHORT', settings);
+          }
+
+          delete this.adaylar[symbol];
+        }
+
+        const newOpen = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
+        if (newOpen.count>=maxPos) break;
+
+      } catch(e) { console.error(`${symbol} 1H timing hatası:`,e.message); }
+    }
+
+    if (signalCount>0) console.log(`[${zaman}] ${signalCount} sinyal üretildi`);
+  }
+
+  saveSignal(data, side) {
+    try {
+      const result = db.prepare(`
+        INSERT INTO signals (symbol, signal_type, score, risk, price, rsi, macd, trend, positive_signals, negative_signals, ai_comment)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        data.symbol, side==='SHORT'?'SATIS':'ALIM', data.score, data.risk||'ORTA',
+        data.price, data.rsi1H||data.rsi||0, data.macdCrossover?1:-1,
+        `${data.trend1H||'?'}|${data.trend4H||'?'}|${data.trend1D||'?'}`,
+        JSON.stringify(data.positive||[]), JSON.stringify(data.negative||[]),
+        `Setup:${data.setup4H} | BTC:${this.btcTrend.trend4H}/${this.btcTrend.trend1D}`
+      );
+      return result.lastInsertRowid;
+    } catch(e) { console.error('Sinyal kayıt hatası:',e.message); return null; }
+  }
+
+  async sendTelegramSignal(timing, setup, side, settings) {
+    try {
+      const telegram = this.getTelegram();
+      if (!telegram) return;
+      const minScore = parseInt(settings.telegram_min_score||50);
+      if (Math.abs(timing.score)<minScore) return;
+      const emoji = side==='SHORT'?'📉':'🚀';
+      const msg = `${emoji} <b>${side} SİNYAL — ${timing.symbol}</b>\n` +
+        `💰 Fiyat: <code>${timing.price}</code>\n` +
+        `📊 Skor: ${timing.score}\n` +
+        `🔍 RSI: ${timing.rsi1H} | Hacim: ${timing.hacimOran}x\n` +
+        `📈 1H:${timing.trend1H} | 4H:${setup.trend4H} | 1D:${setup.trend1D}\n` +
+        `☁️ Ichimoku: ${setup.ichimokuAbove?'Bulut üstü':setup.ichimokuBelow?'Bulut altı':'Bulut içi'}\n` +
+        `🔀 Diverjans: ${side==='LONG'?setup.divergenceBull:setup.divergenceBear?'✅':'❌'}\n` +
+        `🛑 Stop: <code>${timing.stopLoss}</code>\n` +
+        `🎯 Hedef: <code>${timing.target}</code>\n` +
+        (timing.reasons||[]).map(r=>`• ${r}`).join('\n');
+      await telegram.sendMessage(msg);
+    } catch(e) { console.error('Telegram hatası:',e.message); }
+  }
+
+  broadcastSignal(data) {
+    if (!global.wss) return;
+    global.wss.clients.forEach(client => {
+      if (client.readyState===1) client.send(JSON.stringify({ type:'NEW_SIGNAL', data }));
     });
   }
 
-  async openPosition(analysis, signalId, side='LONG') {
-    const settings = this.getSettings();
+  async openPosition(timing, setup, signalId, side, settings) {
     if (settings.auto_trade_enabled!=='true') return null;
     if (!settings.binance_api_key||!settings.binance_api_secret) return null;
     const openCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
     if (openCount.count>=parseInt(settings.max_open_positions||5)) return null;
-    const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(analysis.symbol);
+    const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(timing.symbol);
     if (existing) return null;
-    if (!this.checkDailyLimits(settings)) return null;
     try {
       const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
-      const slippagePct = parseFloat(settings.slippage_rate||0.05)/100;
-      const tradeAmount = this.calculatePositionSize(analysis, settings, side);
-      const quantity    = tradeAmount/(analysis.price*(1+slippagePct));
-      const orderSide   = side==='SHORT' ? 'SELL' : 'BUY';
-      const order       = await binance.placeOrder(analysis.symbol, orderSide, quantity);
-      const fillPrice   = parseFloat(order.fills?.[0]?.price||analysis.price);
+      const baseAmount  = parseFloat(settings.trade_amount_usdt||100);
+      const skor        = Math.abs(timing.score);
+      let mult = skor>=90?2.0:skor>=80?1.5:skor>=70?1.25:1.0;
+      if (side==='LONG'&&this.btcTrend.trend4H==='YUKARI') mult=Math.min(2.0,mult*1.1);
+      if (side==='SHORT'&&this.btcTrend.trend4H==='ASAGI') mult=Math.min(2.0,mult*1.1);
+      mult=Math.min(2.0,Math.max(0.5,mult));
+      const tradeAmount = parseFloat((baseAmount*mult).toFixed(2));
+      const orderSide   = side==='SHORT'?'SELL':'BUY';
+      const quantity    = tradeAmount/timing.price;
+      const order       = await binance.placeOrder(timing.symbol, orderSide, quantity);
+      const fillPrice   = parseFloat(order.fills?.[0]?.price||timing.price);
       const fillQty     = parseFloat(order.executedQty);
-      const stopLoss    = side==='LONG'
-        ? parseFloat((fillPrice*(1-parseFloat(settings.stop_loss_percent||2.0)/100)).toFixed(8))
-        : parseFloat((fillPrice*(1+parseFloat(settings.stop_loss_percent||2.0)/100)).toFixed(8));
+      const stopLoss    = timing.stopLoss || (side==='LONG'
+        ? parseFloat((fillPrice*(1-parseFloat(settings.stop_loss_percent||2)/100)).toFixed(8))
+        : parseFloat((fillPrice*(1+parseFloat(settings.stop_loss_percent||2)/100)).toFixed(8)));
 
       const posResult = db.prepare(`
         INSERT INTO positions (symbol, side, quantity, entry_price, current_price, stop_loss, take_profit, signal_id)
         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-      `).run(analysis.symbol, side, fillQty, fillPrice, fillPrice, stopLoss, signalId);
+      `).run(timing.symbol, side, fillQty, fillPrice, fillPrice, stopLoss, signalId);
 
       db.prepare(`INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id) VALUES (?,?,?,?,?,?,?)`)
-        .run(posResult.lastInsertRowid, analysis.symbol, orderSide, fillQty, fillPrice, fillQty*fillPrice, order.orderId);
+        .run(posResult.lastInsertRowid, timing.symbol, orderSide, fillQty, fillPrice, fillQty*fillPrice, order.orderId);
 
-      this.trailingStops[analysis.symbol] = { highestPrice:fillPrice, lowestPrice:fillPrice, entryPrice:fillPrice, quantity:fillQty, side };
+      this.trailingStops[timing.symbol] = { highestPrice:fillPrice, lowestPrice:fillPrice, entryPrice:fillPrice, quantity:fillQty, side };
 
-      console.log(`✅ ${side} açıldı: ${analysis.symbol} @ ${fillPrice} | ${tradeAmount} USDT`);
+      console.log(`✅ ${side} açıldı: ${timing.symbol} @ ${fillPrice} | ${tradeAmount} USDT`);
 
       const telegram = this.getTelegram();
       if (telegram) {
-        const emoji = side==='SHORT' ? '📉' : '🚀';
-        await telegram.sendMessage(
-          `${emoji} <b>${side} POZİSYON — ${analysis.symbol}</b>\n` +
-          `💰 Fiyat: <code>${fillPrice}</code>\n` +
-          `💵 Miktar: <b>${tradeAmount} USDT</b>\n` +
-          `🛑 Stop: <code>${stopLoss}</code>\n` +
-          `📊 Skor: ${side==='SHORT'?analysis.shortSkor:analysis.longSkor} | 4H:${analysis.trend4H} | 1H:${analysis.trend1H}`
-        );
+        const emoji = side==='SHORT'?'📉':'🚀';
+        await telegram.sendMessage(`${emoji} <b>${side} AÇILDI — ${timing.symbol}</b>\n💰 ${fillPrice} | ${tradeAmount} USDT | Stop: ${stopLoss}`);
       }
       return posResult.lastInsertRowid;
-    } catch(err) {
-      console.error('Pozisyon açma hatası:',err.message);
-      return null;
-    }
+    } catch(e) { console.error('Pozisyon hatası:',e.message); return null; }
   }
 
   async checkPositions() {
@@ -480,8 +336,7 @@ class TradingEngine {
       try {
         const currentPrice = await binance.getPrice(pos.symbol);
         const totalCost    = (komisyonPct+slippagePct)*2;
-        const side         = pos.side || 'LONG';
-
+        const side         = pos.side||'LONG';
         let brutoPnlPct, netPnlPct, netPnl;
 
         if (side==='SHORT') {
@@ -495,46 +350,41 @@ class TradingEngine {
           : (currentPrice-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
 
         if (!this.trailingStops[pos.symbol]) {
-          this.trailingStops[pos.symbol] = { highestPrice:pos.entry_price, lowestPrice:pos.entry_price, entryPrice:pos.entry_price, quantity:pos.quantity, side };
+          this.trailingStops[pos.symbol]={ highestPrice:pos.entry_price, lowestPrice:pos.entry_price, entryPrice:pos.entry_price, quantity:pos.quantity, side };
         }
-
         const trailing = this.trailingStops[pos.symbol];
-
-        let closeReason = null;
+        let closeReason=null;
 
         if (side==='LONG') {
           if (currentPrice>trailing.highestPrice) trailing.highestPrice=currentPrice;
-          const trailingStopPrice = trailing.highestPrice*(1-trailingPct);
-          const hardStopPrice     = pos.entry_price*(1-hardStopPct);
-          const stopPrice         = Math.max(trailingStopPrice, hardStopPrice);
-          db.prepare('UPDATE positions SET current_price=?, pnl=?, pnl_percent=?, stop_loss=? WHERE id=?')
-            .run(currentPrice, netPnl, netPnlPct, stopPrice, pos.id);
+          const trailingStop = trailing.highestPrice*(1-trailingPct);
+          const hardStop     = pos.entry_price*(1-hardStopPct);
+          const stopPrice    = Math.max(trailingStop,hardStop);
+          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?')
+            .run(currentPrice,netPnl,netPnlPct,stopPrice,pos.id);
           if (netPnlPct<=-hardStopPct*100) closeReason='STOP_LOSS';
-          else if (brutoPnlPct>=minProfitPct*100&&currentPrice<=trailingStopPrice) closeReason='TRAILING_STOP';
+          else if (brutoPnlPct>=minProfitPct*100&&currentPrice<=trailingStop) closeReason='TRAILING_STOP';
         } else {
-          // SHORT
           if (currentPrice<trailing.lowestPrice) trailing.lowestPrice=currentPrice;
-          const trailingStopPrice = trailing.lowestPrice*(1+trailingPct);
-          const hardStopPrice     = pos.entry_price*(1+hardStopPct);
-          const stopPrice         = Math.min(trailingStopPrice, hardStopPrice);
-          db.prepare('UPDATE positions SET current_price=?, pnl=?, pnl_percent=?, stop_loss=? WHERE id=?')
-            .run(currentPrice, netPnl, netPnlPct, stopPrice, pos.id);
+          const trailingStop = trailing.lowestPrice*(1+trailingPct);
+          const hardStop     = pos.entry_price*(1+hardStopPct);
+          const stopPrice    = Math.min(trailingStop,hardStop);
+          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?')
+            .run(currentPrice,netPnl,netPnlPct,stopPrice,pos.id);
           if (netPnlPct<=-hardStopPct*100) closeReason='STOP_LOSS';
-          else if (brutoPnlPct>=minProfitPct*100&&currentPrice>=trailingStopPrice) closeReason='TRAILING_STOP';
+          else if (brutoPnlPct>=minProfitPct*100&&currentPrice>=trailingStop) closeReason='TRAILING_STOP';
         }
 
         if (timeStopMin>0&&Date.now()-new Date(pos.opened_at).getTime()>timeStopMin*60*1000) closeReason='TIME_STOP';
 
-        if (closeReason) {
-          await this.closePosition(pos, binance, closeReason, currentPrice, komisyonPct, slippagePct, side);
-        }
-      } catch(err) { console.error(`${pos.symbol} kontrol hatası:`,err.message); }
+        if (closeReason) await this.closePosition(pos,binance,closeReason,currentPrice,komisyonPct,slippagePct,side);
+      } catch(e) { console.error(`${pos.symbol} kontrol hatası:`,e.message); }
     }
   }
 
   async closePosition(pos, binance, reason, currentPrice, komisyonPct, slippagePct, side='LONG') {
     try {
-      const orderSide = side==='SHORT' ? 'BUY' : 'SELL';
+      const orderSide = side==='SHORT'?'BUY':'SELL';
       const order     = await binance.placeOrder(pos.symbol, orderSide, pos.quantity);
       const sellPrice = parseFloat(order.fills?.[0]?.price||currentPrice);
       const totalCost = (komisyonPct+slippagePct)*2;
@@ -546,49 +396,152 @@ class TradingEngine {
         netPnl    = (sellPrice-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
         netPnlPct = ((sellPrice-pos.entry_price)/pos.entry_price*100)-(totalCost*100);
       }
-      db.prepare("UPDATE positions SET status=?, current_price=?, pnl=?, pnl_percent=?, closed_at=CURRENT_TIMESTAMP WHERE id=?")
-        .run(reason, sellPrice, netPnl, netPnlPct, pos.id);
-      db.prepare("INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id) VALUES (?,?,?,?,?,?,?)")
-        .run(pos.id, pos.symbol, orderSide, pos.quantity, sellPrice, sellPrice*pos.quantity, order.orderId);
+      db.prepare("UPDATE positions SET status=?,current_price=?,pnl=?,pnl_percent=?,closed_at=CURRENT_TIMESTAMP WHERE id=?")
+        .run(reason,sellPrice,netPnl,netPnlPct,pos.id);
+      db.prepare("INSERT INTO trades (position_id,symbol,side,quantity,price,total,binance_order_id) VALUES (?,?,?,?,?,?,?)")
+        .run(pos.id,pos.symbol,orderSide,pos.quantity,sellPrice,sellPrice*pos.quantity,order.orderId);
       delete this.trailingStops[pos.symbol];
-      console.log(`${reason}[${side}]: ${pos.symbol} | Net:%${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT`);
+      console.log(`${reason}[${side}]: ${pos.symbol} | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT`);
       const telegram = this.getTelegram();
-      if (telegram) await telegram.sendPositionClosed(pos.symbol, `${reason}[${side}]`, netPnlPct, netPnl);
-    } catch(err) { console.error(`${pos.symbol} kapatma hatası:`,err.message); }
+      if (telegram) await telegram.sendPositionClosed(pos.symbol,`${reason}[${side}]`,netPnlPct,netPnl);
+    } catch(e) { console.error(`${pos.symbol} kapatma hatası:`,e.message); }
   }
 
-  async runAnalysis() {}
+  async fetchSymbols() {
+    const settings = this.getSettings();
+    const binance  = new BinanceService('','');
+    const tickers  = await binance.getAllTickers();
+    const STABLES  = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT']);
+    const filtered = tickers
+      .filter(t => {
+        if (!t.symbol.endsWith('USDT')) return false;
+        if (STABLES.has(t.symbol)) return false;
+        const vol=parseFloat(t.quoteVolume)||0, price=parseFloat(t.lastPrice)||0;
+        return price>0 && vol>=parseFloat(settings.min_volume||1000000);
+      })
+      .sort((a,b) => parseFloat(b.quoteVolume)-parseFloat(a.quoteVolume))
+      .slice(0,parseInt(settings.max_coins||30));
+    filtered.forEach(t => { this.tickers[t.symbol]=t; });
+    return filtered;
+  }
+
+  async loadAllCandles(symbols) {
+    const binance = new BinanceService('','');
+    console.log(`${symbols.length} coin için mumlar yükleniyor...`);
+    for (const ticker of symbols) {
+      try {
+        const [h4,h1,d1] = await Promise.all([
+          binance.getKlines(ticker.symbol,'4h',200),
+          binance.getKlines(ticker.symbol,'1h',200),
+          binance.getKlines(ticker.symbol,'1d',100)
+        ]);
+        if (h4&&h4.length>0) this.candle4HBuffers[ticker.symbol]=h4;
+        if (h1&&h1.length>0) this.candle1HBuffers[ticker.symbol]=h1;
+        if (d1&&d1.length>0) this.candle1DBuffers[ticker.symbol]=d1;
+        await new Promise(r=>setTimeout(r,100));
+      } catch(e) { console.error(`${ticker.symbol}:`,e.message); }
+    }
+    console.log(`✅ Mumlar hazır`);
+  }
+
+  startWebSocket(symbols, interval='1h') {
+    if (this.ws) { try { this.ws.terminate(); } catch(e) {} this.ws=null; }
+    // Hem 4H hem 1H WebSocket — 1H kullan, 4H'i hesapla
+    const streams = symbols.map(s=>`${s.symbol.toLowerCase()}@kline_1h`).join('/');
+    const wsUrl   = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    console.log(`🔌 WebSocket: ${symbols.length} coin (1H stream)`);
+    this.ws = new WebSocket(wsUrl);
+    this.ws.on('open', ()=>console.log('✅ WebSocket bağlandı'));
+    this.ws.on('message', async(data)=>{
+      try {
+        const parsed = JSON.parse(data);
+        if (!parsed.data?.k) return;
+        const kline=parsed.data.k, symbol=kline.s, isClosed=kline.x;
+        const newCandle=[kline.t,kline.o,kline.h,kline.l,kline.c,kline.v,kline.T,kline.q,kline.n,kline.V,kline.Q,'0'];
+
+        // 1H buffer güncelle
+        if (!this.candle1HBuffers[symbol]) this.candle1HBuffers[symbol]=[];
+        if (isClosed) {
+          this.candle1HBuffers[symbol].push(newCandle);
+          if (this.candle1HBuffers[symbol].length>200) this.candle1HBuffers[symbol].shift();
+
+          // 4H buffer güncelle — her 4 1H mumda bir 4H kapanır
+          const h1Len = this.candle1HBuffers[symbol].length;
+          if (h1Len>=4) {
+            const last4 = this.candle1HBuffers[symbol].slice(-4);
+            const h4Candle = [
+              last4[0][0],
+              last4[0][1],
+              Math.max(...last4.map(c=>parseFloat(c[2]))).toString(),
+              Math.min(...last4.map(c=>parseFloat(c[3]))).toString(),
+              last4[3][4],
+              last4.reduce((s,c)=>s+parseFloat(c[5]),0).toString(),
+              last4[3][6],'','','','',''
+            ];
+            if (!this.candle4HBuffers[symbol]) this.candle4HBuffers[symbol]=[];
+            // 4H kapandı mı? UTC saate göre kontrol
+            const closeHour = new Date(parseInt(kline.T)).getUTCHours();
+            if (closeHour%4===3) { // 03, 07, 11, 15, 19, 23 UTC
+              this.candle4HBuffers[symbol].push(h4Candle);
+              if (this.candle4HBuffers[symbol].length>200) this.candle4HBuffers[symbol].shift();
+              // 4H kapandı → setup tara
+              await this.scan4HClose(kline.T);
+            }
+          }
+
+          // Her 1H kapanışında giriş zamanlaması
+          await this.scan1HClose(kline.T);
+
+        } else {
+          const buf = this.candle1HBuffers[symbol];
+          if (buf.length>0) buf[buf.length-1]=newCandle;
+        }
+      } catch(e) {}
+    });
+    this.ws.on('error', (e)=>console.error('WebSocket hatası:',e.message));
+    this.ws.on('close', ()=>{
+      console.log('⚠️ WebSocket kapandı');
+      if (this.running) {
+        setTimeout(async()=>{
+          const syms=await this.fetchSymbols();
+          this.startWebSocket(syms);
+        }, 5000);
+      }
+    });
+  }
 
   async start() {
     if (this.running) return;
     this.running = true;
-    const settings = this.getSettings();
-    const interval  = settings.candle_interval||'5m';
-    const limit     = parseInt(settings.candle_limit||50);
-    console.log(`Engine başlatılıyor... Interval: ${interval}`);
+    console.log(`\n${'═'.repeat(50)}`);
+    console.log(`ENGINE v19 BAŞLATILIYOR`);
+    console.log(`Strateji: 4H Setup + 1H Timing`);
+    console.log(`${'═'.repeat(50)}\n`);
     try {
+      await this.updateBTCTrend();
       const symbols = await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
-      await this.updateBTCTrend();
-      await this.loadHistoricalCandles(symbols, interval, limit);
-      await this.load1HCandles(symbols);
-      await this.load4HCandles(symbols);
-      this.startWebSocket(symbols, interval);
-      this.positionInterval      = setInterval(()=>this.checkPositions(), 30000);
+      await this.loadAllCandles(symbols);
+      this.startWebSocket(symbols);
+      // İlk 4H tarama
+      await this.scan4HClose(Date.now());
+      // Pozisyon kontrol — her 30 saniye
+      this.positionInterval = setInterval(()=>this.checkPositions(), 30000);
+      // BTC trend güncelle — her 4 saatte
+      this.btcUpdateInterval = setInterval(()=>this.updateBTCTrend(), 4*60*60*1000);
+      // Sembol listesi yenile — her saat
       this.symbolRefreshInterval = setInterval(async()=>{
-        console.log('🔄 Yenileniyor...');
-        await this.updateBTCTrend();
-        const newSymbols = await this.fetchSymbols();
-        await this.loadHistoricalCandles(newSymbols, interval, limit);
-        await this.load1HCandles(newSymbols);
-        await this.load4HCandles(newSymbols);
-        this.startWebSocket(newSymbols, interval);
+        console.log('🔄 Sembol listesi yenileniyor...');
+        const newSyms = await this.fetchSymbols();
+        await this.loadAllCandles(newSyms);
+        this.startWebSocket(newSyms);
       }, 60*60*1000);
-      setInterval(()=>this.updateBTCTrend(), 4*60*60*1000);
-      console.log('✅ Engine hazır — Ağırlıklı Puan + 4H Konfirmasyon + Long/Short aktif');
-    } catch(err) {
-      console.error('Engine başlatma hatası:',err.message);
-      this.running = false;
+      console.log('\n✅ Engine hazır!');
+      console.log('4H kapanışında setup taranır');
+      console.log('1H kapanışında giriş zamanlaması yapılır\n');
+    } catch(e) {
+      console.error('Engine başlatma hatası:',e.message);
+      this.running=false;
     }
   }
 
@@ -596,12 +549,11 @@ class TradingEngine {
     if (this.ws) { try { this.ws.terminate(); } catch(e) {} this.ws=null; }
     if (this.positionInterval) clearInterval(this.positionInterval);
     if (this.symbolRefreshInterval) clearInterval(this.symbolRefreshInterval);
-    this.running = false;
-    this.candleBuffers={};
-    this.candle1HBuffers={};
-    this.candle4HBuffers={};
-    this.tickers={};
-    this.closedCandles=new Set();
+    if (this.btcUpdateInterval) clearInterval(this.btcUpdateInterval);
+    this.running=false;
+    this.candle4HBuffers={}; this.candle1HBuffers={}; this.candle1DBuffers={};
+    this.tickers={}; this.adaylar={};
+    this.closedCandles4H=new Set(); this.closedCandles1H=new Set();
     console.log('Engine durduruldu.');
   }
 }
