@@ -1,4 +1,4 @@
-// v12 - Short sinyali güçlendirildi
+// v13 - Short eşiği düşürüldü
 class TechnicalAnalysis {
 
   static calculateRSI(closes, period = 14) {
@@ -48,7 +48,7 @@ class TechnicalAnalysis {
 
   static calculateMACD(closes, fast = 12, slow = 26, signal = 9) {
     if (closes.length < slow + signal + 1) {
-      return { macd:0, signal:0, histogram:0, crossover:false, crossunder:false, bullish:false, bearish:false, histGrowing:false };
+      return { macd:0, signal:0, histogram:0, crossover:false, crossunder:false, bullish:false, bearish:false, histGrowing:false, histFalling:false };
     }
     const kf = 2/(fast+1), ks = 2/(slow+1), kg = 2/(signal+1);
     let ef = closes.slice(0,fast).reduce((a,b)=>a+b,0)/fast;
@@ -59,7 +59,7 @@ class TechnicalAnalysis {
       es = closes[i]*ks + es*(1-ks);
       ml.push(ef - es);
     }
-    if (ml.length < signal+1) return { macd:0, signal:0, histogram:0, crossover:false, crossunder:false, bullish:false, bearish:false, histGrowing:false };
+    if (ml.length < signal+1) return { macd:0, signal:0, histogram:0, crossover:false, crossunder:false, bullish:false, bearish:false, histGrowing:false, histFalling:false };
     let sg = ml.slice(0,signal).reduce((a,b)=>a+b,0)/signal;
     const sl = [];
     for (let i = signal; i < ml.length; i++) {
@@ -79,7 +79,7 @@ class TechnicalAnalysis {
       bullish:     cm > cs,
       bearish:     cm < cs,
       histGrowing: curHist > prevHist,
-      histFalling: curHist < prevHist && cm < cs // histogram küçülüyor ve negatif
+      histFalling: curHist < prevHist && cm < cs
     };
   }
 
@@ -181,14 +181,14 @@ class TechnicalAnalysis {
     const toplamVol = alimVol+satisVol;
     const alimOran  = toplamVol>0 ? (alimVol/toplamVol)*100 : 50;
     let puan=0; const desc=[];
-    if      (oran20>5)   { puan=100; desc.push(`🔥${oran20}x spike`); }
+    if      (oran20>5)   { puan=100; desc.push(`🔥${oran20}x`); }
     else if (oran20>3)   { puan=80;  desc.push(`⚡${oran20}x`); }
     else if (oran20>2)   { puan=60;  desc.push(`📈${oran20}x`); }
     else if (oran20>1.5) { puan=40;  desc.push(`${oran20}x`); }
     else if (oran20>1.2) { puan=20; }
     else if (oran20>0.8) { puan=0; }
     else if (oran20>0.5) { puan=-20; }
-    else                 { puan=-50; desc.push('Hacim düşük'); }
+    else                 { puan=-50; desc.push('Hacim↓'); }
     if (vol5Trend) puan = Math.min(100, puan+15);
     if      (alimOran>65) { puan=Math.min(100,puan+20); desc.push(`💪Alım%${alimOran.toFixed(0)}`); }
     else if (alimOran<40) { puan=Math.max(-100,puan-20); desc.push(`Satış%${(100-alimOran).toFixed(0)}`); }
@@ -330,61 +330,63 @@ class TechnicalAnalysis {
 
     const positive=[], negative=[];
 
-    // ── RSI PUANI ────────────────────────────────────────────
+    // ── RSI ──────────────────────────────────────────────────
     let rsiPuan=0;
     if      (rsi<25)  { rsiPuan=100; positive.push(`🔥RSI(${rsi})`); }
     else if (rsi<30)  { rsiPuan=90;  positive.push(`💎RSI(${rsi})`); }
     else if (rsi<40)  { rsiPuan=70;  positive.push(`📊RSI(${rsi})`); }
     else if (rsi<50)  { rsiPuan=50; }
     else if (rsi<60)  { rsiPuan=30; }
-    else if (rsi<70)  { rsiPuan=10; }
-    else if (rsi<80)  { rsiPuan=-40; negative.push(`⚠️RSI(${rsi})`); }
-    else              { rsiPuan=-80; negative.push(`🚫RSI(${rsi})`); }
+    else if (rsi<65)  { rsiPuan=10; }
+    else if (rsi<70)  { rsiPuan=-10; negative.push(`RSI yüksek(${rsi})`); }
+    else if (rsi<75)  { rsiPuan=-40; negative.push(`⚠️RSI(${rsi})`); }
+    else if (rsi<80)  { rsiPuan=-60; negative.push(`🚫RSI(${rsi})`); }
+    else              { rsiPuan=-80; negative.push(`🚫RSI aşırı alım(${rsi})`); }
 
-    // ── MACD PUANI ───────────────────────────────────────────
+    // ── MACD ─────────────────────────────────────────────────
     let macdPuan=0;
-    if      (macd.crossover)               { macdPuan=100;  positive.push('🚀MACD Cross↑'); }
+    if      (macd.crossover)                { macdPuan=100;  positive.push('🚀MACD Cross↑'); }
     else if (macd.bullish&&macd.histGrowing){ macdPuan=70;   positive.push('📈MACD↑'); }
-    else if (macd.bullish)                  { macdPuan=40;   positive.push('📊MACD+'); }
-    else if (macd.crossunder)               { macdPuan=-100; negative.push('💀MACD Cross↓'); }
-    else if (macd.bearish&&macd.histGrowing){ macdPuan=-70;  negative.push('📉MACD↓↓'); }
-    else if (macd.bearish)                  { macdPuan=-40;  negative.push('📉MACD-'); }
+    else if (macd.bullish)                   { macdPuan=40;   positive.push('📊MACD+'); }
+    else if (macd.crossunder)                { macdPuan=-100; negative.push('💀MACD Cross↓'); }
+    else if (macd.bearish&&macd.histGrowing) { macdPuan=-70;  negative.push('📉MACD↓↓'); }
+    else if (macd.bearish)                   { macdPuan=-40;  negative.push('📉MACD-'); }
 
-    // ── HACİM PUANI ──────────────────────────────────────────
+    // ── HACİM ────────────────────────────────────────────────
     const hacimPuan=hacim.puan;
-    if (hacim.puan>30)   positive.push(hacim.desc);
+    if (hacim.puan>30)    positive.push(hacim.desc);
     else if (hacim.puan<-20) negative.push(hacim.desc);
 
-    // ── SR PUANI ─────────────────────────────────────────────
+    // ── SR ───────────────────────────────────────────────────
     const srPuan=sr.puan;
     if (sr.puan>20)      positive.push(sr.desc);
     else if (sr.puan<-20) negative.push(sr.desc);
 
-    // ── İCHİMOKU PUANI ───────────────────────────────────────
+    // ── İCHİMOKU ─────────────────────────────────────────────
     let ichimokuPuan=0;
     if (ichimoku) {
       if      (ichimoku.aboveCloud&&ichimoku.tkBull&&ichimoku.chikouBull) { ichimokuPuan=100; positive.push('☁️Ichimoku↑↑↑'); }
       else if (ichimoku.aboveCloud&&ichimoku.tkBull)  { ichimokuPuan=70;  positive.push('☁️Bulut↑+TK↑'); }
       else if (ichimoku.aboveCloud)                    { ichimokuPuan=40;  positive.push('☁️Bulut üstü'); }
-      else if (ichimoku.insideCloud)                   { ichimokuPuan=0;   negative.push('☁️Bulut içi'); }
+      else if (ichimoku.insideCloud)                   { ichimokuPuan=-10; negative.push('☁️Bulut içi'); }
       else if (ichimoku.belowCloud&&ichimoku.tkBear&&ichimoku.chikouBear) { ichimokuPuan=-100; negative.push('☁️Ichimoku↓↓↓'); }
       else if (ichimoku.belowCloud&&ichimoku.tkBear)  { ichimokuPuan=-70; negative.push('☁️Bulut↓+TK↓'); }
       else if (ichimoku.belowCloud)                    { ichimokuPuan=-40; negative.push('☁️Bulut altı'); }
     }
 
-    // ── MOMENTUM PUANI ───────────────────────────────────────
+    // ── MOMENTUM ─────────────────────────────────────────────
     const momentumPuan=Math.max(-100,Math.min(100,momentum.puan));
     if (momentum.puan>20)  positive.push(momentum.desc);
     else if (momentum.puan<-20) negative.push(momentum.desc);
 
-    // ── BONUS / CEZA ─────────────────────────────────────────
+    // ── BONUS/CEZA ───────────────────────────────────────────
     let bonusPuan=0;
     if (divergence.bullish)  { bonusPuan+=25; positive.push('🔀Bullish Div'); }
     if (divergence.bearish)  { bonusPuan-=25; negative.push('🔀Bearish Div'); }
-    if (trendLine.nearLine&&trendLine.ascending)  { bonusPuan+=15; positive.push('📏Trend desteği↑'); }
-    else if (trendLine.nearLine&&!trendLine.ascending) { bonusPuan+=8; positive.push('📏Trend yakını'); }
-    if (hacim.spike&&momentum.roc1>0) { bonusPuan+=15; positive.push('💥Spike+↑'); }
-    if (hacim.spike&&momentum.roc1<0) { bonusPuan-=15; negative.push('💥Spike+↓'); }
+    if (trendLine.nearLine&&trendLine.ascending)   { bonusPuan+=15; positive.push('📏Trend↑'); }
+    else if (trendLine.nearLine&&!trendLine.ascending) { bonusPuan-=10; negative.push('📏Trend↓'); }
+    if (hacim.spike&&momentum.roc1>0)  { bonusPuan+=15; positive.push('💥Spike+↑'); }
+    if (hacim.spike&&momentum.roc1<0)  { bonusPuan-=15; negative.push('💥Spike+↓'); }
 
     // ── AĞIRLIKLI SKOR ───────────────────────────────────────
     const agirlikli = (
@@ -399,25 +401,22 @@ class TechnicalAnalysis {
     const score = Math.round(Math.max(-100, Math.min(100, agirlikli)));
     const minScore = parseFloat(settings.min_score||10);
 
-    // ── SİNYAL BELİRLE ───────────────────────────────────────
-    // LONG kriterleri
-    const longKriter = score >= minScore;
-
-    // SHORT kriterleri — gevşetildi
-    // Yeterli: MACD negatif VEYA RSI yüksek VEYA Ichimoku aşağı VEYA skor çok negatif
-    const shortKriter = score <= -minScore && (
+    // ── SHORT KRİTERLERİ — düşük eşik ────────────────────────
+    // Short için skor -20 altı yeterli + en az bir negatif indikatör
+    const shortKriter = score <= -20 && (
       macd.bearish ||
       macd.crossunder ||
-      rsi > 60 ||
-      (ichimoku && ichimoku.belowCloud) ||
+      rsi > 55 ||
+      (ichimoku && (ichimoku.belowCloud || ichimoku.tkBear)) ||
       divergence.bearish ||
-      momentum.roc1 < -0.5
+      momentum.roc1 < -0.3 ||
+      momentum.puan < -15
     );
 
+    // ── SİNYAL ───────────────────────────────────────────────
     let signal = 'BEKLE';
-    if      (longKriter)  signal = 'ALIM';
-    else if (shortKriter) signal = 'SATIS';
-    else if (score <= -20) signal = 'SATIS'; // Zayıf short
+    if      (score >= minScore) signal = 'ALIM';
+    else if (shortKriter)       signal = 'SATIS';
 
     const risk = Math.abs(score)>=70?'DUSUK':Math.abs(score)>=40?'ORTA':'YUKSEK';
     const komisyon=parseFloat(settings.commission_rate||0.1);
