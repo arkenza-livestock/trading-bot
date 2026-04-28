@@ -19,6 +19,7 @@ class TradingEngine {
     this.closedCandles4H = new Set();
     this.closedCandles1H = new Set();
     this.adaylar = {};
+    this.currentPrices = {};
     this.btcTrend = { trend4H:'BELIRSIZ', trend1H:'BELIRSIZ', trend1D:'BELIRSIZ', guclu1D:false, lastUpdate:0 };
   }
 
@@ -39,10 +40,11 @@ class TradingEngine {
   }
 
   saveScanLog(coinCount, signalCount, durationMs, signalsFound=[]) {
-    db.prepare(`INSERT INTO scan_logs (coin_count, signal_count, duration_ms, signals_found) VALUES (?, ?, ?, ?)`)
+    db.prepare(`INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found) VALUES (?,?,?,?)`)
       .run(coinCount, signalCount, durationMs, JSON.stringify(signalsFound));
   }
 
+  // ── BTC TREND ────────────────────────────────────────────
   async updateBTCTrend() {
     try {
       const b = new BinanceService('','');
@@ -54,10 +56,13 @@ class TradingEngine {
       const t4H = TechnicalAnalysis.analyze4H(h4);
       const t1H = TechnicalAnalysis.analyze1H(h1);
       const t1D = TechnicalAnalysis.analyze1D(d1);
-      this.btcTrend = { trend4H:t4H.trend, trend1H:t1H.trend, trend1D:t1D.trend, guclu4H:t4H.guclu, guclu1D:t1D.guclu, lastUpdate:Date.now() };
-      this.candle4HBuffers['BTCUSDT'] = h4;
-      this.candle1HBuffers['BTCUSDT'] = h1;
-      this.candle1DBuffers['BTCUSDT'] = d1;
+      this.btcTrend = {
+        trend4H:t4H.trend, trend1H:t1H.trend, trend1D:t1D.trend,
+        guclu4H:t4H.guclu, guclu1D:t1D.guclu, lastUpdate:Date.now()
+      };
+      this.candle4HBuffers['BTCUSDT']=h4;
+      this.candle1HBuffers['BTCUSDT']=h1;
+      this.candle1DBuffers['BTCUSDT']=d1;
       console.log(`📊 BTC → 1D:${t1D.trend} | 4H:${t4H.trend} | 1H:${t1H.trend}`);
     } catch(e) { console.error('BTC trend hatası:',e.message); }
   }
@@ -68,11 +73,68 @@ class TradingEngine {
     const now = parseFloat(c[c.length-1][4]);
     const ago = parseFloat(c[c.length-4][4]);
     const drop = ((now-ago)/ago)*100;
-    if (drop < -1.5) { console.log(`⚠️ BTC ani düşüş: ${drop.toFixed(2)}%`); return true; }
+    if (drop<-1.5) { console.log(`⚠️ BTC ani düşüş: ${drop.toFixed(2)}%`); return true; }
     return false;
   }
 
-  // ── SİNYAL ÜRET VE KAYDET ────────────────────────────────
+  // ── SİNYAL SONUCU OLUŞTUR ────────────────────────────────
+  buildSignalResult(setup4H, trend1H, candles1H, side, settings) {
+    const sinyal = side==='LONG' ? setup4H.longSinyal : setup4H.shortSinyal;
+    const price  = setup4H.price;
+
+    let score = 0;
+    if      (sinyal==='GUCLU')  score = side==='LONG' ?  90 : -90;
+    else if (sinyal==='NORMAL') score = side==='LONG' ?  75 : -75;
+    else                        score = side==='LONG' ?  60 : -60;
+
+    let pozisyonMult = 1.0;
+    if      (sinyal==='GUCLU')  pozisyonMult = 2.0;
+    else if (sinyal==='NORMAL') pozisyonMult = 1.5;
+    else                        pozisyonMult = 0.75;
+
+    const atr = setup4H.atr||price*0.02;
+    const stopLoss = side==='LONG'
+      ? Math.max(parseFloat((price-atr*1.5).toFixed(8)), parseFloat((price*0.98).toFixed(8)))
+      : Math.min(parseFloat((price+atr*1.5).toFixed(8)), parseFloat((price*1.02).toFixed(8)));
+
+    const komisyon  = parseFloat(settings.commission_rate||0.1);
+    const slippage  = parseFloat(settings.slippage_rate||0.05);
+    const minNetKar = (komisyon+slippage)*2+parseFloat(settings.min_profit_percent||1.5);
+    const target    = parseFloat((price*(1+minNetKar/100)).toFixed(8));
+
+    const reasons=[];
+    if      (sinyal==='GUCLU')  reasons.push(`💪 6/6 Güçlü setup`);
+    else if (sinyal==='NORMAL') reasons.push(`📊 5/6 Normal setup`);
+    else                        reasons.push(`⚠️ 4/6 Zayıf setup`);
+    if (setup4H.divergenceBull&&side==='LONG')  reasons.push('🔀 Pozitif diverjans');
+    if (setup4H.divergenceBear&&side==='SHORT') reasons.push('🔀 Negatif diverjans');
+    if (setup4H.ichimokuBelow&&side==='LONG')   reasons.push('☁️ Bulut altı');
+    if (setup4H.ichimokuAbove&&side==='SHORT')  reasons.push('☁️ Bulut üstü');
+    reasons.push(`RSI:${setup4H.rsi} | 4H:${setup4H.trend4H} | 1D:${setup4H.trend1D}`);
+
+    const rsi1H = candles1H ? TechnicalAnalysis.calculateRSI(candles1H.map(c=>parseFloat(c[4])),14) : setup4H.rsi;
+
+    return {
+      symbol:   setup4H.symbol, price,
+      signal:   side==='LONG'?'ALIM':'SATIS',
+      score, risk: sinyal==='GUCLU'?'DUSUK':sinyal==='NORMAL'?'ORTA':'YUKSEK',
+      rsi:      setup4H.rsi, rsi4H:setup4H.rsi, rsi1H,
+      trend4H:  setup4H.trend4H, trend1D:setup4H.trend1D, trend1H:trend1H.trend,
+      longSinyal:  setup4H.longSinyal,
+      shortSinyal: setup4H.shortSinyal,
+      pozisyonMult,
+      macdBullish: setup4H.macdBullish, macdBearish:setup4H.macdBearish,
+      macdCrossover:false, macdCrossunder:false,
+      ichimokuAbove: setup4H.ichimokuAbove, ichimokuBelow:setup4H.ichimokuBelow,
+      divergenceBull:setup4H.divergenceBull, divergenceBear:setup4H.divergenceBear,
+      hacimOran: setup4H.hacimOran, alimOran:setup4H.alimOran,
+      stopLoss, target, gerekce:reasons[0]||'',
+      positive: side==='LONG'?reasons:[],
+      negative: side==='SHORT'?reasons:[]
+    };
+  }
+
+  // ── SİNYAL İŞLE ──────────────────────────────────────────
   async processSignal(result, side, settings) {
     try {
       const existing = db.prepare("SELECT id FROM positions WHERE symbol=? AND status='OPEN'").get(result.symbol);
@@ -84,20 +146,24 @@ class TradingEngine {
 
       const signalId = this.saveSignal(result, side);
 
-      const zaman = new Date().toLocaleTimeString('tr-TR');
       const emoji = side==='LONG'?'🚀':'📉';
-      console.log(`\n${emoji} ${side} SİNYAL: ${result.symbol}`);
-      console.log(`   Güç: ${result.longSinyal||result.shortSinyal} | Skor: ${result.score}`);
+      const sinyal = side==='LONG'?result.longSinyal:result.shortSinyal;
+      console.log(`\n${emoji} ${side} SİNYAL: ${result.symbol} | Güç:${sinyal} | Skor:${result.score}`);
       console.log(`   4H:${result.trend4H} | 1H:${result.trend1H} | 1D:${result.trend1D}`);
-      console.log(`   RSI: ${result.rsi4H} | Hacim: ${result.hacimOran}x`);
-      console.log(`   ${result.gerekce||''}`);
+      console.log(`   RSI:${result.rsi4H} | Hacim:${result.hacimOran}x | Stop:${result.stopLoss}`);
+
+      // Simülasyon — her zaman çalışır
+      const simulation = require('./simulation');
+      simulation.openPosition(result, settings);
+
+      // Gerçek trade
+      if (settings.auto_trade_enabled==='true') {
+        await this.openPosition(result, signalId, side, settings);
+      }
 
       await this.sendTelegramSignal(result, side, settings);
       this.broadcastSignal(result, side);
 
-      if (settings.auto_trade_enabled==='true') {
-        await this.openPosition(result, signalId, side, settings);
-      }
     } catch(e) { console.error('processSignal hatası:',e.message); }
   }
 
@@ -140,14 +206,14 @@ class TradingEngine {
         const ticker    = this.tickers[symbol];
         if (!candles4H||candles4H.length<52||!ticker) continue;
 
-        // 4H setup analizi
         const setup4H = TechnicalAnalysis.analyze4HSetup(candles4H, candles1D, ticker, settings);
         if (!setup4H||setup4H.setup==='BEKLE') continue;
 
-        // 1H trend
-        const trend1H = candles1H&&candles1H.length>=50 ? TechnicalAnalysis.analyze1H(candles1H) : { trend:'BELIRSIZ' };
+        const trend1H = candles1H&&candles1H.length>=50
+          ? TechnicalAnalysis.analyze1H(candles1H)
+          : { trend:'BELIRSIZ' };
 
-        // ── LONG SETUP ───────────────────────────────────
+        // ── LONG ──────────────────────────────────────────
         if (setup4H.setup==='LONG_ADAY') {
           if (btcDusus||btcAniDusus) continue;
           if (this.btcTrend.trend1D==='ASAGI') continue;
@@ -156,30 +222,24 @@ class TradingEngine {
           const sinyal = setup4H.longSinyal;
 
           if (sinyal==='GUCLU') {
-            // 6/6 → 1H trend uyumluysa direkt sinyal
             if (['ASAGI','BELIRSIZ'].includes(trend1H.trend)) {
-              // 1H uyumsuz → adaya al
-              this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'LONG' };
-              console.log(`🎯 LONG ADAY (6/6 güçlü, 1H bekle): ${symbol} RSI:${setup4H.rsi}`);
+              this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'LONG' };
+              console.log(`🎯 LONG ADAY (6/6, 1H bekle): ${symbol} RSI:${setup4H.rsi}`);
             } else {
-              // 1H trend uyumlu → direkt sinyal
               const result = this.buildSignalResult(setup4H, trend1H, candles1H, 'LONG', settings);
               await this.processSignal(result, 'LONG', settings);
-              signalCount++;
-              signalsFound.push(`${symbol}L★`);
+              signalCount++; signalsFound.push(`${symbol}L★`);
             }
           } else if (sinyal==='NORMAL') {
-            // 5/6 → adaya al, 1H crossover bekle
-            this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'LONG' };
-            console.log(`🎯 LONG ADAY (5/6 normal): ${symbol} RSI:${setup4H.rsi}`);
+            this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'LONG' };
+            console.log(`🎯 LONG ADAY (5/6): ${symbol} RSI:${setup4H.rsi}`);
           } else if (sinyal==='ZAYIF') {
-            // 4/6 → adaya al, 1H crossover + hacim bekle
-            this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'LONG', strict:true };
-            console.log(`🎯 LONG ADAY (4/6 zayıf, sıkı bekle): ${symbol} RSI:${setup4H.rsi}`);
+            this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'LONG', strict:true };
+            console.log(`🎯 LONG ADAY (4/6 sıkı): ${symbol} RSI:${setup4H.rsi}`);
           }
         }
 
-        // ── SHORT SETUP ──────────────────────────────────
+        // ── SHORT ─────────────────────────────────────────
         else if (setup4H.setup==='SHORT_ADAY') {
           if (btcYukselis) continue;
           if (['YUKARI','HAFIF_YUKARI'].includes(setup4H.trend4H)) continue;
@@ -188,20 +248,19 @@ class TradingEngine {
 
           if (sinyal==='GUCLU') {
             if (['YUKARI','BELIRSIZ'].includes(trend1H.trend)) {
-              this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'SHORT' };
-              console.log(`🎯 SHORT ADAY (6/6 güçlü, 1H bekle): ${symbol} RSI:${setup4H.rsi}`);
+              this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'SHORT' };
+              console.log(`🎯 SHORT ADAY (6/6, 1H bekle): ${symbol} RSI:${setup4H.rsi}`);
             } else {
               const result = this.buildSignalResult(setup4H, trend1H, candles1H, 'SHORT', settings);
               await this.processSignal(result, 'SHORT', settings);
-              signalCount++;
-              signalsFound.push(`${symbol}S★`);
+              signalCount++; signalsFound.push(`${symbol}S★`);
             }
           } else if (sinyal==='NORMAL') {
-            this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'SHORT' };
-            console.log(`🎯 SHORT ADAY (5/6 normal): ${symbol} RSI:${setup4H.rsi}`);
+            this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'SHORT' };
+            console.log(`🎯 SHORT ADAY (5/6): ${symbol} RSI:${setup4H.rsi}`);
           } else if (sinyal==='ZAYIF') {
-            this.adaylar[symbol] = { setup:setup4H, time:Date.now(), type:'SHORT', strict:true };
-            console.log(`🎯 SHORT ADAY (4/6 zayıf, sıkı bekle): ${symbol} RSI:${setup4H.rsi}`);
+            this.adaylar[symbol]={ setup:setup4H, time:Date.now(), type:'SHORT', strict:true };
+            console.log(`🎯 SHORT ADAY (4/6 sıkı): ${symbol} RSI:${setup4H.rsi}`);
           }
         }
 
@@ -212,7 +271,7 @@ class TradingEngine {
     }
 
     const sure = Date.now()-baslangic;
-    console.log(`[${zaman}] 4H tarama bitti (${(sure/1000).toFixed(1)}s) — ${signalCount} sinyal, ${Object.keys(this.adaylar).length} aday`);
+    console.log(`[${zaman}] 4H bitti (${(sure/1000).toFixed(1)}s) — ${signalCount} sinyal, ${Object.keys(this.adaylar).length} aday`);
     this.saveScanLog(symbols.length, signalCount, sure, signalsFound);
   }
 
@@ -228,15 +287,14 @@ class TradingEngine {
     if (Object.keys(this.adaylar).length===0) return;
 
     const settings  = this.getSettings();
-    const zaman     = new Date().toLocaleTimeString('tr-TR');
     const maxPos    = parseInt(settings.max_open_positions||5);
     const openCount = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
     if (openCount.count>=maxPos) return;
 
-    // Eski adayları temizle (8 saat)
+    // Eski adayları temizle
     const simdi = Date.now();
     for (const sym of Object.keys(this.adaylar)) {
-      if (simdi-this.adaylar[sym].time > 8*60*60*1000) {
+      if (simdi-this.adaylar[sym].time>8*60*60*1000) {
         console.log(`⏰ ${sym} adayı süresi doldu`);
         delete this.adaylar[sym];
       }
@@ -245,8 +303,6 @@ class TradingEngine {
     const btcDusus    = this.btcTrend.trend4H==='ASAGI'&&this.btcTrend.trend1D==='ASAGI';
     const btcYukselis = this.btcTrend.trend4H==='YUKARI'&&this.btcTrend.guclu1D;
     const btcAniDusus = this.checkBTCDrop();
-
-    console.log(`[${zaman}] 1H kapanış — ${Object.keys(this.adaylar).length} aday kontrol`);
 
     for (const symbol of Object.keys(this.adaylar)) {
       try {
@@ -263,169 +319,68 @@ class TradingEngine {
         const vols1H   = candles1H.map(c=>parseFloat(c[5]));
         const opens1H  = candles1H.map(c=>parseFloat(c[1]));
 
-        const macd1H   = TechnicalAnalysis.calculateMACD(closes1H);
-        const trend1H  = TechnicalAnalysis.analyzeTF(candles1H);
-        const hacim1H  = TechnicalAnalysis.hacimAnaliz(closes1H, vols1H);
-        const vol1H    = TechnicalAnalysis.volatiliteKontrol(highs1H, lows1H, closes1H);
-        const sonYesil = closes1H[closes1H.length-1]>opens1H[closes1H.length-1];
-        const sonKirmizi=closes1H[closes1H.length-1]<opens1H[closes1H.length-1];
-        const normalMum= vol1H.normalMum;
-        const setup4H  = aday.setup;
-        const sinyal   = aday.type==='LONG' ? setup4H.longSinyal : setup4H.shortSinyal;
-        const strict   = aday.strict||false;
+        const macd1H    = TechnicalAnalysis.calculateMACD(closes1H);
+        const trend1H   = TechnicalAnalysis.analyzeTF(candles1H);
+        const hacim1H   = TechnicalAnalysis.hacimAnaliz(closes1H, vols1H);
+        const vol1H     = TechnicalAnalysis.volatiliteKontrol(highs1H, lows1H, closes1H);
+        const sonYesil  = closes1H[closes1H.length-1]>opens1H[closes1H.length-1];
+        const sonKirmizi= closes1H[closes1H.length-1]<opens1H[closes1H.length-1];
+        const normalMum = vol1H.normalMum;
+        const setup4H   = aday.setup;
+        const sinyal    = aday.type==='LONG'?setup4H.longSinyal:setup4H.shortSinyal;
 
-        // ── LONG GİRİŞ ŞARTLARI ──────────────────────────
+        // ── LONG GİRİŞ ───────────────────────────────────
         if (aday.type==='LONG') {
           if (btcDusus||btcAniDusus) continue;
-
-          let girisOK = false;
-
-          if (sinyal==='GUCLU') {
-            // 6/6 → 1H trend uyumlu yeterli
-            girisOK = !['ASAGI','BELIRSIZ'].includes(trend1H.trend) && sonYesil && normalMum;
-          } else if (sinyal==='NORMAL') {
-            // 5/6 → 1H MACD crossover gerekli
-            girisOK = macd1H.crossover && !['ASAGI'].includes(trend1H.trend) && sonYesil && normalMum;
-          } else if (sinyal==='ZAYIF') {
-            // 4/6 → 1H crossover + hacim spike gerekli
-            girisOK = macd1H.crossover && hacim1H.spike && !['ASAGI'].includes(trend1H.trend) && sonYesil && normalMum;
-          }
+          let girisOK=false;
+          if      (sinyal==='GUCLU')  girisOK=!['ASAGI','BELIRSIZ'].includes(trend1H.trend)&&sonYesil&&normalMum;
+          else if (sinyal==='NORMAL') girisOK=macd1H.crossover&&!['ASAGI'].includes(trend1H.trend)&&sonYesil&&normalMum;
+          else if (sinyal==='ZAYIF')  girisOK=macd1H.crossover&&hacim1H.spike&&!['ASAGI'].includes(trend1H.trend)&&sonYesil&&normalMum;
 
           if (girisOK) {
-            const result = this.buildSignalResult(setup4H, trend1H, candles1H, 'LONG', settings);
-            await this.processSignal(result, 'LONG', settings);
+            const result=this.buildSignalResult(setup4H,trend1H,candles1H,'LONG',settings);
+            await this.processSignal(result,'LONG',settings);
             delete this.adaylar[symbol];
           } else {
-            // Neden girmedi logla
-            if (sinyal==='GUCLU') {
-              console.log(`⏳ ${symbol} LONG bekle: trend1H=${trend1H.trend} yesil=${sonYesil} normal=${normalMum}`);
-            } else {
-              console.log(`⏳ ${symbol} LONG bekle: cross=${macd1H.crossover} trend=${trend1H.trend} yesil=${sonYesil}`);
-            }
+            console.log(`⏳ ${symbol} LONG bekle (${sinyal}): trend=${trend1H.trend} yesil=${sonYesil} cross=${macd1H.crossover}`);
           }
         }
 
-        // ── SHORT GİRİŞ ŞARTLARI ─────────────────────────
+        // ── SHORT GİRİŞ ──────────────────────────────────
         else if (aday.type==='SHORT') {
           if (btcYukselis) continue;
-
-          let girisOK = false;
-
-          if (sinyal==='GUCLU') {
-            // 6/6 → 1H trend uyumlu yeterli
-            girisOK = !['YUKARI','BELIRSIZ'].includes(trend1H.trend) && sonKirmizi && normalMum;
-          } else if (sinyal==='NORMAL') {
-            // 5/6 → 1H MACD crossunder gerekli
-            girisOK = macd1H.crossunder && !['YUKARI'].includes(trend1H.trend) && sonKirmizi && normalMum;
-          } else if (sinyal==='ZAYIF') {
-            // 4/6 → crossunder + hacim spike gerekli
-            girisOK = macd1H.crossunder && hacim1H.yuksekHacimKirmizi && !['YUKARI'].includes(trend1H.trend) && sonKirmizi && normalMum;
-          }
+          let girisOK=false;
+          if      (sinyal==='GUCLU')  girisOK=!['YUKARI','BELIRSIZ'].includes(trend1H.trend)&&sonKirmizi&&normalMum;
+          else if (sinyal==='NORMAL') girisOK=macd1H.crossunder&&!['YUKARI'].includes(trend1H.trend)&&sonKirmizi&&normalMum;
+          else if (sinyal==='ZAYIF')  girisOK=macd1H.crossunder&&hacim1H.yuksekHacimKirmizi&&!['YUKARI'].includes(trend1H.trend)&&sonKirmizi&&normalMum;
 
           if (girisOK) {
-            const result = this.buildSignalResult(setup4H, trend1H, candles1H, 'SHORT', settings);
-            await this.processSignal(result, 'SHORT', settings);
+            const result=this.buildSignalResult(setup4H,trend1H,candles1H,'SHORT',settings);
+            await this.processSignal(result,'SHORT',settings);
             delete this.adaylar[symbol];
           } else {
-            if (sinyal==='GUCLU') {
-              console.log(`⏳ ${symbol} SHORT bekle: trend1H=${trend1H.trend} kirmizi=${sonKirmizi} normal=${normalMum}`);
-            } else {
-              console.log(`⏳ ${symbol} SHORT bekle: cross=${macd1H.crossunder} trend=${trend1H.trend} kirmizi=${sonKirmizi}`);
-            }
+            console.log(`⏳ ${symbol} SHORT bekle (${sinyal}): trend=${trend1H.trend} kirmizi=${sonKirmizi} cross=${macd1H.crossunder}`);
           }
         }
 
-        const newOpen = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
+        const newOpen=db.prepare("SELECT COUNT(*) as count FROM positions WHERE status='OPEN'").get();
         if (newOpen.count>=maxPos) break;
 
-      } catch(e) { console.error(`${symbol} 1H timing hatası:`,e.message); }
+      } catch(e) { console.error(`${symbol} 1H hatası:`,e.message); }
     }
-  }
-
-  // ── SİNYAL SONUCU OLUŞTUR ────────────────────────────────
-  buildSignalResult(setup4H, trend1H, candles1H, side, settings) {
-    const sinyal = side==='LONG' ? setup4H.longSinyal : setup4H.shortSinyal;
-    const price  = setup4H.price;
-
-    // Skor — sinyal gücüne göre
-    let score = 0;
-    if (sinyal==='GUCLU')       score = side==='LONG' ?  90 : -90;
-    else if (sinyal==='NORMAL') score = side==='LONG' ?  75 : -75;
-    else                        score = side==='LONG' ?  60 : -60;
-
-    // Pozisyon boyutu
-    let pozisyonMult = 1.0;
-    if      (sinyal==='GUCLU')  pozisyonMult = 2.0;
-    else if (sinyal==='NORMAL') pozisyonMult = 1.5;
-    else                        pozisyonMult = 0.75;
-
-    // ATR stop
-    const atr = setup4H.atr || price * 0.02;
-    const stopLoss = side==='LONG'
-      ? Math.max(parseFloat((price-atr*1.5).toFixed(8)), parseFloat((price*0.98).toFixed(8)))
-      : Math.min(parseFloat((price+atr*1.5).toFixed(8)), parseFloat((price*1.02).toFixed(8)));
-
-    const komisyon  = parseFloat(settings.commission_rate||0.1);
-    const slippage  = parseFloat(settings.slippage_rate||0.05);
-    const minNetKar = (komisyon+slippage)*2+parseFloat(settings.min_profit_percent||1.5);
-    const target    = parseFloat((price*(1+minNetKar/100)).toFixed(8));
-
-    const reasons = [];
-    if (sinyal==='GUCLU')        reasons.push(`💪 6/6 Güçlü setup`);
-    else if (sinyal==='NORMAL')  reasons.push(`📊 5/6 Normal setup`);
-    else                         reasons.push(`⚠️ 4/6 Zayıf setup`);
-    if (setup4H.divergenceBull && side==='LONG')  reasons.push('🔀 Pozitif diverjans');
-    if (setup4H.divergenceBear && side==='SHORT') reasons.push('🔀 Negatif diverjans');
-    if (setup4H.ichimokuBelow && side==='LONG')   reasons.push('☁️ Bulut altı');
-    if (setup4H.ichimokuAbove && side==='SHORT')  reasons.push('☁️ Bulut üstü');
-    reasons.push(`RSI:${setup4H.rsi} | 4H:${setup4H.trend4H} | 1D:${setup4H.trend1D}`);
-
-    return {
-      symbol:   setup4H.symbol,
-      price,
-      signal:   side==='LONG' ? 'ALIM' : 'SATIS',
-      score,
-      risk:     sinyal==='GUCLU' ? 'DUSUK' : sinyal==='NORMAL' ? 'ORTA' : 'YUKSEK',
-      rsi:      setup4H.rsi,
-      rsi4H:    setup4H.rsi,
-      rsi1H:    TechnicalAnalysis.calculateRSI(candles1H.map(c=>parseFloat(c[4])), 14),
-      trend4H:  setup4H.trend4H,
-      trend1D:  setup4H.trend1D,
-      trend1H:  trend1H.trend,
-      longSinyal:  setup4H.longSinyal,
-      shortSinyal: setup4H.shortSinyal,
-      macdCrossover:  false,
-      macdCrossunder: false,
-      macdBullish: setup4H.macdBullish,
-      macdBearish: setup4H.macdBearish,
-      ichimokuAbove: setup4H.ichimokuAbove,
-      ichimokuBelow: setup4H.ichimokuBelow,
-      divergenceBull: setup4H.divergenceBull,
-      divergenceBear: setup4H.divergenceBear,
-      hacimOran: setup4H.hacimOran,
-      alimOran:  setup4H.alimOran,
-      pozisyonMult,
-      stopLoss, target,
-      gerekce:  reasons[0]||'',
-      positive: side==='LONG'  ? reasons : [],
-      negative: side==='SHORT' ? reasons : []
-    };
   }
 
   saveSignal(data, side) {
     try {
       const result = db.prepare(`
-        INSERT INTO signals (symbol, signal_type, score, risk, price, rsi, macd, trend, positive_signals, negative_signals, ai_comment)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO signals (symbol,signal_type,score,risk,price,rsi,macd,trend,positive_signals,negative_signals,ai_comment)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
       `).run(
-        data.symbol,
-        side==='SHORT'?'SATIS':'ALIM',
+        data.symbol, side==='SHORT'?'SATIS':'ALIM',
         data.score, data.risk||'ORTA', data.price,
-        data.rsi4H||data.rsi||0,
-        data.macdBullish?1:-1,
+        data.rsi4H||data.rsi||0, data.macdBullish?1:-1,
         `${data.trend1H||'?'}|${data.trend4H||'?'}|${data.trend1D||'?'}`,
-        JSON.stringify(data.positive||[]),
-        JSON.stringify(data.negative||[]),
+        JSON.stringify(data.positive||[]), JSON.stringify(data.negative||[]),
         `${data.longSinyal||data.shortSinyal||'?'} | BTC:${this.btcTrend.trend4H}/${this.btcTrend.trend1D}`
       );
       return result.lastInsertRowid;
@@ -439,17 +394,14 @@ class TradingEngine {
       const minScore = parseInt(settings.telegram_min_score||50);
       if (Math.abs(data.score||0)<minScore) return;
       const emoji  = side==='SHORT'?'📉':'🚀';
-      const sinyal = side==='LONG' ? data.longSinyal : data.shortSinyal;
-      const msg = `${emoji} <b>${side} — ${data.symbol}</b>\n` +
+      const sinyal = side==='LONG'?data.longSinyal:data.shortSinyal;
+      await telegram.sendMessage(
+        `${emoji} <b>${side} — ${data.symbol}</b>\n` +
         `💰 Fiyat: <code>${data.price}</code>\n` +
         `💪 Güç: ${sinyal} | Skor: ${data.score}\n` +
-        `📊 RSI: ${data.rsi4H||data.rsi}\n` +
-        `📈 4H:${data.trend4H} | 1H:${data.trend1H} | 1D:${data.trend1D}\n` +
-        `☁️ ${data.ichimokuBelow?'Bulut altı':data.ichimokuAbove?'Bulut üstü':'Bulut içi'}\n` +
-        `🔀 Diverjans: ${side==='LONG'?data.divergenceBull?'✅':'❌':data.divergenceBear?'✅':'❌'}\n` +
-        `🛑 Stop: <code>${data.stopLoss}</code>\n` +
-        `🎯 Hedef: <code>${data.target}</code>`;
-      await telegram.sendMessage(msg);
+        `📈 4H:${data.trend4H} | 1D:${data.trend1D}\n` +
+        `🛑 Stop: <code>${data.stopLoss}</code> | 🎯 Hedef: <code>${data.target}</code>`
+      );
     } catch(e) { console.error('Telegram hatası:',e.message); }
   }
 
@@ -472,36 +424,23 @@ class TradingEngine {
     try {
       const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
       const baseAmount  = parseFloat(settings.trade_amount_usdt||100);
-      const mult        = data.pozisyonMult||1.0;
-      const tradeAmount = parseFloat((baseAmount*mult).toFixed(2));
+      const amount      = parseFloat((baseAmount*(data.pozisyonMult||1)).toFixed(2));
       const orderSide   = side==='SHORT'?'SELL':'BUY';
-      const quantity    = tradeAmount/data.price;
-      const order       = await binance.placeOrder(data.symbol, orderSide, quantity);
+      const order       = await binance.placeOrder(data.symbol, orderSide, amount/data.price);
       const fillPrice   = parseFloat(order.fills?.[0]?.price||data.price);
       const fillQty     = parseFloat(order.executedQty);
-      const stopLoss    = data.stopLoss || (side==='LONG'
-        ? parseFloat((fillPrice*0.98).toFixed(8))
-        : parseFloat((fillPrice*1.02).toFixed(8)));
+      const stopLoss    = data.stopLoss||(side==='LONG'?fillPrice*0.98:fillPrice*1.02);
 
       const posResult = db.prepare(`
-        INSERT INTO positions (symbol, side, quantity, entry_price, current_price, stop_loss, take_profit, signal_id)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-      `).run(data.symbol, side, fillQty, fillPrice, fillPrice, stopLoss, signalId);
+        INSERT INTO positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,signal_id)
+        VALUES (?,?,?,?,?,?,0,?)
+      `).run(data.symbol,side,fillQty,fillPrice,fillPrice,stopLoss,signalId);
 
-      db.prepare(`INSERT INTO trades (position_id, symbol, side, quantity, price, total, binance_order_id) VALUES (?,?,?,?,?,?,?)`)
-        .run(posResult.lastInsertRowid, data.symbol, orderSide, fillQty, fillPrice, fillQty*fillPrice, order.orderId);
+      db.prepare(`INSERT INTO trades (position_id,symbol,side,quantity,price,total,binance_order_id) VALUES (?,?,?,?,?,?,?)`)
+        .run(posResult.lastInsertRowid,data.symbol,orderSide,fillQty,fillPrice,fillQty*fillPrice,order.orderId);
 
-      this.trailingStops[data.symbol] = { highestPrice:fillPrice, lowestPrice:fillPrice, entryPrice:fillPrice, quantity:fillQty, side };
-
-      console.log(`✅ ${side} açıldı: ${data.symbol} @ ${fillPrice} | ${tradeAmount} USDT (${mult}x)`);
-
-      const telegram = this.getTelegram();
-      if (telegram) {
-        await telegram.sendMessage(
-          `${side==='SHORT'?'📉':'🚀'} <b>${side} AÇILDI — ${data.symbol}</b>\n` +
-          `💰 ${fillPrice} | ${tradeAmount} USDT | Stop: ${stopLoss}`
-        );
-      }
+      this.trailingStops[data.symbol]={ highestPrice:fillPrice, lowestPrice:fillPrice, entryPrice:fillPrice, quantity:fillQty, side };
+      console.log(`✅ ${side} AÇILDI: ${data.symbol} @ ${fillPrice} | ${amount} USDT`);
       return posResult.lastInsertRowid;
     } catch(e) { console.error('Pozisyon açma hatası:',e.message); return null; }
   }
@@ -511,68 +450,60 @@ class TradingEngine {
     if (!settings.binance_api_key||!settings.binance_api_secret) return;
     const positions = db.prepare("SELECT * FROM positions WHERE status='OPEN'").all();
     if (!positions.length) return;
-    const binance      = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
-    const trailingPct  = parseFloat(settings.trailing_stop_percent||0.5)/100;
-    const minProfitPct = parseFloat(settings.min_profit_percent||1.5)/100;
-    const hardStopPct  = parseFloat(settings.stop_loss_percent||2.0)/100;
-    const komisyonPct  = parseFloat(settings.commission_rate||0.1)/100;
-    const slippagePct  = parseFloat(settings.slippage_rate||0.05)/100;
-    const timeStopMin  = parseInt(settings.time_stop_minutes||0);
+    const binance     = new BinanceService(settings.binance_api_key, settings.binance_api_secret);
+    const trailingPct = parseFloat(settings.trailing_stop_percent||0.5)/100;
+    const minProfPct  = parseFloat(settings.min_profit_percent||1.5)/100;
+    const hardStopPct = parseFloat(settings.stop_loss_percent||2.0)/100;
+    const komPct      = parseFloat(settings.commission_rate||0.1)/100;
+    const slipPct     = parseFloat(settings.slippage_rate||0.05)/100;
+    const timeStopMin = parseInt(settings.time_stop_minutes||0);
 
     for (const pos of positions) {
       try {
-        const currentPrice = await binance.getPrice(pos.symbol);
-        const totalCost    = (komisyonPct+slippagePct)*2;
-        const side         = pos.side||'LONG';
+        const cur       = await binance.getPrice(pos.symbol);
+        const totalCost = (komPct+slipPct)*2;
+        const side      = pos.side||'LONG';
         let brutoPnlPct, netPnlPct, netPnl;
-        if (side==='SHORT') {
-          brutoPnlPct = ((pos.entry_price-currentPrice)/pos.entry_price)*100;
-        } else {
-          brutoPnlPct = ((currentPrice-pos.entry_price)/pos.entry_price)*100;
-        }
+        if (side==='SHORT') { brutoPnlPct=((pos.entry_price-cur)/pos.entry_price)*100; }
+        else                { brutoPnlPct=((cur-pos.entry_price)/pos.entry_price)*100; }
         netPnlPct = brutoPnlPct-(totalCost*100);
         netPnl    = side==='SHORT'
-          ? (pos.entry_price-currentPrice)*pos.quantity-(pos.entry_price*pos.quantity*totalCost)
-          : (currentPrice-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
+          ? (pos.entry_price-cur)*pos.quantity-(pos.entry_price*pos.quantity*totalCost)
+          : (cur-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
 
         if (!this.trailingStops[pos.symbol]) {
           this.trailingStops[pos.symbol]={ highestPrice:pos.entry_price, lowestPrice:pos.entry_price, entryPrice:pos.entry_price, quantity:pos.quantity, side };
         }
-        const trailing = this.trailingStops[pos.symbol];
-        let closeReason=null;
+        const tr = this.trailingStops[pos.symbol];
+        let closeReason=null, stopPrice=pos.stop_loss||0;
 
         if (side==='LONG') {
-          if (currentPrice>trailing.highestPrice) trailing.highestPrice=currentPrice;
-          const trailingStop = trailing.highestPrice*(1-trailingPct);
-          const hardStop     = pos.entry_price*(1-hardStopPct);
-          const stopPrice    = Math.max(trailingStop,hardStop);
-          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?')
-            .run(currentPrice,netPnl,netPnlPct,stopPrice,pos.id);
-          if (netPnlPct<=-hardStopPct*100)                              closeReason='STOP_LOSS';
-          else if (brutoPnlPct>=minProfitPct*100&&currentPrice<=trailingStop) closeReason='TRAILING_STOP';
+          if (cur>tr.highestPrice) tr.highestPrice=cur;
+          const ts=tr.highestPrice*(1-trailingPct);
+          stopPrice=Math.max(ts, pos.entry_price*(1-hardStopPct));
+          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?').run(cur,netPnl,netPnlPct,stopPrice,pos.id);
+          if (netPnlPct<=-hardStopPct*100) closeReason='STOP_LOSS';
+          else if (brutoPnlPct>=minProfPct*100&&cur<=ts) closeReason='TRAILING_STOP';
         } else {
-          if (currentPrice<trailing.lowestPrice) trailing.lowestPrice=currentPrice;
-          const trailingStop = trailing.lowestPrice*(1+trailingPct);
-          const hardStop     = pos.entry_price*(1+hardStopPct);
-          const stopPrice    = Math.min(trailingStop,hardStop);
-          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?')
-            .run(currentPrice,netPnl,netPnlPct,stopPrice,pos.id);
-          if (netPnlPct<=-hardStopPct*100)                              closeReason='STOP_LOSS';
-          else if (brutoPnlPct>=minProfitPct*100&&currentPrice>=trailingStop) closeReason='TRAILING_STOP';
+          if (cur<tr.lowestPrice) tr.lowestPrice=cur;
+          const ts=tr.lowestPrice*(1+trailingPct);
+          stopPrice=Math.min(ts, pos.entry_price*(1+hardStopPct));
+          db.prepare('UPDATE positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=? WHERE id=?').run(cur,netPnl,netPnlPct,stopPrice,pos.id);
+          if (netPnlPct<=-hardStopPct*100) closeReason='STOP_LOSS';
+          else if (brutoPnlPct>=minProfPct*100&&cur>=ts) closeReason='TRAILING_STOP';
         }
-
         if (timeStopMin>0&&Date.now()-new Date(pos.opened_at).getTime()>timeStopMin*60*1000) closeReason='TIME_STOP';
-        if (closeReason) await this.closePosition(pos,binance,closeReason,currentPrice,komisyonPct,slippagePct,side);
+        if (closeReason) await this.closePosition(pos,binance,closeReason,cur,komPct,slipPct,side);
       } catch(e) { console.error(`${pos.symbol} kontrol hatası:`,e.message); }
     }
   }
 
-  async closePosition(pos, binance, reason, currentPrice, komisyonPct, slippagePct, side='LONG') {
+  async closePosition(pos, binance, reason, cur, komPct, slipPct, side='LONG') {
     try {
       const orderSide = side==='SHORT'?'BUY':'SELL';
       const order     = await binance.placeOrder(pos.symbol, orderSide, pos.quantity);
-      const sellPrice = parseFloat(order.fills?.[0]?.price||currentPrice);
-      const totalCost = (komisyonPct+slippagePct)*2;
+      const sellPrice = parseFloat(order.fills?.[0]?.price||cur);
+      const totalCost = (komPct+slipPct)*2;
       let netPnl, netPnlPct;
       if (side==='SHORT') {
         netPnl    = (pos.entry_price-sellPrice)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
@@ -587,7 +518,7 @@ class TradingEngine {
         .run(pos.id,pos.symbol,orderSide,pos.quantity,sellPrice,sellPrice*pos.quantity,order.orderId);
       delete this.trailingStops[pos.symbol];
       console.log(`${reason}[${side}]: ${pos.symbol} | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT`);
-      const telegram = this.getTelegram();
+      const telegram=this.getTelegram();
       if (telegram) await telegram.sendPositionClosed(pos.symbol,`${reason}[${side}]`,netPnlPct,netPnl);
     } catch(e) { console.error(`${pos.symbol} kapatma hatası:`,e.message); }
   }
@@ -646,19 +577,16 @@ class TradingEngine {
         if (!this.candle1HBuffers[symbol]) this.candle1HBuffers[symbol]=[];
 
         if (isClosed) {
-          // 1H buffer güncelle
           this.candle1HBuffers[symbol].push(newCandle);
           if (this.candle1HBuffers[symbol].length>200) this.candle1HBuffers[symbol].shift();
 
-          // 4H kapandı mı? UTC saate göre
+          // 4H kapandı mı?
           const closeHour = new Date(parseInt(kline.T)).getUTCHours();
           if (closeHour%4===3) {
-            // 4H mumu oluştur
-            const last4 = this.candle1HBuffers[symbol].slice(-4);
+            const last4=this.candle1HBuffers[symbol].slice(-4);
             if (last4.length===4) {
-              const h4Candle = [
-                last4[0][0],
-                last4[0][1],
+              const h4Candle=[
+                last4[0][0], last4[0][1],
                 Math.max(...last4.map(c=>parseFloat(c[2]))).toString(),
                 Math.min(...last4.map(c=>parseFloat(c[3]))).toString(),
                 last4[3][4],
@@ -669,17 +597,20 @@ class TradingEngine {
               this.candle4HBuffers[symbol].push(h4Candle);
               if (this.candle4HBuffers[symbol].length>200) this.candle4HBuffers[symbol].shift();
             }
-            // 4H kapandı → setup tara
             await this.scan4HClose(kline.T);
           }
 
-          // Her 1H kapanışında giriş zamanlaması
           await this.scan1HClose(kline.T);
 
         } else {
-          // Mum devam ediyor → son mumu güncelle
+          // Canlı fiyat güncelle
           const buf=this.candle1HBuffers[symbol];
           if (buf.length>0) buf[buf.length-1]=newCandle;
+
+          // Simülasyon fiyat güncelle
+          this.currentPrices[symbol]=parseFloat(kline.c);
+          const simulation=require('./simulation');
+          simulation.updatePositions(this.currentPrices, this.getSettings());
         }
       } catch(e) {}
     });
@@ -699,17 +630,14 @@ class TradingEngine {
     if (this.running) return;
     this.running=true;
     console.log(`\n${'═'.repeat(50)}`);
-    console.log(`ENGINE v19 — 4H Setup + 1H Timing`);
+    console.log(`ENGINE v19 — 4H Setup + 1H Timing + Simülasyon`);
     console.log(`${'═'.repeat(50)}\n`);
     try {
       await this.updateBTCTrend();
       const symbols=await this.fetchSymbols();
       console.log(`${symbols.length} coin seçildi`);
       await this.loadAllCandles(symbols);
-
-      // İlk 4H tarama
       await this.scan4HClose(Date.now());
-
       this.startWebSocket(symbols);
       this.positionInterval      = setInterval(()=>this.checkPositions(), 30000);
       this.btcUpdateInterval     = setInterval(()=>this.updateBTCTrend(), 4*60*60*1000);
@@ -719,11 +647,11 @@ class TradingEngine {
         await this.loadAllCandles(newSyms);
         this.startWebSocket(newSyms);
       }, 60*60*1000);
-
       console.log('\n✅ Engine hazır!');
-      console.log('📊 6/6 GÜÇLÜ → 1H trend uyumlu → direkt sinyal');
+      console.log('💪 6/6 GÜÇLÜ → 1H trend uyumlu → direkt sinyal');
       console.log('📊 5/6 NORMAL → 1H MACD crossover bekle');
-      console.log('📊 4/6 ZAYIF  → 1H crossover + hacim spike bekle\n');
+      console.log('⚠️  4/6 ZAYIF  → 1H crossover + hacim spike bekle');
+      console.log('🎮 Simülasyon aktif — sanal para ile gerçek zamanlı\n');
     } catch(e) {
       console.error('Engine başlatma hatası:',e.message);
       this.running=false;
@@ -737,7 +665,7 @@ class TradingEngine {
     if (this.btcUpdateInterval)     clearInterval(this.btcUpdateInterval);
     this.running=false;
     this.candle4HBuffers={}; this.candle1HBuffers={}; this.candle1DBuffers={};
-    this.tickers={}; this.adaylar={};
+    this.tickers={}; this.adaylar={}; this.currentPrices={};
     this.closedCandles4H=new Set(); this.closedCandles1H=new Set();
     console.log('Engine durduruldu.');
   }
