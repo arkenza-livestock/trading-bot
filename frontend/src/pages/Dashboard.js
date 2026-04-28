@@ -1,219 +1,102 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 
-const trSaat = (tarih) => new Date(tarih + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
-
-export default function Dashboard({ api, stats }) {
-  const [signals, setSignals] = useState([]);
-  const [positions, setPositions] = useState([]);
+export default function Dashboard({ api }) {
+  const [status, setStatus] = useState(null);
   const [scanLogs, setScanLogs] = useState([]);
+  const [signals, setSignals] = useState([]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [sRes, pRes, lRes] = await Promise.all([
-          axios.get(`${api}/api/signals?limit=10`),
-          axios.get(`${api}/api/positions/open`),
-          axios.get(`${api}/api/scan-logs`)
+        const [sRes, lRes] = await Promise.all([
+          fetch(`${api}/api/signals`).then(r=>r.json()),
+          fetch(`${api}/api/scan-logs`).then(r=>r.json()),
         ]);
-        setSignals(sRes.data);
-        setPositions(pRes.data);
-        setScanLogs(lRes.data);
-      } catch (err) { console.error(err); }
+        setSignals(sRes);
+        setScanLogs(lRes);
+      } catch(e) { console.error(e); }
     };
     load();
-    const interval = setInterval(load, 10000);
-    return () => clearInterval(interval);
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
   }, [api]);
 
   const lastScan = scanLogs[0];
-
-  const getRiskBadge = (risk) => {
-    const r = risk?.toUpperCase();
-    if (r === 'DUSUK') return <span className="badge badge-dusuk">Düşük</span>;
-    if (r === 'ORTA')  return <span className="badge badge-orta">Orta</span>;
-    return <span className="badge badge-yuksek">Yüksek</span>;
-  };
+  const trSaat = (t) => t ? new Date(t).toLocaleString('tr-TR') : '-';
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <div className="page-title">Dashboard</div>
+          <div className="page-title">📊 Dashboard</div>
           <div className="page-sub">Gerçek zamanlı kripto sinyal takibi</div>
         </div>
-        <div style={{ fontSize: 12, color: '#718096', textAlign: 'right' }}>
-          {new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}
-        </div>
       </div>
 
-      {/* Son Tarama Durumu */}
-      <div style={{ background: '#0d1a2d', border: '1px solid #1e3a5f', borderRadius: 10, padding: '12px 16px', marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 18 }}>🔍</span>
-          <div>
-            <div style={{ fontSize: 12, color: '#718096' }}>Son Tarama</div>
-            <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>
-              {lastScan ? trSaat(lastScan.created_at) : 'Henüz tarama yok'}
-            </div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 24 }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: '#718096' }}>Taranan Coin</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#60a5fa' }}>{lastScan?.coin_count || 0}</div>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: '#718096' }}>Bulunan Sinyal</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: lastScan?.signal_count > 0 ? '#68d391' : '#fc8181' }}>
-              {lastScan?.signal_count || 0}
-            </div>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: '#718096' }}>Süre</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#f6ad55' }}>
-              {lastScan ? `${(lastScan.duration_ms / 1000).toFixed(1)}s` : '-'}
-            </div>
-          </div>
-        </div>
-        {lastScan?.signal_count > 0 && lastScan?.signals_found?.length > 0 && (
-          <div style={{ fontSize: 12, color: '#68d391' }}>
-            ✅ {lastScan.signals_found.join(' · ')}
-          </div>
-        )}
-        {lastScan?.signal_count === 0 && (
-          <div style={{ fontSize: 12, color: '#fc8181' }}>❌ Sinyal bulunamadı</div>
-        )}
-      </div>
-
-      {/* İstatistik Kartları */}
-      <div className="grid-4" style={{ marginBottom: 20 }}>
-        <div className="stat-card">
-          <div className="stat-label">Toplam PnL</div>
-          <div className={`stat-value ${stats.totalPnl >= 0 ? 'positive' : 'negative'}`}>
-            {stats.totalPnl >= 0 ? '+' : ''}{stats.totalPnl || 0}
-          </div>
-          <div className="stat-sub">USDT</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Kazanma Oranı</div>
-          <div className="stat-value positive">{stats.winRate || 0}%</div>
-          <div className="stat-sub">{stats.wins || 0}W / {stats.losses || 0}L</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Açık Pozisyon</div>
-          <div className="stat-value">{stats.openPositions || 0}</div>
-          <div className="stat-sub">Aktif işlem</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Toplam Sinyal</div>
-          <div className="stat-value">{stats.totalSignals || 0}</div>
-          <div className="stat-sub">Tüm zamanlar</div>
-        </div>
-      </div>
-
-      <div className="grid-2">
-        {/* Son Sinyaller */}
-        <div className="card">
-          <div className="card-title">Son Sinyaller</div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Coin</th><th>Skor</th><th>Risk</th><th>Fiyat</th><th>Saat</th></tr>
-              </thead>
-              <tbody>
-                {signals.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: '#4a5568', padding: 20 }}>Henüz sinyal yok</td></tr>
-                ) : signals.map(s => (
-                  <tr key={s.id}>
-                    <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</td>
-                    <td>
-                      <span style={{ color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181', fontWeight: 700 }}>
-                        {s.score}
-                      </span>
-                    </td>
-                    <td>{getRiskBadge(s.risk)}</td>
-                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(s.price).toFixed(6)}</td>
-                    <td style={{ color: '#4a5568', fontSize: 11 }}>
-                      {trSaat(s.created_at)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Tarama Geçmişi */}
-        <div className="card">
-          <div className="card-title">Tarama Geçmişi</div>
-          <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-            {scanLogs.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#4a5568', padding: 20 }}>Henüz tarama yok</div>
-            ) : scanLogs.map(log => (
-              <div key={log.id} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '8px 12px', borderBottom: '1px solid #111827',
-                background: log.signal_count > 0 ? '#0d2818' : 'transparent'
-              }}>
-                <div>
-                  <div style={{ fontSize: 12, color: '#e2e8f0' }}>
-                    {trSaat(log.created_at)}
-                  </div>
-                  {log.signal_count > 0 && log.signals_found?.length > 0 && (
-                    <div style={{ fontSize: 11, color: '#68d391', marginTop: 2 }}>
-                      ✅ {log.signals_found.join(' · ')}
-                    </div>
-                  )}
-                  {log.signal_count === 0 && (
-                    <div style={{ fontSize: 11, color: '#4a5568', marginTop: 2 }}>❌ Sinyal yok</div>
-                  )}
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 12, color: '#60a5fa' }}>{log.coin_count} coin</div>
-                  <div style={{ fontSize: 11, color: '#718096' }}>{(log.duration_ms / 1000).toFixed(1)}s</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Açık Pozisyonlar */}
-      {positions.length > 0 && (
-        <div className="card" style={{ marginTop: 20 }}>
-          <div className="card-title">Açık Pozisyonlar</div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Coin</th><th>Giriş</th><th>Anlık</th><th>Stop</th><th>PnL</th><th>Süre</th></tr>
-              </thead>
-              <tbody>
-                {positions.map(p => (
-                  <tr key={p.id}>
-                    <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{p.symbol}</td>
-                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(p.entry_price).toFixed(6)}</td>
-                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(p.current_price || p.entry_price).toFixed(6)}</td>
-                    <td style={{ color: '#fc8181', fontSize: 12 }}>{parseFloat(p.stop_loss || 0).toFixed(6)}</td>
-                    <td>
-                      <span className={(p.pnl || 0) >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 700 }}>
-                        {(p.pnl || 0) >= 0 ? '+' : ''}{parseFloat(p.pnl || 0).toFixed(2)} USDT
-                      </span>
-                      <br />
-                      <span style={{ fontSize: 11, color: (p.pnl_percent || 0) >= 0 ? '#68d391' : '#fc8181' }}>
-                        %{parseFloat(p.pnl_percent || 0).toFixed(2)}
-                      </span>
-                    </td>
-                    <td style={{ color: '#4a5568', fontSize: 11 }}>
-                      {Math.floor((Date.now() - new Date(p.opened_at + 'Z').getTime()) / 60000)} dk
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {lastScan && (
+        <div className="card" style={{ marginBottom:16, padding:'12px 16px' }}>
+          <div style={{ fontSize:12, color:'#718096', marginBottom:4 }}>🔍 Son Tarama</div>
+          <div style={{ fontSize:12, color:'#a0aec0' }}>{trSaat(lastScan.created_at)}</div>
+          <div style={{ fontSize:12, color:'#718096', marginTop:4 }}>
+            Taranan: {lastScan.coin_count} coin |
+            Sinyal: {lastScan.signal_count} |
+            Süre: {((lastScan.duration_ms||0)/1000).toFixed(1)}s
           </div>
         </div>
       )}
+
+      <div className="card">
+        <div className="card-title">Son Sinyaller</div>
+        {signals.length===0 ? (
+          <div style={{ textAlign:'center', padding:40, color:'#718096' }}>Henüz sinyal yok</div>
+        ) : (
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom:'1px solid #1e2736' }}>
+                {['Coin','Sinyal','Skor','Fiyat','Saat'].map(h=>(
+                  <th key={h} style={{ padding:'8px 12px', fontSize:11, color:'#718096', textAlign:'left' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {signals.slice(0,10).map((s,i)=>(
+                <tr key={i} style={{ borderBottom:'1px solid #0d1117' }}>
+                  <td style={{ padding:'8px 12px', fontWeight:600, color:'#60a5fa' }}>{s.symbol}</td>
+                  <td style={{ padding:'8px 12px' }}>
+                    <span style={{ color:s.signal_type==='ALIM'?'#68d391':'#fc8181', fontWeight:600 }}>
+                      {s.signal_type==='ALIM'?'🚀 ALIM':'📉 SATIS'}
+                    </span>
+                  </td>
+                  <td style={{ padding:'8px 12px', color:'#f6ad55' }}>{s.score}</td>
+                  <td style={{ padding:'8px 12px', color:'#e2e8f0' }}>{parseFloat(s.price||0).toFixed(4)}</td>
+                  <td style={{ padding:'8px 12px', fontSize:11, color:'#718096' }}>{trSaat(s.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop:16 }}>
+        <div className="card-title">Tarama Geçmişi</div>
+        {scanLogs.length===0 ? (
+          <div style={{ textAlign:'center', padding:40, color:'#718096' }}>Henüz tarama yok</div>
+        ) : (
+          <div>
+            {scanLogs.slice(0,10).map((l,i)=>(
+              <div key={i} style={{ padding:'10px 0', borderBottom:'1px solid #0d1117', fontSize:12, color:'#a0aec0' }}>
+                <span style={{ color:'#718096' }}>{trSaat(l.created_at)}</span>
+                {' · '}
+                <span>{l.coin_count} coin</span>
+                {' · '}
+                <span style={{ color:l.signal_count>0?'#68d391':'#718096' }}>
+                  {l.signal_count>0 ? `✅ ${(l.signals_found||[]).join(', ')}` : '❌ Sinyal yok'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
