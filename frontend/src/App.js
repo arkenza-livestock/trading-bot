@@ -4,7 +4,6 @@ import Signals from './pages/Signals';
 import Positions from './pages/Positions';
 import Backtest from './pages/Backtest';
 import Settings from './pages/Settings';
-import Simulation from './pages/Simulation';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -12,17 +11,16 @@ const NAV = [
   { id:'dashboard',  icon:'📊', label:'Dashboard' },
   { id:'signals',    icon:'🚨', label:'Sinyaller' },
   { id:'positions',  icon:'💼', label:'Pozisyonlar' },
-  { id:'simulation', icon:'🎮', label:'Simülasyon' },
   { id:'backtest',   icon:'🔬', label:'Backtest' },
   { id:'settings',   icon:'⚙️', label:'Ayarlar' },
 ];
 
 export default function App() {
-  const [activePage,  setActivePage]  = useState('dashboard');
-  const [engineStatus,setEngineStatus]= useState('stopped');
-  const [totalPnl,    setTotalPnl]    = useState(0);
-  const [winRate,     setWinRate]     = useState(0);
-  const [openPos,     setOpenPos]     = useState(0);
+  const [activePage,   setActivePage]   = useState('dashboard');
+  const [engineStatus, setEngineStatus] = useState('stopped');
+  const [totalPnl,     setTotalPnl]     = useState(0);
+  const [winRate,      setWinRate]      = useState(0);
+  const [openPos,      setOpenPos]      = useState(0);
 
   useEffect(() => {
     fetchStatus();
@@ -83,7 +81,8 @@ export default function App() {
         {/* Engine kontrolü */}
         <div style={{ padding:'16px 20px', borderTop:'1px solid #1e2736' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-            <div style={{ width:8, height:8, borderRadius:'50%', background:engineStatus==='running'?'#68d391':'#fc8181',
+            <div style={{ width:8, height:8, borderRadius:'50%',
+              background:engineStatus==='running'?'#68d391':'#fc8181',
               boxShadow:engineStatus==='running'?'0 0 6px #68d391':'none' }} />
             <span style={{ fontSize:12, color:engineStatus==='running'?'#68d391':'#fc8181', fontWeight:600 }}>
               {engineStatus==='running' ? 'Çalışıyor' : 'Durduruldu'}
@@ -110,7 +109,9 @@ export default function App() {
           </div>
           <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8 }}>
             <span style={{ fontSize:11, color:'#718096' }}>Kazanma</span>
-            <span style={{ fontSize:11, fontWeight:700, color:winRate>=50?'#68d391':'#f6ad55' }}>%{winRate.toFixed(1)}</span>
+            <span style={{ fontSize:11, fontWeight:700, color:winRate>=50?'#68d391':'#f6ad55' }}>
+              %{winRate.toFixed(1)}
+            </span>
           </div>
           <div style={{ display:'flex', justifyContent:'space-between' }}>
             <span style={{ fontSize:11, color:'#718096' }}>Açık Pos.</span>
@@ -121,12 +122,11 @@ export default function App() {
 
       {/* Sağ içerik */}
       <div style={{ flex:1, overflow:'auto', padding:24 }}>
-        {activePage==='dashboard'  && <Dashboard  api={API_URL} />}
-        {activePage==='signals'    && <Signals    api={API_URL} />}
-        {activePage==='positions'  && <Positions  api={API_URL} />}
-        {activePage==='simulation' && <Simulation api={API_URL} />}
-        {activePage==='backtest'   && <Backtest   api={API_URL} />}
-        {activePage==='settings'   && <Settings   api={API_URL} />}
+        {activePage==='dashboard' && <Dashboard  api={API_URL} />}
+        {activePage==='signals'   && <Signals    api={API_URL} />}
+        {activePage==='positions' && <Positions  api={API_URL} />}
+        {activePage==='backtest'  && <Backtest   api={API_URL} />}
+        {activePage==='settings'  && <Settings   api={API_URL} />}
       </div>
     </div>
   );
