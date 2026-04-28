@@ -5,7 +5,7 @@ import Positions from './pages/Positions';
 import Backtest from './pages/Backtest';
 import Settings from './pages/Settings';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API_URL = '';
 
 const NAV = [
   { id:'dashboard',  icon:'📊', label:'Dashboard' },
