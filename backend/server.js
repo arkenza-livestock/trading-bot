@@ -5,7 +5,7 @@ const db      = require('./src/database');
 const engine  = require('./src/engine');
 
 const app  = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -57,11 +57,11 @@ app.get('/api/status', (req, res) => {
     const wins          = db.prepare("SELECT COUNT(*) as count FROM positions WHERE status!='OPEN' AND pnl>0").get();
     const winRate       = trades.total>0 ? (wins.count/trades.total*100) : 0;
     res.json({
-      running:        engine.running,
-      openPositions:  openPositions.count,
-      totalPnl:       parseFloat((pnlResult.total||0).toFixed(4)),
-      winRate:        parseFloat(winRate.toFixed(1)),
-      btcTrend:       engine.btcTrend||{}
+      running:       engine.running,
+      openPositions: openPositions.count,
+      totalPnl:      parseFloat((pnlResult.total||0).toFixed(4)),
+      winRate:       parseFloat(winRate.toFixed(1)),
+      btcTrend:      engine.btcTrend||{}
     });
   } catch(e) { res.status(500).json({ error:e.message }); }
 });
@@ -69,7 +69,8 @@ app.get('/api/status', (req, res) => {
 // ── SİNYALLER ────────────────────────────────────────────
 app.get('/api/signals', (req, res) => {
   try {
-    const signals = db.prepare("SELECT * FROM signals ORDER BY created_at DESC LIMIT 50").all();
+    const limit   = parseInt(req.query.limit)||50;
+    const signals = db.prepare("SELECT * FROM signals ORDER BY created_at DESC LIMIT ?").all(limit);
     res.json(signals.map(s => ({
       ...s,
       positive_signals: JSON.parse(s.positive_signals||'[]'),
@@ -79,6 +80,13 @@ app.get('/api/signals', (req, res) => {
 });
 
 // ── POZİSYONLAR ──────────────────────────────────────────
+app.get('/api/positions/open', (req, res) => {
+  try {
+    const positions = db.prepare("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at DESC").all();
+    res.json(positions);
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
 app.get('/api/positions', (req, res) => {
   try {
     const positions = db.prepare("SELECT * FROM positions ORDER BY opened_at DESC LIMIT 100").all();
@@ -98,7 +106,7 @@ app.post('/api/positions/:id/close', async (req, res) => {
 // ── AYARLAR ──────────────────────────────────────────────
 app.get('/api/settings', (req, res) => {
   try {
-    const rows = db.prepare('SELECT key, value FROM settings').all();
+    const rows     = db.prepare('SELECT key, value FROM settings').all();
     const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
     res.json(settings);
   } catch(e) { res.status(500).json({ error:e.message }); }
