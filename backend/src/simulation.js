@@ -1,247 +1,223 @@
-// Canlı Simülasyon Motoru
-const db = require('./database');
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 
-class SimulationEngine {
-  constructor() {
-    this.trailingStops = {};
-  }
+const trSaat = (t) => t ? new Date(t).toLocaleString('tr-TR') : '-';
+const renk   = (v) => (v||0)>=0 ? '#68d391' : '#fc8181';
 
-  getWallet() {
-    return db.prepare('SELECT * FROM sim_wallet ORDER BY id DESC LIMIT 1').get();
-  }
+const Kart = ({ label, value, color, sub }) => (
+  <div style={{ background:'#0a0e1a', border:'1px solid #1e2736', borderRadius:8, padding:'14px 16px', textAlign:'center' }}>
+    <div style={{ fontSize:11, color:'#718096', marginBottom:6 }}>{label}</div>
+    <div style={{ fontSize:20, fontWeight:700, color:color||'#e2e8f0' }}>{value}</div>
+    {sub && <div style={{ fontSize:11, color:'#4a5568', marginTop:4 }}>{sub}</div>}
+  </div>
+);
 
-  getOpenPositions() {
-    return db.prepare("SELECT * FROM sim_positions WHERE status='OPEN'").all();
-  }
+const GucBadge = ({ guc }) => {
+  const map = { GUCLU:['💪','#68d391'], NORMAL:['📊','#f6ad55'], ZAYIF:['⚠️','#a0aec0'] };
+  const [icon, color] = map[guc]||['?','#718096'];
+  return <span style={{ color, fontSize:11 }}>{icon} {guc}</span>;
+};
 
-  // ── SANAL POZİSYON AÇ ────────────────────────────────────
-  openPosition(signal, settings={}) {
+export default function Simulation({ api }) {
+  const [stats,     setStats]     = useState(null);
+  const [resetting, setResetting] = useState(false);
+  const [startBal,  setStartBal]  = useState(1000);
+  const [tab,       setTab]       = useState('acik');
+
+  const fetchStats = async () => {
     try {
-      const wallet     = this.getWallet();
-      const openPos    = this.getOpenPositions();
-      const maxPos     = parseInt(settings.max_open_positions||5);
-      const baseAmount = parseFloat(settings.trade_amount_usdt||100);
+      const res = await axios.get(`${api}/api/simulation/stats`);
+      setStats(res.data);
+    } catch(e) { console.error(e); }
+  };
 
-      // Max pozisyon kontrolü
-      if (openPos.length>=maxPos) {
-        console.log(`[SIM] Max pozisyon doldu (${openPos.length}/${maxPos})`);
-        return null;
-      }
+  useEffect(() => {
+    fetchStats();
+    const iv = setInterval(fetchStats, 3000);
+    return () => clearInterval(iv);
+  }, []);
 
-      // Aynı coin kontrolü
-      const existing = openPos.find(p=>p.symbol===signal.symbol);
-      if (existing) return null;
-
-      // Bakiye kontrolü
-      const amount = baseAmount*(signal.pozisyonMult||1.0);
-      if (wallet.balance<amount) {
-        console.log(`[SIM] Yetersiz bakiye: ${wallet.balance} < ${amount}`);
-        return null;
-      }
-
-      const quantity = amount/signal.price;
-
-      const result = db.prepare(`
-        INSERT INTO sim_positions
-        (symbol, side, quantity, entry_price, current_price, stop_loss, highest_price, lowest_price, signal_guc, trend4H, trend1D, score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        signal.symbol,
-        signal.signal==='ALIM'?'LONG':'SHORT',
-        quantity, signal.price, signal.price,
-        signal.stopLoss||0,
-        signal.price, signal.price,
-        signal.longSinyal||signal.shortSinyal||'NORMAL',
-        signal.trend4H||'BELIRSIZ',
-        signal.trend1D||'BELIRSIZ',
-        signal.score||0
-      );
-
-      // Bakiyeden düş
-      db.prepare('UPDATE sim_wallet SET balance=balance-?, updated_at=CURRENT_TIMESTAMP').run(amount);
-
-      const side = signal.signal==='ALIM'?'LONG':'SHORT';
-      const guc  = signal.longSinyal||signal.shortSinyal||'NORMAL';
-      console.log(`[SIM] ${side} AÇILDI: ${signal.symbol} @ ${signal.price} | ${amount.toFixed(2)} USDT | Güç:${guc}`);
-
-      this.trailingStops[signal.symbol] = {
-        highestPrice: signal.price,
-        lowestPrice:  signal.price,
-        side
-      };
-
-      return result.lastInsertRowid;
-    } catch(e) {
-      console.error('[SIM] Pozisyon açma hatası:', e.message);
-      return null;
-    }
-  }
-
-  // ── SANAL POZİSYON KAPAT ─────────────────────────────────
-  closePosition(pos, exitPrice, reason) {
+  const reset = async () => {
+    if (!window.confirm(`Simülasyonu ${startBal} USDT ile sıfırla?`)) return;
+    setResetting(true);
     try {
-      const side        = pos.side||'LONG';
-      const komisyon    = 0.001; // %0.1
-      const slippage    = 0.0005; // %0.05
-      const totalCost   = (komisyon+slippage)*2;
-      let brutoPnlPct, netPnlPct, netPnl;
+      await axios.post(`${api}/api/simulation/reset`, { balance:parseFloat(startBal) });
+      await fetchStats();
+    } catch(e) { alert('Hata: '+e.message); }
+    setResetting(false);
+  };
 
-      if (side==='SHORT') {
-        brutoPnlPct = ((pos.entry_price-exitPrice)/pos.entry_price)*100;
-      } else {
-        brutoPnlPct = ((exitPrice-pos.entry_price)/pos.entry_price)*100;
-      }
-      netPnlPct = brutoPnlPct-(totalCost*100);
-      netPnl    = side==='SHORT'
-        ? (pos.entry_price-exitPrice)*pos.quantity-(pos.entry_price*pos.quantity*totalCost)
-        : (exitPrice-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
+  if (!stats) return (
+    <div style={{ textAlign:'center', padding:80, color:'#718096' }}>
+      <div style={{ fontSize:48, marginBottom:16 }}>🎮</div>
+      <div style={{ fontSize:15 }}>Simülasyon yükleniyor...</div>
+    </div>
+  );
 
-      const exitAmount = exitPrice*pos.quantity;
+  const closed = stats.recentTrades?.filter(t=>t.status!=='OPEN')||[];
+  const open   = stats.openPositions||[];
 
-      // Pozisyonu kapat
-      db.prepare(`
-        UPDATE sim_positions
-        SET status=?, exit_price=?, current_price=?, pnl=?, pnl_percent=?, close_reason=?, closed_at=CURRENT_TIMESTAMP
-        WHERE id=?
-      `).run(reason, exitPrice, exitPrice, netPnl, netPnlPct, reason, pos.id);
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-title">🎮 Canlı Simülasyon</div>
+          <div className="page-sub">Gerçek fiyatlar · Sanal para · Otomatik al/sat</div>
+        </div>
+        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+          <input type="number" value={startBal}
+            onChange={e=>setStartBal(e.target.value)}
+            style={{ width:90, padding:'8px 10px', background:'#0a0e1a', border:'1px solid #1e2736', borderRadius:6, color:'#e2e8f0', fontSize:13 }} />
+          <span style={{ color:'#718096', fontSize:12 }}>USDT</span>
+          <button onClick={reset} disabled={resetting}
+            style={{ padding:'9px 20px', background:'#2d3748', border:'1px solid #4a5568', borderRadius:6, color:'#e2e8f0', cursor:'pointer', fontSize:13 }}>
+            {resetting ? '...' : '🔄 Sıfırla'}
+          </button>
+        </div>
+      </div>
 
-      // Bakiyeye ekle
-      db.prepare('UPDATE sim_wallet SET balance=balance+?, total_pnl=total_pnl+?, total_trades=total_trades+?, winning_trades=winning_trades+?, updated_at=CURRENT_TIMESTAMP')
-        .run(exitAmount, netPnl, 1, netPnl>0?1:0);
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:12 }}>
+        <Kart label="Sanal Bakiye"
+          value={`${(stats.balance||0).toFixed(2)} USDT`}
+          color={stats.balance>=(stats.startBalance||1000)?'#68d391':'#fc8181'}
+          sub={`Başlangıç: ${stats.startBalance||1000} USDT`} />
+        <Kart label="Toplam PnL"
+          value={`${(stats.totalPnl||0)>=0?'+':''}${(stats.totalPnl||0).toFixed(2)} USDT`}
+          color={renk(stats.totalPnl)}
+          sub={`%${(stats.totalPnlPct||0)>=0?'+':''}${(stats.totalPnlPct||0).toFixed(2)}`} />
+        <Kart label="Kazanma Oranı"
+          value={`%${stats.winRate||0}`}
+          color={(stats.winRate||0)>=50?'#68d391':'#fc8181'}
+          sub={`${stats.wins||0}K / ${stats.losses||0}K`} />
+        <Kart label="Profit Factor"
+          value={stats.profitFactor===999?'∞':(stats.profitFactor||0)}
+          color={(stats.profitFactor||0)>=1.5?'#68d391':(stats.profitFactor||0)>=1?'#f6ad55':'#fc8181'}
+          sub="Kazanç / Kayıp" />
+      </div>
 
-      delete this.trailingStops[pos.symbol];
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+        <Kart label="Toplam İşlem"  value={stats.totalTrades||0} />
+        <Kart label="Açık Pozisyon" value={stats.openTrades||0} color="#60a5fa" />
+        <Kart label="Ort. Kazanç"   value={`+%${(stats.avgWin||0).toFixed(2)}`}  color="#68d391" />
+        <Kart label="Ort. Kayıp"    value={`%${(stats.avgLoss||0).toFixed(2)}`}   color="#fc8181" />
+      </div>
 
-      const emoji = netPnl>=0?'✅':'❌';
-      console.log(`[SIM] ${emoji} ${reason}[${side}]: ${pos.symbol} | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT`);
+      <div style={{ display:'flex', gap:8, marginBottom:16 }}>
+        {[['acik',`📊 Açık (${open.length})`],['gecmis',`📋 Geçmiş (${closed.length})`]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{ padding:'8px 20px', borderRadius:6, cursor:'pointer', fontSize:13, fontWeight:600,
+              background:tab===id?'#2b4c7e':'#0a0e1a',
+              border:tab===id?'1px solid #3182ce':'1px solid #1e2736',
+              color:tab===id?'#90cdf4':'#718096' }}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-      return { netPnl, netPnlPct };
-    } catch(e) {
-      console.error('[SIM] Pozisyon kapatma hatası:', e.message);
-      return null;
-    }
-  }
+      {tab==='acik' && (
+        <div className="card">
+          <div className="card-title">📊 Açık Simülasyon Pozisyonları</div>
+          {open.length===0 ? (
+            <div style={{ textAlign:'center', padding:50, color:'#718096' }}>
+              <div style={{ fontSize:32, marginBottom:12 }}>⏳</div>
+              <div>Henüz açık pozisyon yok</div>
+              <div style={{ fontSize:12, marginTop:8, color:'#4a5568' }}>
+                Engine sinyal ürettikçe otomatik pozisyon açılacak
+              </div>
+            </div>
+          ) : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom:'1px solid #1e2736' }}>
+                    {['Coin','Yön','Güç','Giriş$','Güncel$','Stop','PnL%','PnL USDT','Açılış'].map(h=>(
+                      <th key={h} style={{ padding:'8px 10px', fontSize:11, color:'#718096', textAlign:'left' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {open.map((p,i)=>(
+                    <tr key={i} style={{ borderBottom:'1px solid #0d1117',
+                      background:(p.pnl||0)>=0?'rgba(13,40,24,0.3)':'rgba(45,17,17,0.2)' }}>
+                      <td style={{ padding:'8px 10px', fontWeight:700, color:'#60a5fa', fontSize:12 }}>{p.symbol}</td>
+                      <td style={{ padding:'8px 10px' }}>
+                        <span style={{ padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600,
+                          background:p.side==='LONG'?'rgba(49,130,206,0.2)':'rgba(245,158,11,0.2)',
+                          color:p.side==='LONG'?'#60a5fa':'#f6ad55' }}>{p.side}</span>
+                      </td>
+                      <td style={{ padding:'8px 10px' }}><GucBadge guc={p.signal_guc} /></td>
+                      <td style={{ padding:'8px 10px', fontSize:12 }}>{parseFloat(p.entry_price||0).toFixed(4)}</td>
+                      <td style={{ padding:'8px 10px', fontSize:12 }}>{parseFloat(p.current_price||p.entry_price||0).toFixed(4)}</td>
+                      <td style={{ padding:'8px 10px', fontSize:11, color:'#fc8181' }}>{parseFloat(p.stop_loss||0).toFixed(4)}</td>
+                      <td style={{ padding:'8px 10px', fontWeight:700, color:renk(p.pnl_percent) }}>
+                        {(p.pnl_percent||0)>=0?'+':''}{(p.pnl_percent||0).toFixed(2)}%
+                      </td>
+                      <td style={{ padding:'8px 10px', fontWeight:700, fontSize:12, color:renk(p.pnl) }}>
+                        {(p.pnl||0)>=0?'+':''}{(p.pnl||0).toFixed(4)}
+                      </td>
+                      <td style={{ padding:'8px 10px', fontSize:10, color:'#718096' }}>{trSaat(p.opened_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
-  // ── POZİSYONLARI GÜNCELLE ────────────────────────────────
-  updatePositions(prices, settings={}) {
-    const trailingPct  = parseFloat(settings.trailing_stop_percent||0.5)/100;
-    const minProfitPct = parseFloat(settings.min_profit_percent||1.5)/100;
-    const hardStopPct  = parseFloat(settings.stop_loss_percent||2.0)/100;
-    const komisyon     = 0.001;
-    const slippage     = 0.0005;
-    const totalCost    = (komisyon+slippage)*2;
-
-    const openPos = this.getOpenPositions();
-
-    for (const pos of openPos) {
-      const currentPrice = prices[pos.symbol];
-      if (!currentPrice) continue;
-
-      const side = pos.side||'LONG';
-      let brutoPnlPct, netPnlPct, netPnl;
-
-      if (side==='SHORT') {
-        brutoPnlPct = ((pos.entry_price-currentPrice)/pos.entry_price)*100;
-      } else {
-        brutoPnlPct = ((currentPrice-pos.entry_price)/pos.entry_price)*100;
-      }
-      netPnlPct = brutoPnlPct-(totalCost*100);
-      netPnl    = side==='SHORT'
-        ? (pos.entry_price-currentPrice)*pos.quantity-(pos.entry_price*pos.quantity*totalCost)
-        : (currentPrice-pos.entry_price)*pos.quantity-(pos.entry_price*pos.quantity*totalCost);
-
-      if (!this.trailingStops[pos.symbol]) {
-        this.trailingStops[pos.symbol] = {
-          highestPrice: pos.highest_price||pos.entry_price,
-          lowestPrice:  pos.lowest_price||pos.entry_price,
-          side
-        };
-      }
-      const trailing = this.trailingStops[pos.symbol];
-
-      let closeReason = null;
-      let newHighest  = pos.highest_price||pos.entry_price;
-      let newLowest   = pos.lowest_price||pos.entry_price;
-      let stopPrice   = pos.stop_loss||0;
-
-      if (side==='LONG') {
-        if (currentPrice>trailing.highestPrice) {
-          trailing.highestPrice=currentPrice;
-          newHighest=currentPrice;
-        }
-        const trailingStop = trailing.highestPrice*(1-trailingPct);
-        const hardStop     = pos.entry_price*(1-hardStopPct);
-        stopPrice          = Math.max(trailingStop, hardStop);
-
-        if (netPnlPct<=-hardStopPct*100)                              closeReason='STOP_LOSS';
-        else if (brutoPnlPct>=minProfitPct*100&&currentPrice<=trailingStop) closeReason='TRAILING_STOP';
-
-      } else { // SHORT
-        if (currentPrice<trailing.lowestPrice) {
-          trailing.lowestPrice=currentPrice;
-          newLowest=currentPrice;
-        }
-        const trailingStop = trailing.lowestPrice*(1+trailingPct);
-        const hardStop     = pos.entry_price*(1+hardStopPct);
-        stopPrice          = Math.min(trailingStop, hardStop);
-
-        if (netPnlPct<=-hardStopPct*100)                              closeReason='STOP_LOSS';
-        else if (brutoPnlPct>=minProfitPct*100&&currentPrice>=trailingStop) closeReason='TRAILING_STOP';
-      }
-
-      if (closeReason) {
-        this.closePosition(pos, currentPrice, closeReason);
-      } else {
-        // Güncelle
-        db.prepare(`
-          UPDATE sim_positions
-          SET current_price=?, pnl=?, pnl_percent=?, stop_loss=?, highest_price=?, lowest_price=?
-          WHERE id=?
-        `).run(currentPrice, netPnl, netPnlPct, stopPrice, newHighest, newLowest, pos.id);
-      }
-    }
-  }
-
-  // ── SİMÜLASYON SIFIRLA ───────────────────────────────────
-  reset(startBalance=1000) {
-    db.prepare("DELETE FROM sim_positions").run();
-    db.prepare("DELETE FROM sim_wallet").run();
-    db.prepare('INSERT INTO sim_wallet (balance) VALUES (?)').run(startBalance);
-    this.trailingStops = {};
-    console.log(`[SIM] Sıfırlandı — ${startBalance} USDT`);
-  }
-
-  // ── İSTATİSTİK ───────────────────────────────────────────
-  getStats() {
-    const wallet   = this.getWallet();
-    const openPos  = this.getOpenPositions();
-    const allPos   = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC").all();
-    const closed   = allPos.filter(p=>p.status!=='OPEN');
-    const wins     = closed.filter(p=>p.pnl>0);
-    const losses   = closed.filter(p=>p.pnl<=0);
-    const totalPnl = closed.reduce((s,p)=>s+p.pnl,0);
-    const winRate  = closed.length>0?wins.length/closed.length*100:0;
-    const gW       = wins.reduce((s,p)=>s+p.pnl,0);
-    const gL       = Math.abs(losses.reduce((s,p)=>s+p.pnl,0));
-    const avgWin   = wins.length>0?wins.reduce((s,p)=>s+p.pnl_percent,0)/wins.length:0;
-    const avgLoss  = losses.length>0?losses.reduce((s,p)=>s+p.pnl_percent,0)/losses.length:0;
-
-    return {
-      balance:       parseFloat((wallet?.balance||1000).toFixed(4)),
-      startBalance:  1000,
-      totalPnl:      parseFloat(totalPnl.toFixed(4)),
-      totalPnlPct:   parseFloat((totalPnl/1000*100).toFixed(2)),
-      totalTrades:   closed.length,
-      openTrades:    openPos.length,
-      wins:          wins.length,
-      losses:        losses.length,
-      winRate:       parseFloat(winRate.toFixed(1)),
-      profitFactor:  gL>0?parseFloat((gW/gL).toFixed(2)):999,
-      avgWin:        parseFloat(avgWin.toFixed(2)),
-      avgLoss:       parseFloat(avgLoss.toFixed(2)),
-      openPositions: openPos,
-      recentTrades:  allPos.slice(0,20)
-    };
-  }
+      {tab==='gecmis' && (
+        <div className="card">
+          <div className="card-title">📋 Kapatılan İşlemler</div>
+          {closed.length===0 ? (
+            <div style={{ textAlign:'center', padding:50, color:'#718096' }}>
+              <div style={{ fontSize:32, marginBottom:12 }}>📋</div>
+              <div>Henüz kapatılmış işlem yok</div>
+            </div>
+          ) : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom:'1px solid #1e2736' }}>
+                    {['Coin','Yön','Güç','Giriş$','Çıkış$','Sebep','4H','PnL%','PnL USDT','Tarih'].map(h=>(
+                      <th key={h} style={{ padding:'8px 10px', fontSize:11, color:'#718096', textAlign:'left' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {closed.map((t,i)=>(
+                    <tr key={i} style={{ borderBottom:'1px solid #0d1117',
+                      background:(t.pnl||0)>=0?'rgba(13,40,24,0.3)':'rgba(45,17,17,0.2)' }}>
+                      <td style={{ padding:'7px 10px', fontWeight:700, color:'#60a5fa', fontSize:12 }}>{t.symbol}</td>
+                      <td style={{ padding:'7px 10px' }}>
+                        <span style={{ padding:'2px 6px', borderRadius:4, fontSize:11, fontWeight:600,
+                          background:t.side==='LONG'?'rgba(49,130,206,0.2)':'rgba(245,158,11,0.2)',
+                          color:t.side==='LONG'?'#60a5fa':'#f6ad55' }}>{t.side}</span>
+                      </td>
+                      <td style={{ padding:'7px 10px' }}><GucBadge guc={t.signal_guc} /></td>
+                      <td style={{ padding:'7px 10px', fontSize:11 }}>{parseFloat(t.entry_price||0).toFixed(4)}</td>
+                      <td style={{ padding:'7px 10px', fontSize:11 }}>{parseFloat(t.exit_price||0).toFixed(4)}</td>
+                      <td style={{ padding:'7px 10px' }}>
+                        <span style={{ fontSize:10, padding:'2px 6px', borderRadius:4, fontWeight:600,
+                          background:t.close_reason==='TRAILING_STOP'?'#0d2818':t.close_reason==='STOP_LOSS'?'#2d1111':'#1a2744',
+                          color:t.close_reason==='TRAILING_STOP'?'#68d391':t.close_reason==='STOP_LOSS'?'#fc8181':'#60a5fa'
+                        }}>{t.close_reason}</span>
+                      </td>
+                      <td style={{ padding:'7px 10px', fontSize:10, color:'#a0aec0' }}>{t.trend4H||'-'}</td>
+                      <td style={{ padding:'7px 10px', fontWeight:700, color:renk(t.pnl_percent) }}>
+                        {(t.pnl_percent||0)>=0?'+':''}{(t.pnl_percent||0).toFixed(2)}%
+                      </td>
+                      <td style={{ padding:'7px 10px', fontWeight:700, fontSize:12, color:renk(t.pnl) }}>
+                        {(t.pnl||0)>=0?'+':''}{(t.pnl||0).toFixed(4)}
+                      </td>
+                      <td style={{ padding:'7px 10px', fontSize:10, color:'#718096' }}>{trSaat(t.closed_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
-
-module.exports = new SimulationEngine();
