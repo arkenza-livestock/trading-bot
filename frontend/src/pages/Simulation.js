@@ -19,15 +19,21 @@ const GucBadge = ({ guc }) => {
 };
 
 export default function Simulation({ api }) {
-  const [stats,     setStats]     = useState(null);
-  const [resetting, setResetting] = useState(false);
-  const [startBal,  setStartBal]  = useState(1000);
-  const [tab,       setTab]       = useState('acik');
+  const [stats,         setStats]         = useState(null);
+  const [resetting,     setResetting]     = useState(false);
+  const [startBal,      setStartBal]      = useState(1000);
+  const [tab,           setTab]           = useState('acik');
+  const [engineRunning, setEngineRunning] = useState(false);
+  const [toggling,      setToggling]      = useState(false);
 
   const fetchStats = async () => {
     try {
-      const res = await axios.get(`${api}/api/simulation/stats`);
-      setStats(res.data);
+      const [simRes, statusRes] = await Promise.all([
+        axios.get(`${api}/api/simulation/stats`),
+        axios.get(`${api}/api/status`)
+      ]);
+      setStats(simRes.data);
+      setEngineRunning(statusRes.data.running||false);
     } catch(e) { console.error(e); }
   };
 
@@ -36,6 +42,16 @@ export default function Simulation({ api }) {
     const iv = setInterval(fetchStats, 3000);
     return () => clearInterval(iv);
   }, []);
+
+  const toggleEngine = async () => {
+    setToggling(true);
+    try {
+      const endpoint = engineRunning ? '/api/engine/stop' : '/api/engine/start';
+      await axios.post(`${api}${endpoint}`);
+      setTimeout(fetchStats, 1000);
+    } catch(e) { alert('Hata: '+e.message); }
+    setToggling(false);
+  };
 
   const reset = async () => {
     if (!window.confirm(`Simülasyonu ${startBal} USDT ile sıfırla?`)) return;
@@ -59,23 +75,48 @@ export default function Simulation({ api }) {
 
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <div>
           <div className="page-title">🎮 Canlı Simülasyon</div>
           <div className="page-sub">Gerçek fiyatlar · Sanal para · Otomatik al/sat</div>
         </div>
         <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+
+          {/* Engine Başlat/Durdur */}
+          <button onClick={toggleEngine} disabled={toggling}
+            style={{ padding:'9px 20px', borderRadius:6, cursor:'pointer', fontSize:13, fontWeight:600,
+              background: engineRunning ? 'rgba(252,129,129,0.15)' : 'rgba(104,211,145,0.15)',
+              border: engineRunning ? '1px solid #fc8181' : '1px solid #68d391',
+              color: engineRunning ? '#fc8181' : '#68d391' }}>
+            {toggling ? '...' : engineRunning ? '⏹ Durdur' : '▶ Başlat'}
+          </button>
+
+          {/* Sıfırla */}
           <input type="number" value={startBal}
             onChange={e=>setStartBal(e.target.value)}
-            style={{ width:90, padding:'8px 10px', background:'#0a0e1a', border:'1px solid #1e2736',
+            style={{ width:80, padding:'8px 10px', background:'#0a0e1a', border:'1px solid #1e2736',
               borderRadius:6, color:'#e2e8f0', fontSize:13 }} />
           <span style={{ color:'#718096', fontSize:12 }}>USDT</span>
           <button onClick={reset} disabled={resetting}
-            style={{ padding:'9px 20px', background:'#2d3748', border:'1px solid #4a5568',
+            style={{ padding:'9px 16px', background:'#2d3748', border:'1px solid #4a5568',
               borderRadius:6, color:'#e2e8f0', cursor:'pointer', fontSize:13 }}>
             {resetting ? '...' : '🔄 Sıfırla'}
           </button>
         </div>
+      </div>
+
+      {/* Engine durumu banner */}
+      <div style={{ background: engineRunning ? 'rgba(13,40,24,0.5)' : 'rgba(45,17,17,0.3)',
+        border: `1px solid ${engineRunning?'#276749':'#4a1111'}`,
+        borderRadius:8, padding:'10px 16px', marginBottom:16,
+        display:'flex', alignItems:'center', gap:10 }}>
+        <div style={{ width:8, height:8, borderRadius:'50%',
+          background: engineRunning ? '#68d391' : '#fc8181',
+          boxShadow: engineRunning ? '0 0 6px #68d391' : 'none' }} />
+        <span style={{ fontSize:13, color: engineRunning ? '#68d391' : '#fc8181', fontWeight:600 }}>
+          {engineRunning ? 'Engine çalışıyor — Sinyaller izleniyor, simülasyon aktif' : 'Engine durduruldu — Simülasyon pasif'}
+        </span>
       </div>
 
       {/* Ana metrikler */}
@@ -127,7 +168,7 @@ export default function Simulation({ api }) {
               <div style={{ fontSize:32, marginBottom:12 }}>⏳</div>
               <div>Henüz açık pozisyon yok</div>
               <div style={{ fontSize:12, marginTop:8, color:'#4a5568' }}>
-                Engine sinyal ürettikçe otomatik pozisyon açılacak
+                {engineRunning ? 'Sinyal bekleniyor...' : 'Engine\'i başlat ve bekle'}
               </div>
             </div>
           ) : (
