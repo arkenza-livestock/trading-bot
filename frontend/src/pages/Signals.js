@@ -22,8 +22,8 @@ const TrendBadge = ({ trend }) => {
 
 export default function Signals({ api }) {
   const [signals, setSignals] = useState([]);
-  const [filter, setFilter] = useState('ALL');
-  const [selected, setSelected] = useState(null);
+  const [filter,  setFilter]  = useState('ALL');
+  const [selected,setSelected]= useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -39,8 +39,6 @@ export default function Signals({ api }) {
 
   const filtered = filter === 'ALL' ? signals : signals.filter(s => s.signal_type === filter);
 
-  const getTrend1H = (s) => s.trend || 'BELIRSIZ';
-
   return (
     <div>
       <div className="page-header">
@@ -49,7 +47,7 @@ export default function Signals({ api }) {
           <div className="page-sub">{signals.length} sinyal kaydedildi</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {['ALL', 'ALIM', 'BEKLE', 'SATIS'].map(f => (
+          {['ALL', 'ALIM', 'SATIS'].map(f => (
             <button key={f} className={`btn ${filter === f ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilter(f)}>
               {f === 'ALL' ? 'Tümü' : f}
             </button>
@@ -65,8 +63,8 @@ export default function Signals({ api }) {
               <thead>
                 <tr>
                   <th>Coin</th>
+                  <th>Sinyal</th>
                   <th>Skor</th>
-                  <th>1H Trend</th>
                   <th>Fiyat</th>
                   <th>Saat</th>
                 </tr>
@@ -79,13 +77,16 @@ export default function Signals({ api }) {
                     style={{ cursor: 'pointer', background: selected?.id === s.id ? '#0d1a2d' : '' }}>
                     <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</td>
                     <td>
-                      <span style={{
-                        color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181',
-                        fontWeight: 700, fontSize: 15
-                      }}>{s.score}</span>
+                      <span style={{ color: s.signal_type === 'ALIM' ? '#68d391' : '#fc8181', fontWeight: 700 }}>
+                        {s.signal_type === 'ALIM' ? '🚀 ALIM' : '📉 SATIS'}
+                      </span>
                     </td>
-                    <td><TrendBadge trend={getTrend1H(s)} /></td>
-                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(s.price).toFixed(6)}</td>
+                    <td>
+                      <span style={{ color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181', fontWeight: 700, fontSize: 15 }}>
+                        {s.score}
+                      </span>
+                    </td>
+                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(s.price||0).toFixed(4)}</td>
                     <td style={{ color: '#4a5568', fontSize: 11 }}>{trSaat(s.created_at)}</td>
                   </tr>
                 ))}
@@ -98,25 +99,26 @@ export default function Signals({ api }) {
         <div className="card" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
           {selected ? (
             <div>
-              {/* Başlık */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <div>
                   <div style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0' }}>{selected.symbol}</div>
                   <div style={{ fontSize: 12, color: '#718096' }}>{trSaat(selected.created_at)}</div>
                 </div>
-                <span className={`badge badge-${selected.signal_type?.toLowerCase()}`}
-                  style={{ fontSize: 14, padding: '6px 14px' }}>
-                  {selected.signal_type}
+                <span style={{
+                  background: selected.signal_type === 'ALIM' ? '#0d2818' : '#2d1111',
+                  color: selected.signal_type === 'ALIM' ? '#68d391' : '#fc8181',
+                  padding: '6px 14px', borderRadius: 8, fontSize: 14, fontWeight: 700
+                }}>
+                  {selected.signal_type === 'ALIM' ? '🚀 ALIM' : '📉 SATIS'}
                 </span>
               </div>
 
-              {/* Ana Metrikler */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
                 {[
-                  { label: '💰 Fiyat', value: parseFloat(selected.price).toFixed(6) + ' USDT' },
-                  { label: '📊 5M Skor', value: `${selected.score}/100` },
-                  { label: '⚠️ Risk', value: selected.risk },
-                  { label: '📉 RSI', value: selected.rsi?.toFixed(2) },
+                  { label: '💰 Fiyat', value: parseFloat(selected.price||0).toFixed(4) + ' USDT' },
+                  { label: '📊 Skor', value: `${selected.score}/100` },
+                  { label: '⚠️ Risk', value: selected.risk || '-' },
+                  { label: '📉 RSI', value: selected.rsi ? parseFloat(selected.rsi).toFixed(2) : '-' },
                 ].map(item => (
                   <div key={item.label} style={{ background: '#0a0e1a', padding: '10px 12px', borderRadius: 8, border: '1px solid #1e2736' }}>
                     <div style={{ fontSize: 11, color: '#718096', marginBottom: 4 }}>{item.label}</div>
@@ -125,41 +127,7 @@ export default function Signals({ api }) {
                 ))}
               </div>
 
-              {/* 1H Trend Kartı */}
-              <div style={{ background: '#0a0e1a', border: '1px solid #1e2736', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: '#718096', marginBottom: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  📊 1H Zaman Dilimi Konfirmasyon
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <TrendBadge trend={getTrend1H(selected)} />
-                  <span style={{ fontSize: 12, color: '#718096' }}>
-                    {getTrend1H(selected) === 'YUKARI' && '✅ Güçlü alım konfirmasyonu — 1H yükseliş trendi'}
-                    {getTrend1H(selected) === 'HAFIF_YUKARI' && '📈 Hafif yükseliş — dikkatli pozisyon'}
-                    {getTrend1H(selected) === 'YATAY' && '➡️ Yatay seyir — kısa vadeli işlem'}
-                    {getTrend1H(selected) === 'HAFIF_ASAGI' && '⚠️ Hafif düşüş — riskli, dikkat et'}
-                    {getTrend1H(selected) === 'ASAGI' && '🚫 Düşüş trendi — bu sinyal reddedilmeli'}
-                    {getTrend1H(selected) === 'BELIRSIZ' && '❓ Trend belirsiz'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Hedef & Stop */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-                <div style={{ background: '#0d2818', border: '1px solid #1a4a2e', borderRadius: 8, padding: '10px 12px' }}>
-                  <div style={{ fontSize: 11, color: '#68d391', marginBottom: 4 }}>🎯 Hedef</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#68d391' }}>
-                    {selected.ai_comment?.includes('R/R:') ? selected.ai_comment.split('R/R:')[1]?.split('|')[0]?.trim() + 'x R/R' : '-'}
-                  </div>
-                </div>
-                <div style={{ background: '#2d1111', border: '1px solid #4a1111', borderRadius: 8, padding: '10px 12px' }}>
-                  <div style={{ fontSize: 11, color: '#fc8181', marginBottom: 4 }}>🛑 Stop Loss</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#fc8181' }}>
-                    {selected.ai_comment?.split('|')[0]?.replace('Hacim:', '').trim() + ' hacim' || '-'}
-                  </div>
-                </div>
-              </div>
-
-              {/* Pozitif Sinyaller */}
+              {/* Pozitif Faktörler */}
               {selected.positive_signals?.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: '#68d391', marginBottom: 8, fontWeight: 700 }}>✅ POZİTİF FAKTÖRLER</div>
@@ -172,7 +140,7 @@ export default function Signals({ api }) {
                 </div>
               )}
 
-              {/* Negatif Sinyaller */}
+              {/* Negatif Faktörler */}
               {selected.negative_signals?.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: '#fc8181', marginBottom: 8, fontWeight: 700 }}>⚠️ RİSK FAKTÖRLERİ</div>
@@ -185,7 +153,6 @@ export default function Signals({ api }) {
                 </div>
               )}
 
-              {/* Detay */}
               {selected.ai_comment && (
                 <div style={{ background: '#0a0e1a', padding: 12, borderRadius: 8, border: '1px solid #1e2736' }}>
                   <div style={{ fontSize: 11, color: '#718096', marginBottom: 6, fontWeight: 700 }}>📋 TEKNİK DETAY</div>
