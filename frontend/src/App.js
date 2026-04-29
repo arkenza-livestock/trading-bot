@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import Dashboard from './pages/Dashboard';
-import Signals from './pages/Signals';
-import Positions from './pages/Positions';
-import Backtest from './pages/Backtest';
-import Settings from './pages/Settings';
+import Dashboard  from './pages/Dashboard';
+import Signals    from './pages/Signals';
+import Positions  from './pages/Positions';
+import Backtest   from './pages/Backtest';
+import Settings   from './pages/Settings';
+import Simulation from './pages/Simulation';
 
 const API_URL = '';
 
@@ -11,6 +12,7 @@ const NAV = [
   { id:'dashboard',  icon:'📊', label:'Dashboard' },
   { id:'signals',    icon:'🚨', label:'Sinyaller' },
   { id:'positions',  icon:'💼', label:'Pozisyonlar' },
+  { id:'simulation', icon:'🎮', label:'Simülasyon' },
   { id:'backtest',   icon:'🔬', label:'Backtest' },
   { id:'settings',   icon:'⚙️', label:'Ayarlar' },
 ];
@@ -122,11 +124,12 @@ export default function App() {
 
       {/* Sağ içerik */}
       <div style={{ flex:1, overflow:'auto', padding:24 }}>
-        {activePage==='dashboard' && <Dashboard  api={API_URL} />}
-        {activePage==='signals'   && <Signals    api={API_URL} />}
-        {activePage==='positions' && <Positions  api={API_URL} />}
-        {activePage==='backtest'  && <Backtest   api={API_URL} />}
-        {activePage==='settings'  && <Settings   api={API_URL} />}
+        {activePage==='dashboard'  && <Dashboard  api={API_URL} />}
+        {activePage==='signals'    && <Signals    api={API_URL} />}
+        {activePage==='positions'  && <Positions  api={API_URL} />}
+        {activePage==='simulation' && <Simulation api={API_URL} />}
+        {activePage==='backtest'   && <Backtest   api={API_URL} />}
+        {activePage==='settings'   && <Settings   api={API_URL} />}
       </div>
     </div>
   );
