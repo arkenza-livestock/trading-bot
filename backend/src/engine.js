@@ -1,6 +1,7 @@
-const binance  = require('./binance');
-const analysis = require('./analysis');
-const db       = require('./database');
+const binance    = require('./binance');
+const analysis   = require('./analysis');
+const db         = require('./database');
+const simulation = require('./simulation');
 const TelegramService = require('./telegram');
 
 class TradingEngine {
@@ -9,6 +10,7 @@ class TradingEngine {
     this.interval  = null;
     this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0 };
     this.scanCount = 0;
+    this.prices    = {};
   }
 
   getSettings() {
@@ -46,9 +48,9 @@ class TradingEngine {
     const settings  = this.getSettings();
     this.scanCount++;
 
-    const minHacim = parseFloat(settings.min_volume || 5000000);
-    const maxCoin  = parseInt(settings.max_coins || 50);
-    const minScore = parseInt(settings.min_score || 40);
+    const minHacim = parseFloat(settings.min_volume  || 5000000);
+    const maxCoin  = parseInt(settings.max_coins      || 50);
+    const minScore = parseInt(settings.min_score      || 40);
 
     console.log(`\n[${new Date().toLocaleTimeString('tr-TR')}] ═══ TARAMA #${this.scanCount} ═══`);
     console.log(`BTC: ${this.btcTrend.trend} | RSI:${this.btcTrend.rsi?.toFixed(1)}`);
@@ -92,22 +94,21 @@ class TradingEngine {
         const result = analysis.analyze(candles4H, ticker);
         if (!result) continue;
 
+        // Fiyatı kaydet
+        this.prices[ticker.symbol] = result.fiyat;
+
         const sinyal = result.puan >= minScore ? 'ALIM' : result.puan <= -20 ? 'SATIS' : 'BEKLE';
         const risk   = result.puan >= 80 ? 'DUSUK' : result.puan >= 60 ? 'ORTA' : 'YUKSEK';
 
+        // DB'ye kaydet
         db.prepare(`
           INSERT INTO signals
           (symbol, signal_type, score, risk, price, fiyat, rsi, macd,
            trend, positive_signals, negative_signals, ai_comment)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         `).run(
-          result.symbol,
-          sinyal,
-          result.puan,
-          risk,
-          result.fiyat,
-          result.fiyat,
-          result.rsi,
+          result.symbol, sinyal, result.puan, risk,
+          result.fiyat, result.fiyat, result.rsi,
           result.macdBullish ? 1 : 0,
           `${result.trend4H}|${result.trend1H}|${result.trend1D}`,
           JSON.stringify(result.pozitif || []),
@@ -115,11 +116,25 @@ class TradingEngine {
           `Puan:${result.puan} | BTC:${this.btcTrend.trend}`
         );
 
+        // ALIM sinyali
         if (sinyal === 'ALIM') {
           signalCount++;
           signalsFound.push(result.symbol);
           console.log(`🚀 ALIM: ${result.symbol} | Puan:${result.puan} | RSI:${result.rsi} | ${result.trend}`);
 
+          // Simülasyon pozisyonu aç
+          simulation.openPosition({
+            symbol:      result.symbol,
+            signal_type: 'ALIM',
+            price:       result.fiyat,
+            fiyat:       result.fiyat,
+            score:       result.puan,
+            trend:       result.trend,
+            stop_loss:   result.stop_loss,
+            stopLoss:    result.stop_loss,
+          }, settings);
+
+          // Telegram
           if (telegram) {
             const telMin = parseInt(settings.telegram_min_score || 60);
             if (result.puan >= telMin) {
@@ -148,6 +163,9 @@ class TradingEngine {
       }
     }
 
+    // Simülasyon pozisyonlarını güncelle
+    simulation.updatePositions(this.prices, settings);
+
     const sure = Date.now() - baslangic;
     console.log(`\n✅ Tarama tamamlandı (${(sure/1000).toFixed(1)}s) — ${signalCount} sinyal\n`);
 
@@ -162,21 +180,27 @@ class TradingEngine {
     console.log('  TRADING BOT v20 BAŞLADI');
     console.log('  RSI+StochRSI+Williams+CCI+ADX');
     console.log('  MACD+BB+OBV+CMF+VWAP+Fib+Mum');
+    console.log('  Simülasyon Aktif 🎮');
     console.log('════════════════════════════════════════\n');
+
     await this.updateBTCTrend();
     await this.scan();
+
     const settings    = this.getSettings();
     const intervalMin = parseInt(settings.scan_interval || 20);
+
     this.interval = setInterval(async () => {
       await this.updateBTCTrend();
       await this.scan();
     }, intervalMin * 60 * 1000);
+
     console.log(`⏰ Her ${intervalMin} dakikada bir tarama`);
   }
 
   stop() {
     if (this.interval) clearInterval(this.interval);
-    this.running = false; this.interval = null;
+    this.running = false;
+    this.interval = null;
     console.log('Engine durduruldu.');
   }
 }
