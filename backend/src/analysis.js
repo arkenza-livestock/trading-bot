@@ -1,4 +1,4 @@
-class ProfessionalAnalysis {
+class Analysis {
 
   analyze(candles, ticker) {
     if (!candles || candles.length < 100) return null;
@@ -16,21 +16,20 @@ class ProfessionalAnalysis {
     const rsiDivBull = this.rsiBullishDiv(closes);
     const rsiDivBear = this.rsiBearishDiv(closes);
 
-    const stochRSI  = this.hesaplaStochRSI(closes);
-    const stochK    = stochRSI.k;
-    const stochD    = stochRSI.d;
-    const stochBull = stochK > stochD && stochK < 20;
-    const stochBear = stochK < stochD && stochK > 80;
+    const stochRSI   = this.hesaplaStochRSI(closes);
+    const stochK     = stochRSI.k;
+    const stochD     = stochRSI.d;
+    const stochBull  = stochK > stochD && stochK < 20;
+    const stochBear  = stochK < stochD && stochK > 80;
 
-    const williamsR     = this.hesaplaWilliamsR(highs, lows, closes, 14);
+    const williamsR      = this.hesaplaWilliamsR(highs, lows, closes, 14);
     const williamsAsirim = williamsR < -80;
-    const williamsAlim  = williamsR < -80 && williamsR > this.hesaplaWilliamsR(
+    const williamsAlim   = williamsR < -80 && williamsR > this.hesaplaWilliamsR(
       highs.slice(0,-1), lows.slice(0,-1), closes.slice(0,-1), 14
     );
 
     const cci     = this.hesaplaCCI(highs, lows, closes, 20);
     const cciBull = cci > -100 && cci < 0;
-    const cciBear = cci < 100  && cci > 0;
 
     const adx        = this.hesaplaADX(highs, lows, closes, 14);
     const trendGuclu = adx.adx > 25;
@@ -41,7 +40,6 @@ class ProfessionalAnalysis {
     const ema9   = this.hesaplaEMA(closes, 9);
     const ema21  = this.hesaplaEMA(closes, 21);
     const ema50  = this.hesaplaEMA(closes, 50);
-    const ema100 = this.hesaplaEMA(closes, 100);
     const ema200 = closes.length >= 200 ? this.hesaplaEMA(closes, 200) : null;
 
     const ema21Onceki  = this.hesaplaEMA(closes.slice(0,-1), 21);
@@ -94,7 +92,7 @@ class ProfessionalAnalysis {
     const volYuksek = volOran > 1.5;
     const volDusuk  = volOran < 0.5;
 
-    const son5 = candles.slice(-5);
+    const son5     = candles.slice(-5);
     const alimVol  = son5.filter(c=>parseFloat(c[4])>parseFloat(c[1])).reduce((a,c)=>a+parseFloat(c[5]),0);
     const satisVol = son5.filter(c=>parseFloat(c[4])<parseFloat(c[1])).reduce((a,c)=>a+parseFloat(c[5]),0);
     const volBaskisi = alimVol > satisVol ? 'ALIM' : 'SATIS';
@@ -227,155 +225,144 @@ class ProfessionalAnalysis {
     if (yukselisTrendi) { puan += 15; pozitif.push('HH & HL (Yükseliş Trendi)'); }
     if (dususTrendi)    { puan -= 15; negatif.push('LH & LL (Düşüş Trendi)'); }
 
-    const sinyal = puan >= 50 ? 'ALIM' : puan <= -20 ? 'SATIS' : 'BEKLE';
-    const risk   = puan >= 80 ? 'DUSUK' : puan >= 60 ? 'ORTA' : 'YUKSEK';
+    const sinyal  = puan >= 50 ? 'ALIM' : puan <= -20 ? 'SATIS' : 'BEKLE';
+    const risk    = puan >= 80 ? 'DUSUK' : puan >= 60 ? 'ORTA' : 'YUKSEK';
     const hedef   = parseFloat((fiyat + atr14 * 3).toFixed(8));
     const stopLos = parseFloat((fiyat - atr14 * 1.5).toFixed(8));
-    const rrOrani = parseFloat(((hedef - fiyat) / (fiyat - stopLos)).toFixed(2));
 
     return {
       symbol:    ticker.symbol,
       fiyat:     parseFloat(fiyat.toFixed(8)),
       price:     parseFloat(fiyat.toFixed(8)),
-      puan, risk, sinyal,
-      score:     puan,
-      signal:    sinyal === 'ALIM' ? 'ALIM' : sinyal === 'SATIS' ? 'SATIS' : 'BEKLE',
+      puan, risk, sinyal, score: puan,
+      signal:    sinyal,
       rsi:       parseFloat(rsi.toFixed(2)),
       rsiYon, rsiDivBull, rsiDivBear,
       stochK:    parseFloat(stochK.toFixed(2)),
       stochD:    parseFloat(stochD.toFixed(2)),
-      stochBull,
-      williamsR: parseFloat(williamsR.toFixed(2)),
-      williamsAlim,
-      cci:       parseFloat(cci.toFixed(2)),
+      stochBull, williamsR: parseFloat(williamsR.toFixed(2)),
+      williamsAlim, cci: parseFloat(cci.toFixed(2)),
       adx:       parseFloat(adx.adx.toFixed(2)),
       diPlus:    parseFloat(diPlus.toFixed(2)),
       diMinus:   parseFloat(diMinus.toFixed(2)),
       trendGuclu, trendYon,
       trend, goldenCross, deathCross, emaBullAlign,
-      trend4H:   trend,
-      trend1H:   trend,
-      trend1D:   trend,
-      ema9:      parseFloat(ema9.toFixed(8)),
-      ema21:     parseFloat(ema21.toFixed(8)),
-      ema50:     parseFloat(ema50.toFixed(8)),
-      ema200:    ema200 ? parseFloat(ema200.toFixed(8)) : null,
-      macdLine:  parseFloat(macdLine.toFixed(8)),
-      signalLine:parseFloat(signalLine.toFixed(8)),
-      macdHist:  parseFloat(macdHist.toFixed(8)),
+      trend4H: trend, trend1H: trend, trend1D: trend,
+      ema9:    parseFloat(ema9.toFixed(8)),
+      ema21:   parseFloat(ema21.toFixed(8)),
+      ema50:   parseFloat(ema50.toFixed(8)),
+      ema200:  ema200 ? parseFloat(ema200.toFixed(8)) : null,
+      macdLine:   parseFloat(macdLine.toFixed(8)),
+      signalLine: parseFloat(signalLine.toFixed(8)),
+      macdHist:   parseFloat(macdHist.toFixed(8)),
       macdBullish, macdBearish, macdBullDiv, macdZeroXup,
-      macdCrossover:  macdBullish,
-      macdCrossunder: macdBearish,
-      bPct:      parseFloat(bPct.toFixed(2)),
-      bWidth:    parseFloat(bWidth.toFixed(2)),
-      bSqueeze,
-      bollinger_pct: parseFloat(bPct.toFixed(2)),
-      ichimokuBelow: fiyat < ema50,
-      ichimokuAbove: fiyat > ema50,
+      macdCrossover: macdBullish, macdCrossunder: macdBearish,
+      bPct:    parseFloat(bPct.toFixed(2)),
+      bWidth:  parseFloat(bWidth.toFixed(2)),
+      bSqueeze, bollinger_pct: parseFloat(bPct.toFixed(2)),
+      ichimokuBelow: fiyat < ema50, ichimokuAbove: fiyat > ema50,
       obvTrend, obvDiv,
-      cmf:       parseFloat(cmf.toFixed(4)),
-      cmfBull,
-      vwap:      parseFloat(vwap.toFixed(8)),
-      vwapBull,
+      cmf:     parseFloat(cmf.toFixed(4)), cmfBull,
+      vwap:    parseFloat(vwap.toFixed(8)), vwapBull,
       volOran, volSpike, volBaskisi,
-      hacimOran: volOran,
-      alimOran:  parseFloat(alimOrani.toFixed(1)),
+      hacimOran: volOran, alimOran: parseFloat(alimOrani.toFixed(1)),
       alimOrani: parseFloat(alimOrani.toFixed(1)),
-      destek:    parseFloat(destek.toFixed(8)),
-      direnc:    parseFloat(direnc.toFixed(8)),
-      destekUzak:parseFloat(destekUzak.toFixed(2)),
-      direncUzak:parseFloat(direncUzak.toFixed(2)),
+      destek:  parseFloat(destek.toFixed(8)),
+      direnc:  parseFloat(direnc.toFixed(8)),
+      destekUzak: parseFloat(destekUzak.toFixed(2)),
+      direncUzak: parseFloat(direncUzak.toFixed(2)),
       direncKirildi, destekKirildi, fibDesteği,
-      fib382:    parseFloat(fib.level382.toFixed(8)),
-      fib618:    parseFloat(fib.level618.toFixed(8)),
+      fib382:  parseFloat(fib.level382.toFixed(8)),
+      fib618:  parseFloat(fib.level618.toFixed(8)),
       mumlar, yukselisTrendi, dususTrendi,
-      atr:       parseFloat(atr14.toFixed(8)),
-      atr14:     parseFloat(atr14.toFixed(8)),
-      atrOran:   parseFloat(atrOran.toFixed(2)),
-      hedef, stop_loss: stopLos, rrOrani,
-      stopLoss:  stopLos,
+      atr:     parseFloat(atr14.toFixed(8)),
+      atr14:   parseFloat(atr14.toFixed(8)),
+      atrOran: parseFloat(atrOran.toFixed(2)),
+      hedef, stop_loss: stopLos, stopLoss: stopLos,
       divergenceBull: rsiDivBull || macdBullDiv,
       divergenceBear: rsiDivBear || macdBearDiv,
-      pozitif, negatif,
-      positive:  pozitif,
-      negative:  negatif,
+      pozitif, negatif, positive: pozitif, negative: negatif,
       degisim24h: parseFloat(ticker.priceChangePercent || 0),
       hacim24h:   parseFloat(ticker.quoteVolume || 0)
     };
   }
 
-  // ── ENGINE UYUMLULUK FONKSİYONLARI ───────────────────────
+  // ── ENGINE UYUMLULUK ─────────────────────────────────────
 
   analyze4HSetup(candles4H, candles1D, ticker, settings) {
     const result = this.analyze(candles4H, ticker);
     if (!result) return { setup:'BEKLE' };
     const minScore = parseInt(settings?.min_score || 40);
-    if      (result.puan >= 70) return { ...result, setup:'LONG_ADAY', longSinyal:'GUCLU',  price:result.fiyat };
-    else if (result.puan >= 55) return { ...result, setup:'LONG_ADAY', longSinyal:'NORMAL', price:result.fiyat };
+    if      (result.puan >= 70) return { ...result, setup:'LONG_ADAY',  longSinyal:'GUCLU',  price:result.fiyat };
+    else if (result.puan >= 55) return { ...result, setup:'LONG_ADAY',  longSinyal:'NORMAL', price:result.fiyat };
     else if (result.puan >= minScore) return { ...result, setup:'LONG_ADAY', longSinyal:'ZAYIF', price:result.fiyat };
     else if (result.puan <= -40) return { ...result, setup:'SHORT_ADAY', shortSinyal:'GUCLU',  price:result.fiyat };
     else if (result.puan <= -25) return { ...result, setup:'SHORT_ADAY', shortSinyal:'NORMAL', price:result.fiyat };
     return { ...result, setup:'BEKLE', price:result.fiyat };
   }
 
-  analyze1H(candles) {
+  analyze1HTiming(candles1H, setup4H, settings) {
+    if (!candles1H || candles1H.length < 50) return { signal:'BEKLE' };
+    const tf = this.analyzeTF(candles1H);
+    if (['YUKARI','HAFIF_YUKARI','GUCLU_YUKARI'].includes(tf.trend)) {
+      return { signal:'ALIM', trend:tf.trend, crossover:tf.crossover };
+    }
+    if (['ASAGI','HAFIF_ASAGI','GUCLU_ASAGI'].includes(tf.trend)) {
+      return { signal:'SATIS', trend:tf.trend };
+    }
+    return { signal:'BEKLE', trend:tf.trend };
+  }
+
+  analyzeTF(candles) {
     if (!candles || candles.length < 50) return { trend:'BELIRSIZ', guclu:false };
     const closes = candles.map(c => parseFloat(c[4]));
+    const highs  = candles.map(c => parseFloat(c[2]));
+    const lows   = candles.map(c => parseFloat(c[3]));
     const ema21  = this.hesaplaEMA(closes, 21);
     const ema50  = this.hesaplaEMA(closes, 50);
     const fiyat  = closes[closes.length-1];
     const rsi    = this.hesaplaRSI(closes, 14);
+    const macd   = this.hesaplaMACD(closes);
     let trend = 'BELIRSIZ';
     if      (fiyat > ema21 && ema21 > ema50) trend = 'YUKARI';
     else if (fiyat > ema21)                  trend = 'HAFIF_YUKARI';
     else if (fiyat < ema21 && ema21 < ema50) trend = 'ASAGI';
     else if (fiyat < ema21)                  trend = 'HAFIF_ASAGI';
     else                                     trend = 'YATAY';
-    const macd = this.hesaplaMACD(closes);
-    return {
-      trend,
-      guclu: Math.abs(fiyat-ema21)/fiyat > 0.02,
-      rsi,
-      crossover:  macd.bullishCross,
-      crossunder: macd.bearishCross
-    };
+    return { trend, guclu: Math.abs(fiyat-ema21)/fiyat > 0.02, rsi,
+      crossover: macd.bullishCross, crossunder: macd.bearishCross };
   }
 
-  analyze4H(candles)  { return this.analyze1H(candles); }
-  analyze1D(candles)  { return this.analyze1H(candles); }
-  analyzeTF(candles)  { return this.analyze1H(candles); }
+  analyze1H(candles)  { return this.analyzeTF(candles); }
+  analyze4H(candles)  { return this.analyzeTF(candles); }
+  analyze1D(candles)  { return this.analyzeTF(candles); }
 
   hacimAnaliz(closes, volumes) {
     const vol20  = volumes.slice(-20,-1).reduce((a,b)=>a+b,0) / 19;
     const sonVol = volumes[volumes.length-1];
     const oran   = sonVol / vol20;
-    return {
-      spike:              oran > 2.0,
-      yuksekHacimKirmizi: oran > 1.5 && closes[closes.length-1] < closes[closes.length-2],
-      oran
-    };
+    return { spike: oran > 2.0, yuksekHacimKirmizi: oran > 1.5 && closes[closes.length-1] < closes[closes.length-2], oran };
   }
 
   volatiliteKontrol(highs, lows, closes) {
-    const atr    = this.hesaplaATR(highs, lows, closes, 14);
-    const fiyat  = closes[closes.length-1];
-    const atrOran = atr / fiyat * 100;
+    const atr = this.hesaplaATR(highs, lows, closes, 14);
+    const atrOran = atr / closes[closes.length-1] * 100;
     return { normalMum: atrOran < 5, atrOran };
   }
 
-  calculateMACD(closes)          { return this.hesaplaMACD(closes); }
-  calculateRSI(closes, period=14){ return this.hesaplaRSI(closes, period); }
+  calculateMACD(closes)           { return this.hesaplaMACD(closes); }
+  calculateRSI(closes, period=14) { return this.hesaplaRSI(closes, period); }
 
-  // ── İNDİKATÖR FONKSİYONLARI ──────────────────────────────
+  // ── İNDİKATÖRLER ─────────────────────────────────────────
 
   hesaplaRSI(data, period=14) {
     if (data.length < period+1) return 50;
-    let gains=0, losses=0;
+    let g=0, l=0;
     for (let i=data.length-period; i<data.length; i++) {
       const d=data[i]-data[i-1];
-      if (d>0) gains+=d; else losses-=d;
+      if (d>0) g+=d; else l-=d;
     }
-    const ag=gains/period, al=losses/period;
+    const ag=g/period, al=l/period;
     if (al===0) return 100;
     return parseFloat((100-100/(1+ag/al)).toFixed(2));
   }
@@ -388,24 +375,21 @@ class ProfessionalAnalysis {
     return parseFloat(ema.toFixed(8));
   }
 
-  hesaplaStochRSI(closes, rsiP=14, stochP=14, smoothK=3, smoothD=3) {
-    const rsiSeries=[];
-    for (let i=rsiP; i<=closes.length; i++)
-      rsiSeries.push(this.hesaplaRSI(closes.slice(0,i), rsiP));
-    if (rsiSeries.length<stochP) return {k:50,d:50};
-    const stoch=[];
-    for (let i=stochP-1; i<rsiSeries.length; i++) {
-      const sl=rsiSeries.slice(i-stochP+1,i+1);
-      const mx=Math.max(...sl), mn=Math.min(...sl);
-      stoch.push(mx===mn?50:(rsiSeries[i]-mn)/(mx-mn)*100);
+  hesaplaStochRSI(closes, rsiP=14, stochP=14, sK=3, sD=3) {
+    const rs=[];
+    for (let i=rsiP; i<=closes.length; i++) rs.push(this.hesaplaRSI(closes.slice(0,i),rsiP));
+    if (rs.length<stochP) return {k:50,d:50};
+    const st=[];
+    for (let i=stochP-1; i<rs.length; i++) {
+      const sl=rs.slice(i-stochP+1,i+1);
+      const mx=Math.max(...sl),mn=Math.min(...sl);
+      st.push(mx===mn?50:(rs[i]-mn)/(mx-mn)*100);
     }
     const kS=[];
-    for (let i=smoothK-1; i<stoch.length; i++)
-      kS.push(stoch.slice(i-smoothK+1,i+1).reduce((a,b)=>a+b,0)/smoothK);
+    for (let i=sK-1; i<st.length; i++) kS.push(st.slice(i-sK+1,i+1).reduce((a,b)=>a+b,0)/sK);
     const dS=[];
-    for (let i=smoothD-1; i<kS.length; i++)
-      dS.push(kS.slice(i-smoothD+1,i+1).reduce((a,b)=>a+b,0)/smoothD);
-    return {k:kS[kS.length-1]||50, d:dS[dS.length-1]||50};
+    for (let i=sD-1; i<kS.length; i++) dS.push(kS.slice(i-sD+1,i+1).reduce((a,b)=>a+b,0)/sD);
+    return {k:kS[kS.length-1]||50,d:dS[dS.length-1]||50};
   }
 
   hesaplaWilliamsR(highs, lows, closes, period=14) {
@@ -446,20 +430,17 @@ class ProfessionalAnalysis {
     const series=[];
     for (let i=slow; i<closes.length; i++)
       series.push(this.hesaplaEMA(closes.slice(0,i+1),fast)-this.hesaplaEMA(closes.slice(0,i+1),slow));
-    const macdLine=series[series.length-1]||0;
-    const signalLine=this.hesaplaEMA(series,signal);
-    const histogram=macdLine-signalLine;
-    const prevMacd=series[series.length-2]||0;
-    const prevSignal=this.hesaplaEMA(series.slice(0,-1),signal);
-    const c5=closes.slice(-5), m5=series.slice(-5);
+    const ml=series[series.length-1]||0;
+    const sl=this.hesaplaEMA(series,signal);
+    const pm=series[series.length-2]||0;
+    const ps=this.hesaplaEMA(series.slice(0,-1),signal);
+    const c5=closes.slice(-5),m5=series.slice(-5);
     return {
-      macdLine, signalLine, histogram, prevMacd,
-      bullishCross: prevMacd<=prevSignal && macdLine>signalLine,
-      bearishCross: prevMacd>=prevSignal && macdLine<signalLine,
-      crossover:    prevMacd<=prevSignal && macdLine>signalLine,
-      crossunder:   prevMacd>=prevSignal && macdLine<signalLine,
-      bullDiv: c5.length>=5 && c5[4]<c5[0] && m5.length>=5 && m5[4]>m5[0],
-      bearDiv: c5.length>=5 && c5[4]>c5[0] && m5.length>=5 && m5[4]<m5[0]
+      macdLine:ml, signalLine:sl, histogram:ml-sl, prevMacd:pm,
+      bullishCross:pm<=ps&&ml>sl, bearishCross:pm>=ps&&ml<sl,
+      crossover:pm<=ps&&ml>sl, crossunder:pm>=ps&&ml<sl,
+      bullDiv:c5.length>=5&&c5[4]<c5[0]&&m5.length>=5&&m5[4]>m5[0],
+      bearDiv:c5.length>=5&&c5[4]>c5[0]&&m5.length>=5&&m5[4]<m5[0]
     };
   }
 
@@ -467,7 +448,7 @@ class ProfessionalAnalysis {
     const sl=closes.slice(-period);
     const mean=sl.reduce((a,b)=>a+b,0)/period;
     const std=Math.sqrt(sl.reduce((a,b)=>a+Math.pow(b-mean,2),0)/period);
-    const upper=mean+mult*std, lower=mean-mult*std;
+    const upper=mean+mult*std,lower=mean-mult*std;
     const width=(upper-lower)/mean*100;
     const pct=(closes[closes.length-1]-lower)/(upper-lower)*100;
     const psl=closes.slice(-period-5,-5);
@@ -492,7 +473,7 @@ class ProfessionalAnalysis {
     if (o5>o20&&o20>o50) trend='GUCLU_YUKARI';
     else if (o5>o20)     trend='YUKARI';
     else if (o5<o20&&o20<o50) trend='ASAGI';
-    const c5=closes.slice(-5), s5=s.slice(-5);
+    const c5=closes.slice(-5),s5=s.slice(-5);
     let divergence='YOK';
     if (c5[4]<c5[0]&&s5[4]>s5[0]) divergence='BULL';
     if (c5[4]>c5[0]&&s5[4]<s5[0]) divergence='BEAR';
@@ -500,17 +481,16 @@ class ProfessionalAnalysis {
   }
 
   hesaplaCMF(highs, lows, closes, volumes, period=20) {
-    let mfv=0, vol=0;
+    let mfv=0,vol=0;
     for (let i=closes.length-period; i<closes.length; i++) {
       const h=highs[i],l=lows[i],c=closes[i],v=volumes[i];
-      mfv+=(h===l?0:((c-l)-(h-c))/(h-l))*v;
-      vol+=v;
+      mfv+=(h===l?0:((c-l)-(h-c))/(h-l))*v; vol+=v;
     }
     return vol===0?0:mfv/vol;
   }
 
   hesaplaVWAP(highs, lows, closes, volumes) {
-    let tpv=0, vol=0;
+    let tpv=0,vol=0;
     const p=Math.min(20,closes.length);
     for (let i=closes.length-p; i<closes.length; i++) {
       const tp=(highs[i]+lows[i]+closes[i])/3;
@@ -527,7 +507,7 @@ class ProfessionalAnalysis {
   }
 
   hesaplaSR(highs, lows, lookback=50) {
-    return {direnc:Math.max(...highs.slice(-lookback)), destek:Math.min(...lows.slice(-lookback))};
+    return {direnc:Math.max(...highs.slice(-lookback)),destek:Math.min(...lows.slice(-lookback))};
   }
 
   hesaplaFibonacci(highs, lows, lookback=50) {
@@ -540,13 +520,13 @@ class ProfessionalAnalysis {
   rsiBullishDiv(closes) {
     const n=closes.length;
     if (n<10) return false;
-    return closes[n-1]<closes[n-6] && this.hesaplaRSI(closes,14)>this.hesaplaRSI(closes.slice(0,-5),14);
+    return closes[n-1]<closes[n-6]&&this.hesaplaRSI(closes,14)>this.hesaplaRSI(closes.slice(0,-5),14);
   }
 
   rsiBearishDiv(closes) {
     const n=closes.length;
     if (n<10) return false;
-    return closes[n-1]>closes[n-6] && this.hesaplaRSI(closes,14)<this.hesaplaRSI(closes.slice(0,-5),14);
+    return closes[n-1]>closes[n-6]&&this.hesaplaRSI(closes,14)<this.hesaplaRSI(closes.slice(0,-5),14);
   }
 
   analizMumYapilari(candles) {
@@ -582,5 +562,4 @@ class ProfessionalAnalysis {
   }
 }
 
-const parts = new ProfessionalAnalysis();
-module.exports = parts;
+module.exports = new Analysis();
