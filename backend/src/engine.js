@@ -72,8 +72,7 @@ class TradingEngine {
         const hacim   = parseFloat(t.quoteVolume)        || 0;
         const degisim = parseFloat(t.priceChangePercent) || 0;
         const fiyat   = parseFloat(t.lastPrice)          || 0;
-        return fiyat > 0 && hacim >= minHacim && degisim > -25 && degisim < 30;
-      })
+        return fiyat > 0 && hacim >= minHacim && degisim > -15 && degisim < 15;
       .sort((a,b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, maxCoin);
 
