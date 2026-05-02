@@ -105,7 +105,7 @@ const defaults = {
   candle_interval:       '4h',
   candle_limit:          '200',
   min_score:             '40',
-  min_volume:            '5000000',
+  min_volume:            '10000000',
   max_coins:             '50',
   max_open_positions:    '5',
   trade_amount_usdt:     '100',
