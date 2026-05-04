@@ -59,6 +59,89 @@ h2 {
   color: #ccc;
 }
 
+/* ── KONTROL PANELİ ─────────────────────────────────── */
+.control-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.control-box {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.control-box.real-box {
+  border-left: 4px solid #ff4444;
+}
+
+.control-box.sim-box {
+  border-left: 4px solid #6c5ce7;
+}
+
+.control-box.scan-box {
+  border-left: 4px solid #f59e0b;
+}
+
+.control-box h3 {
+  font-size: 14px;
+  margin-bottom: 5px;
+  color: #fff;
+}
+
+.control-box p {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 5px;
+}
+
+.control-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.btn-success {
+  background: #065f46;
+  border-color: #059669;
+  color: #6ee7b7;
+  font-size: 15px;
+  padding: 10px 24px;
+}
+
+.btn-success:hover {
+  background: #047857;
+}
+
+.btn-sim {
+  background: #4c1d95;
+  border-color: #7c3aed;
+  color: #c4b5fd;
+  font-size: 15px;
+  padding: 10px 24px;
+}
+
+.btn-sim:hover {
+  background: #5b21b6;
+}
+
+.status-dot {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-dot.online {
+  color: #00ff88;
+}
+
+.status-dot.offline {
+  color: #6b7280;
+}
+
 /* ── KART GRID ───────────────────────────────────────── */
 .card-grid {
   display: grid;
@@ -219,6 +302,10 @@ tr.row-wait { border-left: 3px solid #f59e0b; }
 }
 
 /* ── AYARLAR ─────────────────────────────────────────── */
+.settings-page {
+  max-width: 600px;
+}
+
 .settings-panel {
   background: #111827;
   border: 1px solid #1f2937;
@@ -233,6 +320,8 @@ tr.row-wait { border-left: 3px solid #f59e0b; }
   align-items: center;
   padding: 10px 0;
   border-bottom: 1px solid #1f2937;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .setting-row label {
@@ -275,14 +364,18 @@ tr.row-wait { border-left: 3px solid #f59e0b; }
     grid-template-columns: repeat(2, 1fr);
   }
   
+  .control-panel {
+    grid-template-columns: 1fr;
+  }
+
   .card-value {
     font-size: 18px;
   }
-  
+
   table {
     font-size: 11px;
   }
-  
+
   th, td {
     padding: 8px 6px;
   }
