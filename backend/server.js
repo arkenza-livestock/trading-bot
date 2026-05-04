@@ -8,342 +8,195 @@ const simulation = require('./src/simulation');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Frontend build klasörü
 const frontendPath = path.join(__dirname, '..', 'frontend', 'build');
 app.use(express.static(frontendPath));
 
-// ═══════════════════════════════════════════════
-// BOT ENGINE (Lazy load)
-// ═══════════════════════════════════════════════
 let engine = null;
 function getEngine() {
-  if (!engine) {
-    engine = require('./src/engine');
-  }
+  if (!engine) engine = require('./src/engine');
   return engine;
 }
 
-// ═══════════════════════════════════════════════
-// API ENDPOINTS
-// ═══════════════════════════════════════════════
-
-// ── Bot Durumu ─────────────────────────────────
+// ── Bot Durumu
 app.get('/api/status', (req, res) => {
   try {
     const eng = getEngine();
     const stats = simulation.getStats();
-    res.json({
-      botRunning: eng.running,
-      simRunning: eng.running,
-      scanCount: eng.scanCount,
-      btcTrend: eng.btcTrend,
-      stats
-    });
-  } catch(e) {
-    res.json({ botRunning: false, simRunning: false, scanCount: 0, btcTrend: { trend: 'BELIRSIZ' }, stats: {} });
-  }
+    res.json({ botRunning: eng.running, simRunning: eng.running, scanCount: eng.scanCount, btcTrend: eng.btcTrend, stats });
+  } catch(e) { res.json({ botRunning: false, simRunning: false, scanCount: 0, btcTrend: { trend:'BELIRSIZ' }, stats:{} }); }
 });
 
-// ── Sinyaller ──────────────────────────────────
+// ── Sinyaller
 app.get('/api/signals', (req, res) => {
-  try {
-    const signals = db.prepare('SELECT * FROM signals ORDER BY created_at DESC LIMIT 100').all();
-    res.json(signals);
-  } catch(e) {
-    res.json([]);
-  }
+  try { res.json(db.prepare('SELECT * FROM signals ORDER BY created_at DESC LIMIT 100').all()); } catch(e) { res.json([]); }
 });
 
-// ── Simülasyon İstatistik ──────────────────────
+// ── Simülasyon İstatistik
 app.get('/api/simulation/stats', (req, res) => {
-  try {
-    const stats = simulation.getStats();
-    res.json(stats);
-  } catch(e) {
-    res.json({ balance: 0, totalTrades: 0, winRate: 0 });
-  }
+  try { res.json(simulation.getStats()); } catch(e) { res.json({ balance:0, totalTrades:0, winRate:0 }); }
 });
 
-// ── Simülasyon Tüm İşlemler ────────────────────
+// ── Simülasyon İşlemler
 app.get('/api/simulation/trades', (req, res) => {
-  try {
-    const trades = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 200").all();
-    res.json(trades);
-  } catch(e) {
-    res.json([]);
-  }
+  try { res.json(db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 200").all()); } catch(e) { res.json([]); }
 });
 
-// ── Simülasyon Sıfırla ─────────────────────────
+// ── Simülasyon Sıfırla
 app.post('/api/simulation/reset', (req, res) => {
-  try {
-    const { startBalance } = req.body;
-    simulation.reset(startBalance || 1000);
-    res.json({ message: '✅ Simülasyon sıfırlandı', balance: startBalance || 1000 });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  try { const b = req.body.startBalance; simulation.reset(b||1000); res.json({ message:'✅ Sifirlandi' }); } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Simülasyon Başlat ──────────────────────────
+// ── Simülasyon Başlat
 app.post('/api/simulation/start', (req, res) => {
   try {
     const eng = getEngine();
-    if (!eng.running) {
-      eng.start().then(() => {
-        res.json({ message: '✅ Simülasyon başlatıldı' });
-      }).catch(e => {
-        res.status(500).json({ error: e.message });
-      });
-    } else {
-      res.json({ message: 'Simülasyon zaten çalışıyor' });
-    }
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+    if (!eng.running) eng.start().then(()=>res.json({ message:'✅ Baslatildi' })).catch(e=>res.status(500).json({ error:e.message }));
+    else res.json({ message:'Zaten calisiyor' });
+  } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Simülasyon Durdur ──────────────────────────
+// ── Simülasyon Durdur
 app.post('/api/simulation/stop', (req, res) => {
   try {
     const eng = getEngine();
-    if (eng.running) {
-      eng.stop();
-      res.json({ message: '⏹️ Simülasyon durduruldu' });
-    } else {
-      res.json({ message: 'Simülasyon zaten durmuş' });
-    }
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+    if (eng.running) { eng.stop(); res.json({ message:'⏹️ Durduruldu' }); }
+    else res.json({ message:'Zaten durmus' });
+  } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Makine Raporu ──────────────────────────────
+// ── Makine Raporu
 app.get('/api/machine/report', (req, res) => {
   try {
     const eng = getEngine();
     const stats = simulation.getStats();
-    
-    if (eng.getMachineReport) {
-      res.json(eng.getMachineReport());
-    } else {
-      res.json({
-        bot: {
-          running: eng.running,
-          scanCount: eng.scanCount,
-          btcTrend: eng.btcTrend
-        },
-        machine: {
-          adaptiveThreshold: stats.adaptiveThreshold || 70,
-          consecutiveLosses: stats.consecutiveLosses || 0
-        },
-        performance: {
-          signalsGenerated: eng.performance?.signalsGenerated || 0,
-          signalsAccepted: eng.performance?.signalsAccepted || 0,
-          signalsRejected: eng.performance?.signalsRejected || 0,
-          acceptanceRate: eng.performance?.signalsGenerated > 0 
-            ? (eng.performance.signalsAccepted / eng.performance.signalsGenerated * 100).toFixed(1) 
-            : 0
-        },
-        simulation: stats
-      });
-    }
-  } catch(e) {
-    res.json({ bot: {}, machine: {}, performance: {}, simulation: {} });
-  }
+    if (eng.getMachineReport) return res.json(eng.getMachineReport());
+    res.json({ bot:{ running:eng.running, scanCount:eng.scanCount, btcTrend:eng.btcTrend }, machine:{ adaptiveThreshold:stats.adaptiveThreshold||70, consecutiveLosses:stats.consecutiveLosses||0 }, performance:{ signalsGenerated:eng.performance?.signalsGenerated||0, signalsAccepted:eng.performance?.signalsAccepted||0, signalsRejected:eng.performance?.signalsRejected||0, acceptanceRate:eng.performance?.signalsGenerated>0?(eng.performance.signalsAccepted/eng.performance.signalsGenerated*100).toFixed(1):0 }, simulation:stats });
+  } catch(e) { res.json({ bot:{}, machine:{}, performance:{}, simulation:{} }); }
 });
 
-// ── Backtest ───────────────────────────────────
+// ── Backtest
 app.post('/api/backtest', async (req, res) => {
   try {
     const backtest = require('./src/backtest');
-    const params = {
-      symbols: req.body.symbols || ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT'],
-      interval: req.body.interval || '4h',
-      days: parseInt(req.body.days || 30),
-      stopLoss: parseFloat(req.body.stopLoss || 2.0),
-      trailingStop: parseFloat(req.body.trailingStop || 0.5),
-      minProfit: parseFloat(req.body.minProfit || 1.5),
-      commission: parseFloat(req.body.commission || 0.1),
-      slippage: parseFloat(req.body.slippage || 0.05),
-      minScore: parseInt(req.body.minScore || 50),
-      tradeAmount: parseFloat(req.body.tradeAmount || 100),
-      maxPositions: parseInt(req.body.maxPositions || 3),
-      epochs: parseInt(req.body.epochs || 3),
-      trainSplit: parseFloat(req.body.trainSplit || 0.70),
-      machineConfidenceMin: parseFloat(req.body.machineConfidenceMin || 0.70),
-      enableLearning: req.body.enableLearning !== false
+    const p = {
+      symbols: req.body.symbols || ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','BNBUSDT'],
+      interval: req.body.interval||'4h', days: parseInt(req.body.days||30),
+      stopLoss: parseFloat(req.body.stopLoss||2), trailingStop: parseFloat(req.body.trailingStop||0.5),
+      minProfit: parseFloat(req.body.minProfit||1.5), commission: parseFloat(req.body.commission||0.1),
+      slippage: parseFloat(req.body.slippage||0.05), minScore: parseInt(req.body.minScore||50),
+      tradeAmount: parseFloat(req.body.tradeAmount||100), maxPositions: parseInt(req.body.maxPositions||3),
+      epochs: parseInt(req.body.epochs||3), machineConfidenceMin: parseFloat(req.body.machineConfidenceMin||0.70)
     };
-
-    console.log('[BACKTEST] ' + params.symbols.length + ' coin, ' + params.days + ' gun, ' + params.epochs + ' epoch');
-    const results = await backtest.run(params);
-    res.json(results);
-  } catch(e) {
-    console.error('[BACKTEST] Hata:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+    console.log('[BACKTEST] '+p.symbols.length+' coin, '+p.days+' gun');
+    res.json(await backtest.run(p));
+  } catch(e) { console.error('[BACKTEST]',e.message); res.status(500).json({ error:e.message }); }
 });
 
-// ── Ayarlar ────────────────────────────────────
+// ── Ayarlar
 app.get('/api/settings', (req, res) => {
-  try {
-    const rows = db.prepare('SELECT key, value FROM settings').all();
-    const settings = {};
-    rows.forEach(r => { settings[r.key] = r.value; });
-    res.json(settings);
-  } catch(e) {
-    res.json({});
-  }
+  try { const s={}; db.prepare('SELECT key,value FROM settings').all().forEach(r=>s[r.key]=r.value); res.json(s); } catch(e) { res.json({}); }
 });
-
 app.post('/api/settings', (req, res) => {
   try {
-    const settings = req.body;
-    const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    for (const [key, value] of Object.entries(settings)) {
-      stmt.run(key, String(value));
-    }
-    res.json({ message: '✅ Ayarlar kaydedildi' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+    const s=db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)');
+    for (const [k,v] of Object.entries(req.body)) s.run(k,String(v));
+    res.json({ message:'✅ Kaydedildi' });
+  } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Pozisyonlar (Gerçek + Simülasyon) ──────────
+// ── Pozisyonlar (Gerçek + Simülasyon)
 app.get('/api/positions', (req, res) => {
   try {
     const eng = getEngine();
-    const simPositions = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 50").all();
-    
-    // Simülasyon pozisyonlarına işaret ekle
-    const simData = simPositions.map(p => ({ ...p, is_real: 0 }));
-    
-    // Gerçek pozisyonları engine'den al
+    const simData = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 50").all().map(p=>({...p,is_real:0}));
     const realData = [];
     if (eng && eng.realPositions) {
-      Object.keys(eng.realPositions).forEach(symbol => {
-        const pos = eng.realPositions[symbol];
-        const currentPrice = eng.prices[pos.symbol] || pos.entryPrice;
-        const pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-        const pnl = (currentPrice - pos.entryPrice) * pos.quantity;
-        realData.push({
-          id: 0,
-          symbol: pos.symbol,
-          side: 'LONG',
-          quantity: pos.quantity,
-          entry_price: pos.entryPrice,
-          current_price: currentPrice,
-          exit_price: null,
-          stop_loss: pos.stopLoss,
-          take_profit: pos.takeProfit,
-          highest_price: pos.highestPrice || pos.entryPrice,
-          lowest_price: pos.entryPrice,
-          pnl: pnl,
-          pnl_percent: pnlPct,
-          status: 'OPEN',
-          signal_guc: 'GERCEK',
-          trend4H: '-',
-          trend1D: '-',
-          score: 0,
-          machine_confidence: pos.machineConfidence || 0,
-          close_reason: null,
-          opened_at: pos.entryTime,
-          closed_at: null,
-          is_real: 1
-        });
+      Object.keys(eng.realPositions).forEach(sym => {
+        const pos = eng.realPositions[sym];
+        const cp = eng.prices[pos.symbol] || pos.entryPrice;
+        const pnlPct = ((cp-pos.entryPrice)/pos.entryPrice)*100;
+        realData.push({ id:0, symbol:pos.symbol, side:'LONG', quantity:pos.quantity, entry_price:pos.entryPrice, current_price:cp, exit_price:null, stop_loss:pos.stopLoss, take_profit:pos.takeProfit, highest_price:pos.highestPrice||pos.entryPrice, lowest_price:pos.entryPrice, pnl:(cp-pos.entryPrice)*pos.quantity, pnl_percent:pnlPct, status:'OPEN', signal_guc:'GERCEK', trend4H:'-', trend1D:'-', score:0, machine_confidence:pos.machineConfidence||0, close_reason:null, opened_at:pos.entryTime, closed_at:null, is_real:1 });
       });
     }
-    
-    res.json([...realData, ...simData]);
-  } catch(e) {
-    res.json([]);
-  }
+    res.json([...realData,...simData]);
+  } catch(e) { res.json([]); }
 });
 
-// ── Tarama Logları ─────────────────────────────
+// ── MANUEL SATIŞ (Gerçek veya Simülasyon)
+app.post('/api/positions/close', async (req, res) => {
+  try {
+    const { symbol, is_real } = req.body;
+    if (!symbol) return res.status(400).json({ error:'Sembol gerekli' });
+
+    if (is_real === 1 || is_real === '1') {
+      const eng = getEngine();
+      if (!eng || !eng.realPositions || !eng.realPositions[symbol]) return res.status(404).json({ error:'Pozisyon bulunamadi' });
+      const pos = eng.realPositions[symbol];
+      const cp = eng.prices[symbol] || pos.entryPrice;
+
+      const sellResult = await require('./src/binance').realSell(symbol, pos.quantity);
+      if (sellResult) {
+        // Telegram bildirimi
+        try {
+          const settings = {}; db.prepare('SELECT key,value FROM settings').all().forEach(r=>settings[r.key]=r.value);
+          if (settings.telegram_token && settings.telegram_chat_id) {
+            const TelegramService = require('./src/telegram');
+            const tg = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
+            const pnl = (cp-pos.entryPrice)*pos.quantity;
+            const pnlPct = ((cp-pos.entryPrice)/pos.entryPrice)*100;
+            const emoji = pnl>=0?'✅ KAR':'❌ ZARAR';
+            const isaret = pnl>=0?'+':'';
+            tg.sendMessage(`${emoji} — ${symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${pos.entryPrice.toFixed(6)}\n💰 Cikis: ${cp.toFixed(6)}\n${pnl>=0?'📈 Kar':'📉 Zarar'}: ${isaret}%${pnlPct.toFixed(2)} (${isaret}${pnl.toFixed(4)} USDT)\n🛑 Neden: MANUEL_KAPATMA\n🕐 ${new Date().toLocaleString('tr-TR',{timeZone:'Europe/Istanbul'})}`).catch(()=>{});
+          }
+        } catch(e) {}
+        delete eng.realPositions[symbol];
+        res.json({ message:'✅ '+symbol+' manuel satildi', price:cp });
+      } else {
+        res.status(500).json({ error:'Satis basarisiz' });
+      }
+    } else {
+      const pos = db.prepare("SELECT * FROM sim_positions WHERE symbol=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1").get(symbol);
+      if (!pos) return res.status(404).json({ error:'Simulasyon pozisyonu bulunamadi' });
+      const cp = pos.current_price || pos.entry_price;
+      const closeResult = simulation.closePosition(pos, cp, 'MANUEL_KAPATMA');
+      if (closeResult) res.json({ message:'✅ '+symbol+' simülasyon pozisyonu kapatildi', price:cp });
+      else res.status(500).json({ error:'Kapatma basarisiz' });
+    }
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ── Tarama Logları
 app.get('/api/scan-logs', (req, res) => {
-  try {
-    const logs = db.prepare('SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 20').all();
-    res.json(logs);
-  } catch(e) {
-    res.json([]);
-  }
+  try { res.json(db.prepare('SELECT * FROM scan_logs ORDER BY created_at DESC LIMIT 20').all()); } catch(e) { res.json([]); }
 });
 
-// ── GERÇEK İŞLEM BAŞLAT ───────────────────────
+// ── Bot Başlat
 app.post('/api/bot/start', async (req, res) => {
-  try {
-    const eng = getEngine();
-    if (!eng.running) {
-      await eng.start();
-      res.json({ message: '🚀 GERÇEK işlem botu başlatıldı!', running: true });
-    } else {
-      res.json({ message: 'Bot zaten çalışıyor', running: true });
-    }
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  try { const eng=getEngine(); if(!eng.running){ await eng.start(); res.json({ message:'🚀 Baslatildi!' }); } else res.json({ message:'Zaten calisiyor' }); } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── GERÇEK İŞLEM DURDUR ───────────────────────
+// ── Bot Durdur
 app.post('/api/bot/stop', (req, res) => {
-  try {
-    const eng = getEngine();
-    if (eng.running) {
-      eng.stop();
-      res.json({ message: '⏹️ GERÇEK işlem botu durduruldu!', running: false });
-    } else {
-      res.json({ message: 'Bot zaten durmuş', running: false });
-    }
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  try { const eng=getEngine(); if(eng.running){ eng.stop(); res.json({ message:'⏹️ Durduruldu' }); } else res.json({ message:'Zaten durmus' }); } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── MANUEL TARAMA ─────────────────────────────
+// ── Manuel Tarama
 app.post('/api/bot/scan', async (req, res) => {
-  try {
-    const eng = getEngine();
-    await eng.updateBTCTrend();
-    await eng.scan();
-    res.json({ message: '✅ Tarama tamamlandı' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  try { const eng=getEngine(); await eng.updateBTCTrend(); await eng.scan(); res.json({ message:'✅ Tarama tamamlandi' }); } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-// ── Frontend (React build) ─────────────────────
+// ── Frontend
 app.get('*', (req, res) => {
-  const indexPath = path.join(frontendPath, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.json({ 
-      message: '🚀 Trading Bot API v21', 
-      status: 'running',
-      endpoints: [
-        '/api/status', '/api/signals', '/api/simulation/stats', 
-        '/api/simulation/trades', '/api/simulation/start', '/api/simulation/stop',
-        '/api/machine/report', '/api/backtest', '/api/settings', '/api/positions',
-        '/api/bot/start', '/api/bot/stop', '/api/bot/scan'
-      ]
-    });
-  }
+  const ip = path.join(frontendPath,'index.html');
+  if (fs.existsSync(ip)) res.sendFile(ip);
+  else res.json({ message:'🚀 Trading Bot API v21', status:'running' });
 });
 
-// ═══════════════════════════════════════════════
-// BAŞLAT
-// ═══════════════════════════════════════════════
 app.listen(PORT, () => {
   console.log(`\n🚀 Server: http://localhost:${PORT}`);
-  console.log('📊 Trading Bot v21 — Makine Zekası Aktif\n');
-  
-  const eng = getEngine();
-  eng.start().catch(e => {
-    console.error('Bot başlatma hatası:', e.message);
-  });
+  console.log('📊 Trading Bot v21 — Makine Zekasi Aktif\n');
+  getEngine().start().catch(e => console.error('Bot baslatma hatasi:', e.message));
 });
