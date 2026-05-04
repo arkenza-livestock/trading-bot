@@ -1,177 +1,149 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
 
-const trSaat = (tarih) => new Date(tarih + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
-
-const TrendBadge = ({ trend }) => {
-  const config = {
-    'YUKARI':       { color: '#68d391', bg: '#0d2818', emoji: '🟢', label: 'YUKARI' },
-    'HAFIF_YUKARI': { color: '#f6ad55', bg: '#2d1f0a', emoji: '📈', label: 'HAFIF YUKARI' },
-    'YATAY':        { color: '#a0aec0', bg: '#1a1f2e', emoji: '➡️', label: 'YATAY' },
-    'HAFIF_ASAGI':  { color: '#fc8181', bg: '#2d1111', emoji: '📉', label: 'HAFIF AŞAĞI' },
-    'ASAGI':        { color: '#fc8181', bg: '#2d1111', emoji: '🔴', label: 'AŞAĞI' },
-    'BELIRSIZ':     { color: '#718096', bg: '#1a1f2e', emoji: '❓', label: 'BELİRSİZ' },
-  };
-  const c = config[trend] || config['BELIRSIZ'];
-  return (
-    <span style={{ background: c.bg, color: c.color, padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
-      {c.emoji} {c.label}
-    </span>
-  );
-};
-
-export default function Signals({ api }) {
+function Signals() {
   const [signals, setSignals] = useState([]);
-  const [filter,  setFilter]  = useState('ALL');
-  const [selected,setSelected]= useState(null);
+  const [filter, setFilter] = useState('ALL');
+  const [loading, setLoading] = useState(true);
+
+  const fetchSignals = useCallback(async () => {
+    try {
+      const res = await fetch('/api/signals');
+      const data = await res.json();
+      setSignals(data || []);
+    } catch(e) {
+      console.error('Sinyaller alınamadı:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await axios.get(`${api}/api/signals?limit=100`);
-        setSignals(res.data);
-      } catch (err) { console.error(err); }
-    };
-    load();
-    const interval = setInterval(load, 15000);
+    fetchSignals();
+    const interval = setInterval(fetchSignals, 60000);
     return () => clearInterval(interval);
-  }, [api]);
+  }, [fetchSignals]);
 
-  const filtered = filter === 'ALL' ? signals : signals.filter(s => s.signal_type === filter);
+  const filteredSignals = signals.filter(s => {
+    if (filter === 'ALL') return true;
+    if (filter === 'AI_ACCEPTED') return s.signal_type === 'ALIM' && (s.ai_comment || '').includes('✅');
+    if (filter === 'AI_REJECTED') return (s.ai_comment || '').includes('❌');
+    if (filter === 'ALIM') return s.signal_type === 'ALIM';
+    if (filter === 'SATIS') return s.signal_type === 'SATIS';
+    return true;
+  });
+
+  if (loading) return <div className="loading">⏳ Sinyaller yükleniyor...</div>;
+
+  const aiAccepted = signals.filter(s => (s.ai_comment || '').includes('✅')).length;
+  const aiRejected = signals.filter(s => (s.ai_comment || '').includes('❌')).length;
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <div className="page-title">Sinyal Geçmişi</div>
-          <div className="page-sub">{signals.length} sinyal kaydedildi</div>
+    <div className="signals">
+      <h1>📡 Sinyaller</h1>
+
+      {/* AI Özet */}
+      <div className="ai-status-bar">
+        <div className="ai-item">
+          <span>🤖 Toplam Sinyal</span>
+          <span className="ai-value">{signals.length}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {['ALL', 'ALIM', 'SATIS'].map(f => (
-            <button key={f} className={`btn ${filter === f ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilter(f)}>
-              {f === 'ALL' ? 'Tümü' : f}
-            </button>
-          ))}
+        <div className="ai-item">
+          <span>✅ Makine Kabul</span>
+          <span className="ai-value" style={{color: '#00ff88'}}>{aiAccepted}</span>
+        </div>
+        <div className="ai-item">
+          <span>❌ Makine Red</span>
+          <span className="ai-value" style={{color: '#ff4444'}}>{aiRejected}</span>
+        </div>
+        <div className="ai-item">
+          <span>📋 Kabul Oranı</span>
+          <span className="ai-value">%{signals.length > 0 ? ((aiAccepted / (aiAccepted + aiRejected || 1)) * 100).toFixed(0) : 0}</span>
         </div>
       </div>
 
-      <div className="grid-2">
-        {/* Sol — Sinyal Listesi */}
-        <div className="card" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Coin</th>
-                  <th>Sinyal</th>
-                  <th>Skor</th>
-                  <th>Fiyat</th>
-                  <th>Saat</th>
+      {/* Filtreler */}
+      <div className="filter-bar">
+        <button className={`btn ${filter === 'ALL' ? 'btn-active' : ''}`} onClick={() => setFilter('ALL')}>
+          Tümü ({signals.length})
+        </button>
+        <button className={`btn ${filter === 'AI_ACCEPTED' ? 'btn-active' : ''}`} onClick={() => setFilter('AI_ACCEPTED')}>
+          ✅ AI Kabul ({aiAccepted})
+        </button>
+        <button className={`btn ${filter === 'AI_REJECTED' ? 'btn-active' : ''}`} onClick={() => setFilter('AI_REJECTED')}>
+          ❌ AI Red ({aiRejected})
+        </button>
+        <button className={`btn ${filter === 'ALIM' ? 'btn-active' : ''}`} onClick={() => setFilter('ALIM')}>
+          📈 ALIM
+        </button>
+        <button className={`btn ${filter === 'SATIS' ? 'btn-active' : ''}`} onClick={() => setFilter('SATIS')}>
+          📉 SATIS
+        </button>
+      </div>
+
+      {/* Sinyal Tablosu */}
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Sembol</th>
+              <th>Fiyat</th>
+              <th>Sinyal</th>
+              <th>Puan</th>
+              <th>RSI</th>
+              <th>Trend</th>
+              <th>Risk</th>
+              <th>Makine Yorumu</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredSignals.map((signal, i) => {
+              const isAiAccepted = (signal.ai_comment || '').includes('✅');
+              const isAiRejected = (signal.ai_comment || '').includes('❌');
+              
+              return (
+                <tr key={i} className={
+                  signal.signal_type === 'ALIM' ? 'row-buy' : 
+                  signal.signal_type === 'SATIS' ? 'row-sell' : 'row-wait'
+                }>
+                  <td><strong>{signal.symbol}</strong></td>
+                  <td>{signal.fiyat?.toFixed(6) || signal.price?.toFixed(6)}</td>
+                  <td>
+                    <span className={`badge ${
+                      signal.signal_type === 'ALIM' ? 'badge-buy' : 
+                      signal.signal_type === 'SATIS' ? 'badge-sell' : 'badge-wait'
+                    }`}>
+                      {signal.signal_type}
+                    </span>
+                  </td>
+                  <td>{signal.score || '-'}</td>
+                  <td>{signal.rsi?.toFixed(1) || '-'}</td>
+                  <td>{signal.trend || '-'}</td>
+                  <td>
+                    <span className={`badge ${
+                      signal.risk === 'DUSUK' ? 'badge-low' : 
+                      signal.risk === 'ORTA' ? 'badge-mid' : 'badge-high'
+                    }`}>
+                      {signal.risk || 'ORTA'}
+                    </span>
+                  </td>
+                  <td style={{
+                    color: isAiAccepted ? '#00ff88' : isAiRejected ? '#ff4444' : '#888',
+                    fontSize: '12px',
+                    maxWidth: '250px'
+                  }}>
+                    {signal.ai_comment || '-'}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: '#4a5568', padding: 20 }}>Henüz sinyal yok</td></tr>
-                ) : filtered.map(s => (
-                  <tr key={s.id} onClick={() => setSelected(s)}
-                    style={{ cursor: 'pointer', background: selected?.id === s.id ? '#0d1a2d' : '' }}>
-                    <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{s.symbol}</td>
-                    <td>
-                      <span style={{ color: s.signal_type === 'ALIM' ? '#68d391' : '#fc8181', fontWeight: 700 }}>
-                        {s.signal_type === 'ALIM' ? '🚀 ALIM' : '📉 SATIS'}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ color: s.score >= 60 ? '#68d391' : s.score >= 35 ? '#f6ad55' : '#fc8181', fontWeight: 700, fontSize: 15 }}>
-                        {s.score}
-                      </span>
-                    </td>
-                    <td style={{ color: '#a0aec0', fontSize: 12 }}>{parseFloat(s.price||0).toFixed(4)}</td>
-                    <td style={{ color: '#4a5568', fontSize: 11 }}>{trSaat(s.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Sağ — Sinyal Detayı */}
-        <div className="card" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
-          {selected ? (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0' }}>{selected.symbol}</div>
-                  <div style={{ fontSize: 12, color: '#718096' }}>{trSaat(selected.created_at)}</div>
-                </div>
-                <span style={{
-                  background: selected.signal_type === 'ALIM' ? '#0d2818' : '#2d1111',
-                  color: selected.signal_type === 'ALIM' ? '#68d391' : '#fc8181',
-                  padding: '6px 14px', borderRadius: 8, fontSize: 14, fontWeight: 700
-                }}>
-                  {selected.signal_type === 'ALIM' ? '🚀 ALIM' : '📉 SATIS'}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-                {[
-                  { label: '💰 Fiyat', value: parseFloat(selected.price||0).toFixed(4) + ' USDT' },
-                  { label: '📊 Skor', value: `${selected.score}/100` },
-                  { label: '⚠️ Risk', value: selected.risk || '-' },
-                  { label: '📉 RSI', value: selected.rsi ? parseFloat(selected.rsi).toFixed(2) : '-' },
-                ].map(item => (
-                  <div key={item.label} style={{ background: '#0a0e1a', padding: '10px 12px', borderRadius: 8, border: '1px solid #1e2736' }}>
-                    <div style={{ fontSize: 11, color: '#718096', marginBottom: 4 }}>{item.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{item.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Pozitif Faktörler */}
-              {selected.positive_signals?.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: '#68d391', marginBottom: 8, fontWeight: 700 }}>✅ POZİTİF FAKTÖRLER</div>
-                  {selected.positive_signals.map((p, i) => (
-                    <div key={i} style={{
-                      fontSize: 12, color: '#a0aec0', padding: '5px 8px', marginBottom: 4,
-                      background: '#0d2818', borderRadius: 6, borderLeft: '3px solid #68d391'
-                    }}>{p}</div>
-                  ))}
-                </div>
-              )}
-
-              {/* Negatif Faktörler */}
-              {selected.negative_signals?.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: '#fc8181', marginBottom: 8, fontWeight: 700 }}>⚠️ RİSK FAKTÖRLERİ</div>
-                  {selected.negative_signals.map((n, i) => (
-                    <div key={i} style={{
-                      fontSize: 12, color: '#a0aec0', padding: '5px 8px', marginBottom: 4,
-                      background: '#2d1111', borderRadius: 6, borderLeft: '3px solid #fc8181'
-                    }}>{n}</div>
-                  ))}
-                </div>
-              )}
-
-              {selected.ai_comment && (
-                <div style={{ background: '#0a0e1a', padding: 12, borderRadius: 8, border: '1px solid #1e2736' }}>
-                  <div style={{ fontSize: 11, color: '#718096', marginBottom: 6, fontWeight: 700 }}>📋 TEKNİK DETAY</div>
-                  <div style={{ fontSize: 12, color: '#a0aec0', lineHeight: 2 }}>
-                    {selected.ai_comment.split('|').map((item, i) => (
-                      <div key={i}>• {item.trim()}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', color: '#4a5568', padding: 60 }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>👈</div>
-              <div>Detay görmek için bir sinyal seçin</div>
-            </div>
-          )}
-        </div>
+              );
+            })}
+            {filteredSignals.length === 0 && (
+              <tr><td colSpan="8" style={{textAlign: 'center'}}>Sinyal bulunamadı</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
+
+export default Signals;
