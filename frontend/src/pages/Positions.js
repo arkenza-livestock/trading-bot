@@ -1,140 +1,172 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
 
-const trSaat = (tarih) => tarih ? new Date(tarih + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) : '-';
-
-export default function Positions({ api }) {
+function Positions() {
   const [positions, setPositions] = useState([]);
-  const [filter,    setFilter]    = useState('OPEN');
-  const [closing,   setClosing]   = useState(null);
+  const [filter, setFilter] = useState('OPEN');
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState({ totalPnl: 0, winRate: 0, totalTrades: 0 });
+
+  const fetchPositions = useCallback(async () => {
+    try {
+      const [posRes, statusRes] = await Promise.all([
+        fetch('/api/positions'),
+        fetch('/api/status')
+      ]);
+      const posData = await posRes.json();
+      const statusData = await statusRes.json();
+      
+      setPositions(posData || []);
+      
+      // Sadece gerçek pozisyonları göster
+      const realPositions = (posData || []).filter(p => p.status !== 'OPEN' || p.close_reason);
+      const allClosed = (posData || []).filter(p => p.status !== 'OPEN');
+      
+      // Özet (gerçek işlem olunca dolacak)
+      const totalPnl = allClosed.reduce((s, p) => s + (p.pnl || 0), 0);
+      const wins = allClosed.filter(p => p.pnl > 0).length;
+      
+      setSummary({
+        openCount: (posData || []).filter(p => p.status === 'OPEN').length,
+        closedCount: allClosed.length,
+        totalPnl: totalPnl,
+        winRate: allClosed.length > 0 ? ((wins / allClosed.length) * 100).toFixed(1) : 0,
+        totalTrades: allClosed.length
+      });
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    load();
-    const iv = setInterval(load, 10000);
-    return () => clearInterval(iv);
-  }, [api]);
+    fetchPositions();
+    const interval = setInterval(fetchPositions, 20000);
+    return () => clearInterval(interval);
+  }, [fetchPositions]);
 
-  const load = async () => {
+  if (loading) return <div className="loading">⏳ Yükleniyor...</div>;
+
+  const filteredPositions = positions.filter(p => {
+    if (filter === 'OPEN') return p.status === 'OPEN';
+    if (filter === 'CLOSED') return p.status !== 'OPEN';
+    return true;
+  });
+
+  const formatTime = (timeStr) => {
+    if (!timeStr) return '-';
     try {
-      const res = await axios.get(`${api}/api/positions`);
-      setPositions(res.data);
-    } catch(e) { console.error(e); }
+      const d = new Date(timeStr + 'Z');
+      return d.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+    } catch(e) {
+      return timeStr;
+    }
   };
-
-  const closePos = async (id) => {
-    if (!window.confirm('Bu pozisyonu kapatmak istiyor musun?')) return;
-    setClosing(id);
-    try {
-      await axios.post(`${api}/api/positions/${id}/close`);
-      await load();
-    } catch(e) { alert('Hata: ' + e.message); }
-    setClosing(null);
-  };
-
-  const filtered = filter === 'ALL'
-    ? positions
-    : positions.filter(p => filter === 'OPEN' ? p.status === 'OPEN' : p.status !== 'OPEN');
-
-  const openPos   = positions.filter(p => p.status === 'OPEN');
-  const closedPos = positions.filter(p => p.status !== 'OPEN');
-  const totalPnl  = closedPos.reduce((s, p) => s + (p.pnl || 0), 0);
-  const wins      = closedPos.filter(p => (p.pnl || 0) > 0);
-  const winRate   = closedPos.length > 0 ? (wins.length / closedPos.length * 100).toFixed(1) : 0;
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <div className="page-title">💼 Pozisyonlar</div>
-          <div className="page-sub">{openPos.length} açık · {closedPos.length} kapalı</div>
+    <div className="positions">
+      <h1>📊 Pozisyonlar</h1>
+      <p style={{color: '#64748b', marginBottom: 25, fontSize: 14}}>
+        Gerçek işlem pozisyonları
+      </p>
+
+      {/* Özet Kartları */}
+      <div className="card-grid">
+        <div className="card">
+          <div className="card-label">📌 Açık Pozisyon</div>
+          <div className="card-value gold">{summary.openCount}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">💰 Toplam PnL</div>
+          <div className={`card-value ${summary.totalPnl >= 0 ? 'green' : 'red'}`}>
+            ${summary.totalPnl.toFixed(2)}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-label">🏆 Kazanma Oranı</div>
+          <div className="card-value green">%{summary.winRate}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">🔄 Toplam İşlem</div>
+          <div className="card-value">{summary.totalTrades}</div>
         </div>
       </div>
 
-      {/* Özet */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
-        {[
-          { label: 'Açık Pozisyon',  value: openPos.length,   color: '#60a5fa' },
-          { label: 'Toplam PnL',     value: `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} USDT`, color: totalPnl >= 0 ? '#68d391' : '#fc8181' },
-          { label: 'Kazanma Oranı',  value: `%${winRate}`,    color: parseFloat(winRate) >= 50 ? '#68d391' : '#f6ad55' },
-          { label: 'Toplam İşlem',   value: closedPos.length, color: '#a0aec0' },
-        ].map(k => (
-          <div key={k.label} style={{ background:'#0a0e1a', border:'1px solid #1e2736', borderRadius:8, padding:'14px 16px', textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#718096', marginBottom:6 }}>{k.label}</div>
-            <div style={{ fontSize:20, fontWeight:700, color:k.color }}>{k.value}</div>
-          </div>
-        ))}
+      {/* Filtreler */}
+      <div className="filter-bar">
+        <button className={`filter-btn ${filter === 'OPEN' ? 'active' : ''}`} onClick={() => setFilter('OPEN')}>
+          📌 Açık ({summary.openCount})
+        </button>
+        <button className={`filter-btn ${filter === 'CLOSED' ? 'active' : ''}`} onClick={() => setFilter('CLOSED')}>
+          ✅ Kapalı ({summary.closedCount})
+        </button>
+        <button className={`filter-btn ${filter === 'ALL' ? 'active' : ''}`} onClick={() => setFilter('ALL')}>
+          📋 Tümü ({positions.length})
+        </button>
       </div>
 
-      {/* Filter */}
-      <div style={{ display:'flex', gap:8, marginBottom:16 }}>
-        {[['OPEN','Açık'],['CLOSED','Kapalı'],['ALL','Tümü']].map(([val,label]) => (
-          <button key={val} onClick={() => setFilter(val)}
-            className={`btn ${filter === val ? 'btn-primary' : 'btn-ghost'}`}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tablo */}
-      <div className="card">
-        <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom:'1px solid #1e2736' }}>
-                {['Coin','Yön','Giriş$','Güncel$','Stop','PnL%','PnL USDT','Durum','Açılış',''].map(h => (
-                  <th key={h} style={{ padding:'8px 12px', fontSize:11, color:'#718096', textAlign:'left' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={10} style={{ textAlign:'center', padding:40, color:'#4a5568' }}>
-                  {filter === 'OPEN' ? 'Açık pozisyon yok' : 'Kayıt bulunamadı'}
-                </td></tr>
-              ) : filtered.map((p, i) => (
-                <tr key={i} style={{ borderBottom:'1px solid #0d1117',
-                  background: (p.pnl||0) >= 0 ? 'rgba(13,40,24,0.2)' : 'rgba(45,17,17,0.2)' }}>
-                  <td style={{ padding:'8px 12px', fontWeight:700, color:'#60a5fa' }}>{p.symbol}</td>
-                  <td style={{ padding:'8px 12px' }}>
-                    <span style={{ padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600,
-                      background: p.side==='LONG'?'rgba(49,130,206,0.2)':'rgba(245,158,11,0.2)',
-                      color: p.side==='LONG'?'#60a5fa':'#f6ad55' }}>
-                      {p.side||'LONG'}
+      {/* Pozisyon Tablosu */}
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th>Yön</th>
+              <th>Giriş</th>
+              <th>Güncel</th>
+              <th>Çıkış</th>
+              <th>Stop</th>
+              <th>PnL%</th>
+              <th>PnL USDT</th>
+              <th>Durum</th>
+              <th>Tarih</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredPositions.map((pos, i) => {
+              const pnlPct = pos.pnl_percent || 0;
+              const pnl = pos.pnl || 0;
+              return (
+                <tr key={i} className={pnl >= 0 ? 'row-profit' : 'row-loss'}>
+                  <td><strong>{pos.symbol}</strong></td>
+                  <td>
+                    <span className={`badge ${pos.side === 'LONG' ? 'badge-buy' : 'badge-sell'}`}>
+                      {pos.side || 'LONG'}
                     </span>
                   </td>
-                  <td style={{ padding:'8px 12px', fontSize:12 }}>{parseFloat(p.entry_price||0).toFixed(4)}</td>
-                  <td style={{ padding:'8px 12px', fontSize:12 }}>{parseFloat(p.current_price||p.entry_price||0).toFixed(4)}</td>
-                  <td style={{ padding:'8px 12px', fontSize:11, color:'#fc8181' }}>{parseFloat(p.stop_loss||0).toFixed(4)}</td>
-                  <td style={{ padding:'8px 12px', fontWeight:700,
-                    color: (p.pnl_percent||0) >= 0 ? '#68d391' : '#fc8181' }}>
-                    {(p.pnl_percent||0) >= 0 ? '+' : ''}{(p.pnl_percent||0).toFixed(2)}%
+                  <td>{pos.entry_price?.toFixed(6)}</td>
+                  <td>{pos.current_price?.toFixed(6)}</td>
+                  <td>{pos.exit_price?.toFixed(6) || '-'}</td>
+                  <td>{pos.stop_loss?.toFixed(6)}</td>
+                  <td style={{color: pnlPct >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
+                    %{pnlPct.toFixed(2)}
                   </td>
-                  <td style={{ padding:'8px 12px', fontWeight:700, fontSize:13,
-                    color: (p.pnl||0) >= 0 ? '#68d391' : '#fc8181' }}>
-                    {(p.pnl||0) >= 0 ? '+' : ''}{(p.pnl||0).toFixed(4)}
+                  <td style={{color: pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
+                    {pnl.toFixed(4)}
                   </td>
-                  <td style={{ padding:'8px 12px' }}>
-                    <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, fontWeight:600,
-                      background: p.status==='OPEN'?'rgba(49,130,206,0.15)':p.status==='TRAILING_STOP'?'rgba(13,40,24,0.5)':'rgba(45,17,17,0.5)',
-                      color: p.status==='OPEN'?'#60a5fa':p.status==='TRAILING_STOP'?'#68d391':'#fc8181'
-                    }}>{p.status}</span>
+                  <td>
+                    <span className={`badge ${pos.status === 'OPEN' ? 'badge-buy' : pos.pnl >= 0 ? 'badge-buy' : 'badge-sell'}`}>
+                      {pos.status === 'OPEN' ? 'AÇIK' : pos.close_reason || 'KAPALI'}
+                    </span>
                   </td>
-                  <td style={{ padding:'8px 12px', fontSize:10, color:'#718096' }}>{trSaat(p.opened_at)}</td>
-                  <td style={{ padding:'8px 12px' }}>
-                    {p.status === 'OPEN' && (
-                      <button onClick={() => closePos(p.id)} disabled={closing === p.id}
-                        style={{ padding:'4px 10px', fontSize:11, borderRadius:4, cursor:'pointer',
-                          background:'rgba(252,129,129,0.15)', border:'1px solid #fc8181', color:'#fc8181' }}>
-                        {closing === p.id ? '...' : 'Kapat'}
-                      </button>
-                    )}
+                  <td style={{fontSize: 11, color: '#94a3b8'}}>
+                    {formatTime(pos.opened_at || pos.closed_at)}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              );
+            })}
+            {filteredPositions.length === 0 && (
+              <tr><td colSpan="10" style={{textAlign: 'center', color: '#64748b', padding: 40}}>
+                {filter === 'OPEN' ? '📌 Açık pozisyon yok (Gerçek alım aktif değil)' : 
+                 filter === 'CLOSED' ? '✅ Kapalı pozisyon yok' : 
+                 '📋 Henüz pozisyon yok'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
+
+export default Positions;
