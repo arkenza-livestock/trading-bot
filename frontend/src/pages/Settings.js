@@ -1,149 +1,152 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 
-export default function Settings({ api }) {
+function Settings() {
   const [settings, setSettings] = useState({});
-  const [saving,   setSaving]   = useState(false);
-  const [saved,    setSaved]    = useState(false);
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
-    load();
-  }, [api]);
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => setSettings(data))
+      .catch(e => console.error(e));
+  }, []);
 
-  const load = async () => {
-    try {
-      const res = await axios.get(`${api}/api/settings`);
-      setSettings(res.data);
-    } catch(e) { console.error(e); }
+  const handleChange = (key, value) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
   };
 
-  const save = async () => {
-    setSaving(true);
+  const saveSettings = async () => {
+    setMessage('');
     try {
-      await axios.post(`${api}/api/settings`, settings);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch(e) { alert('Hata: ' + e.message); }
-    setSaving(false);
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+      const data = await res.json();
+      setMessage(data.message || '✅ Kaydedildi');
+      setTimeout(() => setMessage(''), 3000);
+    } catch(e) {
+      setMessage('Hata: ' + e.message);
+    }
   };
 
-  const set = (key, val) => setSettings(prev => ({ ...prev, [key]: val }));
-
-  const Input = ({ label, k, type='number', step, placeholder }) => (
-    <div style={{ marginBottom:14 }}>
-      <label style={{ display:'block', fontSize:12, color:'#718096', marginBottom:5 }}>{label}</label>
-      <input
-        className="form-input"
-        type={type}
-        step={step}
-        placeholder={placeholder}
-        value={settings[k]||''}
-        onChange={e => set(k, e.target.value)}
-        style={{ padding:'9px 12px', fontSize:13, width:'100%' }}
-      />
-    </div>
-  );
-
-  const Toggle = ({ label, k, desc }) => (
-    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-      padding:'12px 0', borderBottom:'1px solid #0d1117' }}>
-      <div>
-        <div style={{ fontSize:13, color:'#e2e8f0', fontWeight:500 }}>{label}</div>
-        {desc && <div style={{ fontSize:11, color:'#4a5568', marginTop:3 }}>{desc}</div>}
-      </div>
-      <div onClick={() => set(k, settings[k]==='true'?'false':'true')}
-        style={{ width:44, height:24, borderRadius:12, cursor:'pointer', transition:'all 0.2s',
-          background: settings[k]==='true' ? '#3182ce' : '#2d3748',
-          position:'relative' }}>
-        <div style={{ position:'absolute', top:3, transition:'all 0.2s',
-          left: settings[k]==='true' ? 22 : 3,
-          width:18, height:18, borderRadius:'50%', background:'white' }} />
-      </div>
-    </div>
-  );
-
-  const Section = ({ title, color='#60a5fa', children }) => (
-    <div className="card" style={{ marginBottom:16 }}>
-      <div style={{ fontSize:12, color, fontWeight:700, marginBottom:16,
-        textTransform:'uppercase', letterSpacing:1 }}>{title}</div>
-      {children}
-    </div>
-  );
+  const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <div className="page-title">⚙️ Ayarlar</div>
-          <div className="page-sub">Bot konfigürasyonu</div>
+    <div className="settings-page">
+      <h1>⚙️ Ayarlar</h1>
+
+      {message && <div className="message">{message}</div>}
+
+      {/* GERÇEK ALIM */}
+      <div className="setting-group" style={{borderLeft: realTrading ? '4px solid #22c55e' : '4px solid #ef4444'}}>
+        <h3>💰 GERÇEK ALIM</h3>
+        <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
+          {realTrading 
+            ? '🟢 AÇIK - Sinyaller gerçek işleme dönüşür, Binance API ile alım yapılır!' 
+            : '🔴 KAPALI - Sadece sinyal üretilir, alım yapılmaz.'}
+        </p>
+        <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
+          <label className="toggle-switch">
+            <input 
+              type="checkbox" 
+              checked={realTrading}
+              onChange={(e) => handleChange('real_trading', e.target.checked ? 'true' : 'false')}
+            />
+            <span className="toggle-slider"></span>
+          </label>
+          <span style={{fontSize: 15, fontWeight: 600, color: realTrading ? '#22c55e' : '#ef4444'}}>
+            {realTrading ? 'AÇIK' : 'KAPALI'}
+          </span>
         </div>
-        <button onClick={save} disabled={saving}
-          className="btn btn-primary"
-          style={{ padding:'10px 28px', fontSize:14 }}>
-          {saving ? '⏳ Kaydediliyor...' : saved ? '✅ Kaydedildi!' : '💾 Kaydet'}
-        </button>
+        {realTrading && (
+          <div style={{marginTop: 12, padding: 10, background: 'rgba(34,197,94,0.1)', borderRadius: 8, fontSize: 12, color: '#22c55e'}}>
+            ⚡ Gerçek alım aktif! Makinenin onayladığı tüm sinyaller Binance'de işleme dönüşür.
+          </div>
+        )}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-
-        {/* Sol */}
-        <div>
-          <Section title="🤖 Engine">
-            <Toggle k="auto_trade_enabled" label="Otomatik İşlem"
-              desc="Gerçek para ile otomatik al/sat" />
-            <div style={{ marginTop:14 }}>
-              <Input label="Taranacak Max Coin" k="max_coins" />
-              <Input label="Min Hacim (USDT)" k="min_volume" />
-              <Input label="Min Sinyal Skoru" k="min_score" />
-            </div>
-          </Section>
-
-          <Section title="💰 İşlem">
-            <Input label="İşlem Miktarı (USDT)" k="trade_amount_usdt" />
-            <Input label="Max Açık Pozisyon" k="max_open_positions" />
-            <Input label="Komisyon (%)" k="commission_rate" step="0.01" />
-            <Input label="Slippage (%)" k="slippage_rate" step="0.01" />
-          </Section>
-
-          <Section title="🎮 Simülasyon">
-            <Input label="Başlangıç Bakiyesi (USDT)" k="sim_balance" />
-          </Section>
+      {/* TARAMA */}
+      <div className="setting-group">
+        <h3>🔍 Tarama Ayarları</h3>
+        <div className="setting-row">
+          <label>Tarama Aralığı (dk)</label>
+          <input type="number" value={settings.scan_interval || '20'} 
+            onChange={e => handleChange('scan_interval', e.target.value)} />
         </div>
-
-        {/* Sağ */}
-        <div>
-          <Section title="🛡️ Risk Yönetimi">
-            <Input label="Stop Loss (%)" k="stop_loss_percent" step="0.1" />
-            <Input label="Trailing Stop (%)" k="trailing_stop_percent" step="0.1" />
-            <Input label="Min Kar % (trailing için)" k="min_profit_percent" step="0.1" />
-            <Input label="Zaman Stop (dakika, 0=kapalı)" k="time_stop_minutes" />
-          </Section>
-
-          <Section title="📊 Teknik Analiz">
-            <Input label="RSI Periyot" k="rsi_period" />
-            <Input label="S/R Lookback" k="sr_lookback" />
-          </Section>
-
-          <Section title="📱 Telegram">
-            <Input label="Bot Token" k="telegram_token" type="text" placeholder="123456:ABC..." />
-            <Input label="Chat ID" k="telegram_chat_id" type="text" placeholder="-1001234..." />
-            <Input label="Min Skor (bildirim için)" k="telegram_min_score" />
-          </Section>
-
-          <Section title="🔑 Binance API">
-            <Input label="API Key" k="binance_api_key" type="text" placeholder="API Key" />
-            <Input label="API Secret" k="binance_api_secret" type="text" placeholder="API Secret" />
-          </Section>
+        <div className="setting-row">
+          <label>Maksimum Coin</label>
+          <input type="number" value={settings.max_coins || '50'} 
+            onChange={e => handleChange('max_coins', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>Minimum Hacim (USDT)</label>
+          <input type="number" value={settings.min_volume || '10000000'} 
+            onChange={e => handleChange('min_volume', e.target.value)} />
         </div>
       </div>
 
-      <div style={{ textAlign:'right', marginTop:8 }}>
-        <button onClick={save} disabled={saving}
-          className="btn btn-primary"
-          style={{ padding:'12px 40px', fontSize:15 }}>
-          {saving ? '⏳ Kaydediliyor...' : saved ? '✅ Kaydedildi!' : '💾 Kaydet'}
-        </button>
+      {/* SİNYAL */}
+      <div className="setting-group">
+        <h3>📡 Sinyal Ayarları</h3>
+        <div className="setting-row">
+          <label>Minimum Puan</label>
+          <input type="number" value={settings.min_score || '40'} 
+            onChange={e => handleChange('min_score', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>AI Güven Eşiği (%)</label>
+          <input type="number" step="1" value={settings.machine_confidence_min ? String(parseFloat(settings.machine_confidence_min) * 100) : '70'} 
+            onChange={e => handleChange('machine_confidence_min', String(parseFloat(e.target.value) / 100))} />
+        </div>
       </div>
+
+      {/* RİSK */}
+      <div className="setting-group">
+        <h3>⚠️ Risk Ayarları</h3>
+        <div className="setting-row">
+          <label>Stop Loss (%)</label>
+          <input type="number" step="0.1" value={settings.stop_loss_percent || '2.0'} 
+            onChange={e => handleChange('stop_loss_percent', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>Trailing Stop (%)</label>
+          <input type="number" step="0.1" value={settings.trailing_stop_percent || '0.5'} 
+            onChange={e => handleChange('trailing_stop_percent', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>Minimum Kâr (%)</label>
+          <input type="number" step="0.1" value={settings.min_profit_percent || '1.5'} 
+            onChange={e => handleChange('min_profit_percent', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>İşlem Miktarı (USDT)</label>
+          <input type="number" value={settings.trade_amount_usdt || '100'} 
+            onChange={e => handleChange('trade_amount_usdt', e.target.value)} />
+        </div>
+        <div className="setting-row">
+          <label>Maksimum Pozisyon</label>
+          <input type="number" value={settings.max_open_positions || '3'} 
+            onChange={e => handleChange('max_open_positions', e.target.value)} />
+        </div>
+      </div>
+
+      {/* TELEGRAM */}
+      <div className="setting-group">
+        <h3>📱 Telegram</h3>
+        <div className="setting-row">
+          <label>Minimum Bildirim Puanı</label>
+          <input type="number" value={settings.telegram_min_score || '60'} 
+            onChange={e => handleChange('telegram_min_score', e.target.value)} />
+        </div>
+      </div>
+
+      <button className="btn" onClick={saveSettings} style={{padding: '14px 40px', fontSize: 16, marginTop: 10}}>
+        💾 Ayarları Kaydet
+      </button>
     </div>
   );
 }
+
+export default Settings;
