@@ -17,6 +17,9 @@ class TradingEngine {
     this.machine = new MachineDecisionEngine();
     this.candlesData = {};
     
+    // GITHUB ÖĞRENME SYNC
+    this.learningManager = null;
+    
     this.performance = {
       scans: [],
       signalsGenerated: 0,
@@ -81,10 +84,12 @@ class TradingEngine {
     const minHacim = parseFloat(settings.min_volume || 10000000);
     const maxCoin  = parseInt(settings.max_coins || 50);
     const minScore = parseInt(settings.min_score || 40);
+    const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
 
     console.log('\n' + '='.repeat(50));
-    console.log('[' + new Date().toLocaleTimeString('tr-TR') + '] TARAMA #' + this.scanCount);
+    console.log('[' + new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) + '] TARAMA #' + this.scanCount);
     console.log('[BTC] ' + this.btcTrend.trend + ' | RSI:' + (this.btcTrend.rsi||50).toFixed(1) + ' | Guc:' + (this.btcTrend.strength||0).toFixed(1));
+    console.log('[GERCEK ALIM] ' + (realTrading ? '✅ ACIK' : '❌ KAPALI'));
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -190,6 +195,7 @@ class TradingEngine {
             '❌ Makine RED: ' + rejectReason
         );
 
+        // ═══ ALIM SİNYALİ ═══
         if (sinyalTipi === 'ALIM' && machineOnay) {
           signalCount++;
           signalsFound.push(result.symbol);
@@ -203,6 +209,7 @@ class TradingEngine {
             result.trend
           );
 
+          // SİMÜLASYONA HER ZAMAN GÖNDER
           simulation.openPosition({
             symbol: result.symbol,
             signal_type: 'ALIM',
@@ -218,6 +225,13 @@ class TradingEngine {
             similarPatternsFound: machineAnalysis.similarPatternsFound
           }, settings, this.btcTrend, this.candlesData);
 
+          // GERÇEK ALIM (Ayarlarda açıksa)
+          if (realTrading) {
+            console.log('[GERCEK] ' + result.symbol + ' gerçek alım yapılacak (Binance API hazır olduğunda)');
+            // TODO: Binance API ile gerçek alım
+          }
+
+          // TELEGRAM
           if (telegram) {
             const telMin = parseInt(settings.telegram_min_score || 60);
             if (finalScore >= telMin) {
@@ -273,9 +287,20 @@ class TradingEngine {
     console.log('[MAKINE] ✅ ' + machineAccepted + ' kabul | ❌ ' + machineRejected + ' red');
     console.log('[SIM] Bakiye: ' + simStats.balance?.toFixed(2) + ' | Islem: ' + simStats.totalTrades + ' | Basari: %' + simStats.winRate);
 
-    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found) VALUES (?,?,?,?)').run(
-      filtreli.length, signalCount, sure, JSON.stringify(signalsFound)
+    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(
+      filtreli.length, signalCount, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected
     );
+
+    // ═══════════════════════════════════════════
+    // GITHUB ÖĞRENME SYNC (Her 3 taramada bir)
+    // ═══════════════════════════════════════════
+    if (this.learningManager && this.scanCount % 3 === 0) {
+      try {
+        await this.learningManager.saveAndSync('Tarama #' + this.scanCount + ' - ' + new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }));
+      } catch(e) {
+        console.error('[GITHUB] Sync hatasi:', e.message);
+      }
+    }
   }
 
   async start() {
@@ -287,9 +312,44 @@ class TradingEngine {
     console.log('╚══════════════════════════════════════╝');
     
     await this.updateBTCTrend();
+
+    const settings = this.getSettings();
+
+    // ═══════════════════════════════════════════
+    // GITHUB ÖĞRENME SYNC BAŞLAT
+    // ═══════════════════════════════════════════
+    const githubEnabled = settings.github_sync_enabled === 'true';
+    const githubToken = process.env.GITHUB_TOKEN;
+    
+    if (githubEnabled && githubToken) {
+      try {
+        const { IntegratedLearningManager } = require('./github_learning_sync');
+        this.learningManager = new IntegratedLearningManager({
+          repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-li/machine-learning-data',
+          token: githubToken,
+          branch: 'main',
+          autoSync: false,
+          syncInterval: 30
+        });
+        const initResult = await this.learningManager.initialize(this.machine, simulation);
+        console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
+        if (initResult.loaded) {
+          console.log('[GITHUB] 📂 Önceki öğrenmeler yüklendi: ' + initResult.summary);
+        }
+      } catch(e) {
+        console.error('[GITHUB] Sync başlatma hatasi:', e.message);
+      }
+    } else {
+      if (githubEnabled && !githubToken) {
+        console.log('[GITHUB] ⚠️ Sync aktif ama GITHUB_TOKEN bulunamadi');
+      } else {
+        console.log('[GITHUB] ⏸️ Öğrenme sync kapalı');
+      }
+    }
+    
+    // İlk tarama
     await this.scan();
     
-    const settings    = this.getSettings();
     const intervalMin = parseInt(settings.scan_interval || 20);
     const self        = this;
     
@@ -300,12 +360,20 @@ class TradingEngine {
     
     console.log('[BOT] Her ' + intervalMin + ' dakikada bir tarama');
     console.log('[BOT] Makine guven esigi: %' + (this.machine.settings.confidenceRequired * 100).toFixed(0));
+    console.log('[BOT] Gercek Alim: ' + (settings.real_trading === 'true' ? '✅ ACIK' : '❌ KAPALI'));
   }
 
   stop() {
     if (this.interval) clearInterval(this.interval);
     this.running  = false;
     this.interval = null;
+    
+    // GitHub sync'i durdur
+    if (this.learningManager) {
+      this.learningManager.stop();
+      console.log('[GITHUB] Sync durduruldu');
+    }
+    
     console.log('[BOT] Durduruldu.');
   }
 
