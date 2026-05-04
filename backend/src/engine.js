@@ -12,14 +12,9 @@ class TradingEngine {
     this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0 };
     this.scanCount = 0;
     this.prices    = {};
-    
-    // MAKİNE ZEKASI
     this.machine = new MachineDecisionEngine();
     this.candlesData = {};
-    
-    // GITHUB ÖĞRENME SYNC
     this.learningManager = null;
-    
     this.performance = {
       scans: [],
       signalsGenerated: 0,
@@ -27,64 +22,56 @@ class TradingEngine {
       signalsRejected: 0,
       rejectionReasons: {}
     };
+    this.realPositions = {};
   }
 
   getSettings() {
-    const rows = db.prepare('SELECT key, value FROM settings').all();
-    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+    var rows = db.prepare('SELECT key, value FROM settings').all();
+    var settings = {};
+    rows.forEach(function(r) { settings[r.key] = r.value; });
+    return settings;
   }
 
   getTelegram() {
-    const s = this.getSettings();
+    var s = this.getSettings();
     if (!s.telegram_token || !s.telegram_chat_id) return null;
     return new TelegramService(s.telegram_token, s.telegram_chat_id);
   }
 
   async updateBTCTrend() {
     try {
-      const candles = await binance.getKlines('BTCUSDT', '4h', 200);
+      var candles = await binance.getKlines('BTCUSDT', '4h', 200);
       if (!candles || candles.length < 100) return;
-      
       this.candlesData['BTCUSDT'] = candles;
-      
-      const closes = candles.map(c => parseFloat(c[4]));
-      const highs  = candles.map(c => parseFloat(c[2]));
-      const lows   = candles.map(c => parseFloat(c[3]));
-      
-      const rsi    = analysis.hesaplaRSI(closes, 14);
-      const ema21  = analysis.hesaplaEMA(closes, 21);
-      const ema50  = analysis.hesaplaEMA(closes, 50);
-      const fiyat  = closes[closes.length - 1];
-      
-      let trend = 'NOTR';
+      var closes = candles.map(function(c) { return parseFloat(c[4]); });
+      var highs  = candles.map(function(c) { return parseFloat(c[2]); });
+      var lows   = candles.map(function(c) { return parseFloat(c[3]); });
+      var rsi   = analysis.hesaplaRSI(closes, 14);
+      var ema21 = analysis.hesaplaEMA(closes, 21);
+      var ema50 = analysis.hesaplaEMA(closes, 50);
+      var fiyat = closes[closes.length - 1];
+      var trend = 'NOTR';
       if (fiyat > ema21 && ema21 > ema50) trend = 'YUKARI';
       else if (fiyat > ema21) trend = 'HAFIF_YUKARI';
       else if (fiyat < ema21 && ema21 < ema50) trend = 'ASAGI';
       else if (fiyat < ema21) trend = 'HAFIF_ASAGI';
-      
-      const adx = analysis.hesaplaADX ? analysis.hesaplaADX(highs, lows, closes, 14) : { adx: 0 };
-      
-      this.btcTrend = { 
-        trend, rsi, fiyat, 
-        strength: adx.adx || 0,
-        lastUpdate: Date.now() 
-      };
-      
-      console.log(`[BTC] ${trend} | RSI:${rsi.toFixed(1)} | ADX:${(adx.adx||0).toFixed(1)} | $${fiyat.toFixed(0)}`);
+      var adx = analysis.hesaplaADX ? analysis.hesaplaADX(highs, lows, closes, 14) : { adx: 0 };
+      this.btcTrend = { trend: trend, rsi: rsi, fiyat: fiyat, strength: adx.adx || 0, lastUpdate: Date.now() };
+      console.log('[BTC] ' + trend + ' | RSI:' + rsi.toFixed(1) + ' | ADX:' + (adx.adx||0).toFixed(1) + ' | $' + fiyat.toFixed(0));
     } catch(e) {
       console.error('[BTC] Trend hatasi:', e.message);
     }
   }
 
   async scan() {
-    const baslangic = Date.now();
-    const settings  = this.getSettings();
+    var baslangic = Date.now();
+    var settings  = this.getSettings();
     this.scanCount++;
 
-    const minHacim = parseFloat(settings.min_volume || 10000000);
-    const maxCoin  = parseInt(settings.max_coins || 50);
-    const minScore = parseInt(settings.min_score || 40);
-    const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+    var minHacim = parseFloat(settings.min_volume || 10000000);
+    var maxCoin  = parseInt(settings.max_coins || 50);
+    var minScore = parseInt(settings.min_score || 40);
+    var realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
 
     console.log('\n' + '='.repeat(50));
     console.log('[' + new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) + '] TARAMA #' + this.scanCount);
@@ -92,9 +79,11 @@ class TradingEngine {
     console.log('[GERCEK ALIM] ' + (realTrading ? '✅ ACIK' : '❌ KAPALI'));
     console.log('='.repeat(50));
 
-    const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
+    var STABLES = ['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT'];
+    var stableSet = {};
+    STABLES.forEach(function(s) { stableSet[s] = true; });
 
-    let tickers;
+    var tickers;
     try {
       tickers = await binance.getAllTickers();
     } catch(e) {
@@ -102,72 +91,53 @@ class TradingEngine {
       return;
     }
 
-    const tumFiltreli = [];
-    for (let i = 0; i < tickers.length; i++) {
-      const t = tickers[i];
+    var tumFiltreli = [];
+    for (var i = 0; i < tickers.length; i++) {
+      var t = tickers[i];
       if (!t.symbol.endsWith('USDT')) continue;
-      if (STABLES.has(t.symbol)) continue;
-      const hacim   = parseFloat(t.quoteVolume) || 0;
-      const degisim = parseFloat(t.priceChangePercent) || 0;
-      const fiyat   = parseFloat(t.lastPrice) || 0;
-      if (fiyat <= 0) continue;
-      if (hacim < minHacim) continue;
-      if (degisim <= -15) continue;
-      if (degisim >= 15) continue;
+      if (stableSet[t.symbol]) continue;
+      var hacim = parseFloat(t.quoteVolume) || 0;
+      var degisim = parseFloat(t.priceChangePercent) || 0;
+      var fiyat = parseFloat(t.lastPrice) || 0;
+      if (fiyat <= 0 || hacim < minHacim || degisim <= -15 || degisim >= 15) continue;
       tumFiltreli.push(t);
     }
 
-    tumFiltreli.sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
-    const filtreli = tumFiltreli.slice(0, maxCoin);
-
+    tumFiltreli.sort(function(a, b) { return parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume); });
+    var filtreli = tumFiltreli.slice(0, maxCoin);
     console.log(filtreli.length + ' coin taranacak\n' + '-'.repeat(50));
 
     db.prepare("DELETE FROM signals").run();
 
-    let signalCount  = 0;
-    let machineAccepted = 0;
-    let machineRejected = 0;
-    const signalsFound = [];
-    const rejectionReasons = {};
-    const telegram   = this.getTelegram();
-    let errorCount   = 0;
+    var signalCount = 0, machineAccepted = 0, machineRejected = 0;
+    var signalsFound = [], rejectionReasons = {};
+    var telegram = this.getTelegram();
+    var errorCount = 0;
 
-    for (let i = 0; i < filtreli.length; i++) {
-      const ticker = filtreli[i];
-      
+    for (var i = 0; i < filtreli.length; i++) {
+      var ticker = filtreli[i];
       try {
-        const candles4H = await binance.getKlines(ticker.symbol, '4h', 200);
+        var candles4H = await binance.getKlines(ticker.symbol, '4h', 200);
         if (!candles4H || candles4H.length < 100) continue;
-
         this.candlesData[ticker.symbol] = candles4H;
-
-        const result = analysis.analyze(candles4H, ticker);
+        var result = analysis.analyze(candles4H, ticker);
         if (!result) continue;
-
         this.prices[ticker.symbol] = result.fiyat;
 
-        // MAKİNE ANALİZİ
-        const machineAnalysis = this.machine.analyze(candles4H, {
+        var machineAnalysis = this.machine.analyze(candles4H, {
           symbol: ticker.symbol,
           priceChangePercent: ticker.priceChangePercent || 0,
           quoteVolume: ticker.quoteVolume || 0
         });
 
-        let sinyalTipi = 'BEKLE';
-        let finalScore = result.puan || 0;
-        let machineOnay = false;
-        let rejectReason = '';
+        var sinyalTipi = 'BEKLE', finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
         if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70) {
-          sinyalTipi = 'ALIM';
-          machineOnay = true;
-          machineAccepted++;
+          sinyalTipi = 'ALIM'; machineOnay = true; machineAccepted++;
         } else if (machineAnalysis.action === 'WAIT' && result.puan >= minScore) {
-          sinyalTipi = 'BEKLE';
           rejectReason = 'MAKINE_BEKLE_DEDI';
         } else if (machineAnalysis.action === 'SELL') {
-          sinyalTipi = 'SATIS';
-          rejectReason = 'MAKINE_SAT_DEDI';
+          sinyalTipi = 'SATIS'; rejectReason = 'MAKINE_SAT_DEDI';
         } else if (machineAnalysis.confidence < 0.70) {
           rejectReason = 'DUSUK_GUVEN';
         }
@@ -177,46 +147,24 @@ class TradingEngine {
           rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1;
         }
 
-        const risk = machineOnay ? 
-          (machineAnalysis.confidence >= 0.85 ? 'DUSUK' : 
-           machineAnalysis.confidence >= 0.75 ? 'ORTA' : 'YUKSEK') : 'YUKSEK';
+        var risk = machineOnay ? (machineAnalysis.confidence >= 0.85 ? 'DUSUK' : machineAnalysis.confidence >= 0.75 ? 'ORTA' : 'YUKSEK') : 'YUKSEK';
 
         db.prepare(
           'INSERT INTO signals (symbol,signal_type,score,risk,price,fiyat,rsi,macd,trend,positive_signals,negative_signals,ai_comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
-        ).run(
-          result.symbol, sinyalTipi, finalScore, risk,
-          result.fiyat, result.fiyat,
-          result.rsi, result.macdBullish ? 1 : 0,
-          result.trend,
-          JSON.stringify(result.pozitif || []),
-          JSON.stringify(result.negatif || []),
-          machineOnay ? 
-            '✅ Makine ONAYLI | Guven:%' + (machineAnalysis.confidence*100).toFixed(1) + ' | ' + machineAnalysis.reasoning :
-            '❌ Makine RED: ' + rejectReason
+        ).run(result.symbol, sinyalTipi, finalScore, risk, result.fiyat, result.fiyat, result.rsi, result.macdBullish ? 1 : 0, result.trend,
+          JSON.stringify(result.pozitif || []), JSON.stringify(result.negatif || []),
+          machineOnay ? '✅ Makine ONAYLI | Guven:%' + (machineAnalysis.confidence*100).toFixed(1) + ' | ' + machineAnalysis.reasoning : '❌ Makine RED: ' + rejectReason
         );
 
-        // ═══ ALIM SİNYALİ ═══
         if (sinyalTipi === 'ALIM' && machineOnay) {
           signalCount++;
           signalsFound.push(result.symbol);
-          
-          console.log(
-            '[✅ ALIM] ' + result.symbol.padEnd(10) + ' | ' +
-            'Puan:' + String(finalScore).padStart(3) + ' | ' +
-            'RSI:' + result.rsi.toFixed(1) + ' | ' +
-            'AI:%' + (machineAnalysis.confidence*100).toFixed(0) + ' | ' +
-            'Desen:' + (machineAnalysis.similarPatternsFound || 0) + ' | ' +
-            result.trend
-          );
+          console.log('[✅ ALIM] ' + result.symbol.padEnd(10) + ' | Puan:' + String(finalScore).padStart(3) + ' | RSI:' + result.rsi.toFixed(1) + ' | AI:%' + (machineAnalysis.confidence*100).toFixed(0) + ' | Desen:' + (machineAnalysis.similarPatternsFound || 0) + ' | ' + result.trend);
 
-          // SİMÜLASYONA HER ZAMAN GÖNDER
+          // HER ZAMAN SİMÜLASYONA GÖNDER
           simulation.openPosition({
-            symbol: result.symbol,
-            signal_type: 'ALIM',
-            price: result.fiyat,
-            fiyat: result.fiyat,
-            score: finalScore,
-            trend: result.trend,
+            symbol: result.symbol, signal_type: 'ALIM', price: result.fiyat, fiyat: result.fiyat,
+            score: finalScore, trend: result.trend,
             stop_loss: machineAnalysis.stopLoss || result.stop_loss,
             stopLoss: machineAnalysis.stopLoss || result.stop_loss,
             target: machineAnalysis.takeProfit || result.hedef,
@@ -225,59 +173,59 @@ class TradingEngine {
             similarPatternsFound: machineAnalysis.similarPatternsFound
           }, settings, this.btcTrend, this.candlesData);
 
+          // ═══════════════════════════════════════
           // GERÇEK ALIM (Ayarlarda açıksa)
+          // ═══════════════════════════════════════
           if (realTrading) {
-            console.log('[GERCEK] ' + result.symbol + ' gerçek alım yapılacak (Binance API hazır olduğunda)');
-            // TODO: Binance API ile gerçek alım
+            var tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
+            var buyResult = await binance.realBuy(result.symbol, tradeAmount, result.fiyat);
+            
+            if (buyResult) {
+              console.log('[GERCEK] ✅ ' + result.symbol + ' gercek alim yapildi');
+              this.realPositions[result.symbol] = {
+                symbol: result.symbol,
+                entryPrice: result.fiyat,
+                quantity: parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat),
+                stopLoss: machineAnalysis.stopLoss || result.stop_loss,
+                takeProfit: machineAnalysis.takeProfit || result.hedef,
+                entryTime: new Date().toISOString(),
+                machineConfidence: machineAnalysis.confidence
+              };
+            } else {
+              console.log('[GERCEK] ❌ ' + result.symbol + ' alim BASARISIZ');
+            }
           }
 
           // TELEGRAM
           if (telegram) {
-            const telMin = parseInt(settings.telegram_min_score || 60);
-            if (finalScore >= telMin) {
-              await telegram.sendMessage(
-                '🤖 MAKİNE ONAYLI ALIM — ' + result.symbol + '\n' +
-                '💰 Fiyat: ' + result.fiyat + ' USDT\n' +
-                '📊 Puan: ' + finalScore + ' | RSI: ' + result.rsi.toFixed(1) + '\n' +
-                '🧠 AI Guven: %' + (machineAnalysis.confidence*100).toFixed(1) + '\n' +
-                '📈 Trend: ' + result.trend + '\n' +
-                '🔍 Benzer Desen: ' + (machineAnalysis.similarPatternsFound || 0) + '\n' +
-                '🎯 Hedef: ' + (machineAnalysis.takeProfit || result.hedef)?.toFixed(6) + '\n' +
-                '🛑 Stop: ' + (machineAnalysis.stopLoss || result.stop_loss)?.toFixed(6) + '\n' +
-                '💭 ' + (machineAnalysis.reasoning || '')
-              );
-              await new Promise(r => setTimeout(r, 500));
-            }
+            await telegram.sendMessage(
+              '🟢 ALIM — ' + result.symbol + '\n' +
+              '━━━━━━━━━━━━━━━━━━\n' +
+              '💰 Giriş: ' + result.fiyat + ' USDT\n' +
+              '🧠 AI Guven: %' + (machineAnalysis.confidence*100).toFixed(1) + ' | Puan: ' + finalScore + '\n' +
+              '📈 Trend: ' + result.trend + '\n' +
+              '🎯 Hedef: ' + (machineAnalysis.takeProfit || result.hedef)?.toFixed(6) + '\n' +
+              '🛑 Stop: ' + (machineAnalysis.stopLoss || result.stop_loss)?.toFixed(6) + '\n' +
+              '🕐 ' + new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
+            );
+            await new Promise(function(r) { setTimeout(r, 500); });
           }
         }
 
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(function(r) { setTimeout(r, 150); });
         errorCount = 0;
-
       } catch(e) {
         errorCount++;
         console.error(ticker.symbol + ' hatasi:', e.message);
-        if (errorCount > 5) {
-          await new Promise(r => setTimeout(r, 30000));
-          errorCount = 0;
-        }
+        if (errorCount > 5) { await new Promise(function(r) { setTimeout(r, 30000); }); errorCount = 0; }
       }
     }
 
     simulation.updatePositions(this.prices, settings, this.candlesData);
+    var sure = Date.now() - baslangic;
+    var simStats = simulation.getStats();
 
-    const sure = Date.now() - baslangic;
-    const simStats = simulation.getStats();
-    
-    this.performance.scans.push({
-      timestamp: Date.now(),
-      coinsScanned: filtreli.length,
-      signalsFound: signalCount,
-      machineAccepted,
-      machineRejected,
-      duration: sure
-    });
-    
+    this.performance.scans.push({ timestamp: Date.now(), coinsScanned: filtreli.length, signalsFound: signalCount, machineAccepted: machineAccepted, machineRejected: machineRejected, duration: sure });
     this.performance.signalsGenerated += signalCount;
     this.performance.signalsAccepted += machineAccepted;
     this.performance.signalsRejected += machineRejected;
@@ -287,77 +235,38 @@ class TradingEngine {
     console.log('[MAKINE] ✅ ' + machineAccepted + ' kabul | ❌ ' + machineRejected + ' red');
     console.log('[SIM] Bakiye: ' + simStats.balance?.toFixed(2) + ' | Islem: ' + simStats.totalTrades + ' | Basari: %' + simStats.winRate);
 
-    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(
-      filtreli.length, signalCount, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected
-    );
+    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(filtreli.length, signalCount, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected);
 
-    // ═══════════════════════════════════════════
-    // GITHUB ÖĞRENME SYNC (Her 3 taramada bir)
-    // ═══════════════════════════════════════════
     if (this.learningManager && this.scanCount % 3 === 0) {
-      try {
-        await this.learningManager.saveAndSync('Tarama #' + this.scanCount + ' - ' + new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }));
-      } catch(e) {
-        console.error('[GITHUB] Sync hatasi:', e.message);
-      }
+      try { await this.learningManager.saveAndSync('Tarama #' + this.scanCount); } catch(e) {}
     }
   }
 
   async start() {
     if (this.running) return;
     this.running = true;
-    
     console.log('╔══════════════════════════════════════╗');
     console.log('║   TRADING BOT v21 - MAKİNE ZEKASI   ║');
     console.log('╚══════════════════════════════════════╝');
-    
     await this.updateBTCTrend();
 
-    const settings = this.getSettings();
+    var settings = this.getSettings();
+    var githubEnabled = settings.github_sync_enabled === 'true';
+    var githubToken = process.env.GITHUB_TOKEN;
 
-    // ═══════════════════════════════════════════
-    // GITHUB ÖĞRENME SYNC BAŞLAT
-    // ═══════════════════════════════════════════
-    const githubEnabled = settings.github_sync_enabled === 'true';
-    const githubToken = process.env.GITHUB_TOKEN;
-    
     if (githubEnabled && githubToken) {
       try {
-        const { IntegratedLearningManager } = require('./github_learning_sync');
-        this.learningManager = new IntegratedLearningManager({
-          repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-li/machine-learning-data',
-          token: githubToken,
-          branch: 'main',
-          autoSync: false,
-          syncInterval: 30
-        });
-        const initResult = await this.learningManager.initialize(this.machine, simulation);
-        console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
-        if (initResult.loaded) {
-          console.log('[GITHUB] 📂 Önceki öğrenmeler yüklendi: ' + initResult.summary);
-        }
-      } catch(e) {
-        console.error('[GITHUB] Sync başlatma hatasi:', e.message);
-      }
-    } else {
-      if (githubEnabled && !githubToken) {
-        console.log('[GITHUB] ⚠️ Sync aktif ama GITHUB_TOKEN bulunamadi');
-      } else {
-        console.log('[GITHUB] ⏸️ Öğrenme sync kapalı');
-      }
+        var GLM = require('./github_learning_sync').IntegratedLearningManager;
+        this.learningManager = new GLM({ repoUrl: process.env.GITHUB_LEARNING_REPO || '', token: githubToken, autoSync: false, syncInterval: 30 });
+        var initResult = await this.learningManager.initialize(this.machine, simulation);
+        console.log('[GITHUB] ✅ Ogrenme sync AKTIF');
+      } catch(e) { console.error('[GITHUB] Sync hatasi:', e.message); }
     }
-    
-    // İlk tarama
+
     await this.scan();
-    
-    const intervalMin = parseInt(settings.scan_interval || 20);
-    const self        = this;
-    
-    this.interval = setInterval(async function() {
-      await self.updateBTCTrend();
-      await self.scan();
-    }, intervalMin * 60 * 1000);
-    
+    var intervalMin = parseInt(settings.scan_interval || 20);
+    var self = this;
+    this.interval = setInterval(async function() { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
     console.log('[BOT] Her ' + intervalMin + ' dakikada bir tarama');
     console.log('[BOT] Makine guven esigi: %' + (this.machine.settings.confidenceRequired * 100).toFixed(0));
     console.log('[BOT] Gercek Alim: ' + (settings.real_trading === 'true' ? '✅ ACIK' : '❌ KAPALI'));
@@ -365,39 +274,23 @@ class TradingEngine {
 
   stop() {
     if (this.interval) clearInterval(this.interval);
-    this.running  = false;
-    this.interval = null;
-    
-    // GitHub sync'i durdur
-    if (this.learningManager) {
-      this.learningManager.stop();
-      console.log('[GITHUB] Sync durduruldu');
-    }
-    
+    this.running = false; this.interval = null;
+    if (this.learningManager) { this.learningManager.stop(); }
     console.log('[BOT] Durduruldu.');
   }
 
   getMachineReport() {
-    const simStats = simulation.getStats();
+    var simStats = simulation.getStats();
     return {
       bot: { running: this.running, scanCount: this.scanCount, btcTrend: this.btcTrend },
-      machine: {
-        adaptiveThreshold: simulation.getAdaptiveThreshold(),
-        consecutiveLosses: simStats.consecutiveLosses || 0
-      },
+      machine: { adaptiveThreshold: simulation.getAdaptiveThreshold(), consecutiveLosses: simStats.consecutiveLosses || 0 },
       performance: {
         signalsGenerated: this.performance.signalsGenerated,
         signalsAccepted: this.performance.signalsAccepted,
         signalsRejected: this.performance.signalsRejected,
-        acceptanceRate: this.performance.signalsGenerated > 0 ?
-          (this.performance.signalsAccepted / this.performance.signalsGenerated * 100).toFixed(1) : 0
+        acceptanceRate: this.performance.signalsGenerated > 0 ? (this.performance.signalsAccepted / this.performance.signalsGenerated * 100).toFixed(1) : 0
       },
-      simulation: {
-        balance: simStats.balance,
-        totalPnl: simStats.totalPnl,
-        winRate: simStats.winRate,
-        profitFactor: simStats.profitFactor
-      }
+      simulation: { balance: simStats.balance, totalPnl: simStats.totalPnl, winRate: simStats.winRate, profitFactor: simStats.profitFactor }
     };
   }
 }
