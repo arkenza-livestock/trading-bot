@@ -4,175 +4,220 @@ function Settings() {
   const [settings, setSettings] = useState({});
   const [message, setMessage] = useState('');
 
-  useEffect(() => {
+  useEffect(function() {
     fetch('/api/settings')
-      .then(r => r.json())
-      .then(data => setSettings(data))
-      .catch(e => console.error(e));
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setSettings(data); })
+      .catch(function(e) { console.error(e); });
   }, []);
 
-  const handleChange = (key, value) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
+  var handleChange = function(key, value) {
+    setSettings(function(prev) { return { ...prev, [key]: value }; });
   };
 
-  const saveSettings = async () => {
+  var saveSettings = async function() {
     setMessage('');
     try {
-      const res = await fetch('/api/settings', {
+      var res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-      const data = await res.json();
-      setMessage(data.message || '✅ Kaydedildi');
-      setTimeout(() => setMessage(''), 3000);
+      var data = await res.json();
+      setMessage(data.message || 'Kaydedildi');
+      setTimeout(function() { setMessage(''); }, 3000);
     } catch(e) {
       setMessage('Hata: ' + e.message);
     }
   };
 
-  const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
-  const githubSync = settings.github_sync_enabled === 'true' || settings.github_sync_enabled === '1';
+  var realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+  var githubSync = settings.github_sync_enabled === 'true' || settings.github_sync_enabled === '1';
+
+  var Row = function(props) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '13px 0',
+        borderBottom: '1px solid #111827'
+      }}>
+        <span style={{color: '#cbd5e1', fontSize: 14, fontWeight: 500}}>{props.label}</span>
+        {props.children}
+      </div>
+    );
+  };
 
   return (
-    <div className="settings-page">
-      <h1>⚙️ Ayarlar</h1>
+    <div style={{maxWidth: 500, padding: '32px 20px', margin: '0 auto'}}>
+      
+      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 4, color: '#f1f5f9'}}>Ayarlar</h1>
+      <p style={{color: '#64748b', marginBottom: 30, fontSize: 13}}>
+        Bot konfigurasyonu
+      </p>
 
-      {message && <div className="message">{message}</div>}
+      {message && (
+        <div style={{marginBottom: 20, padding: 14, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 10, color: '#22c55e', fontSize: 13}}>
+          {message}
+        </div>
+      )}
 
       {/* GERCEK ALIM */}
-      <div className="setting-group" style={{borderLeft: realTrading ? '4px solid #22c55e' : '4px solid #ef4444'}}>
-        <h3>💰 GERÇEK ALIM</h3>
-        <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
-          {realTrading 
-            ? '🟢 ACIK - Sinyaller gercek isleme donusur!' 
-            : '🔴 KAPALI - Sadece sinyal uretilir.'}
-        </p>
-        <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderLeft: realTrading ? '4px solid #22c55e' : '4px solid #ef4444',
+        borderRadius: 14,
+        padding: '22px 22px',
+        marginBottom: 16
+      }}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+          <div>
+            <h3 style={{fontSize: 14, fontWeight: 600, color: '#f1f5f9', marginBottom: 4}}>GERCEK ALIM</h3>
+            <p style={{color: '#64748b', fontSize: 12, margin: 0}}>
+              {realTrading ? 'ACIK - Sinyaller gercek isleme donusur' : 'KAPALI - Sadece sinyal uretilir'}
+            </p>
+          </div>
           <label className="toggle-switch">
-            <input 
-              type="checkbox" 
-              checked={realTrading}
-              onChange={(e) => handleChange('real_trading', e.target.checked ? 'true' : 'false')}
-            />
+            <input type="checkbox" checked={realTrading}
+              onChange={function(e) { handleChange('real_trading', e.target.checked ? 'true' : 'false'); }} />
             <span className="toggle-slider"></span>
           </label>
-          <span style={{fontSize: 15, fontWeight: 600, color: realTrading ? '#22c55e' : '#ef4444'}}>
-            {realTrading ? 'ACIK' : 'KAPALI'}
-          </span>
         </div>
       </div>
 
       {/* GITHUB SYNC */}
-      <div className="setting-group" style={{borderLeft: githubSync ? '4px solid #8b5cf6' : '4px solid #64748b'}}>
-        <h3>🔗 GitHub Ogrenme Sync</h3>
-        <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
-          {githubSync 
-            ? '🟣 ACIK - Makine ogrendiklerini GitHuba kaydeder. Deploy sonrasi kaybolmaz!' 
-            : '⚫ KAPALI - Ogrenmeler sadece bellekte kalir.'}
-        </p>
-        <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderLeft: githubSync ? '4px solid #8b5cf6' : '4px solid #334155',
+        borderRadius: 14,
+        padding: '22px 22px',
+        marginBottom: 16
+      }}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+          <div>
+            <h3 style={{fontSize: 14, fontWeight: 600, color: '#f1f5f9', marginBottom: 4}}>GitHub Ogrenme Sync</h3>
+            <p style={{color: '#64748b', fontSize: 12, margin: 0}}>
+              {githubSync ? 'ACIK - Makine ogrendiklerini GitHubda saklar' : 'KAPALI - Ogrenmeler bellekte kalir'}
+            </p>
+            {!githubSync && (
+              <p style={{color: '#64748b', fontSize: 11, marginTop: 4}}>
+                Acmak icin GITHUB_TOKEN ve GITHUB_LEARNING_REPO tanimlayin
+              </p>
+            )}
+          </div>
           <label className="toggle-switch">
-            <input 
-              type="checkbox" 
-              checked={githubSync}
-              onChange={(e) => handleChange('github_sync_enabled', e.target.checked ? 'true' : 'false')}
-            />
+            <input type="checkbox" checked={githubSync}
+              onChange={function(e) { handleChange('github_sync_enabled', e.target.checked ? 'true' : 'false'); }} />
             <span className="toggle-slider"></span>
           </label>
-          <span style={{fontSize: 15, fontWeight: 600, color: githubSync ? '#a78bfa' : '#64748b'}}>
-            {githubSync ? 'ACIK' : 'KAPALI'}
-          </span>
-        </div>
-        {!githubSync && (
-          <div style={{marginTop: 12, padding: 10, background: 'rgba(100,116,139,0.1)', borderRadius: 8, fontSize: 12, color: '#94a3b8'}}>
-            💡 Acmak icin GITHUB_TOKEN ve GITHUB_LEARNING_REPO ortam degiskenlerini tanimlayin.
-          </div>
-        )}
-        {githubSync && (
-          <div style={{marginTop: 12, padding: 10, background: 'rgba(139,92,246,0.1)', borderRadius: 8, fontSize: 12, color: '#a78bfa'}}>
-            🧠 Makine her 3 taramada bir ogrendiklerini GitHuba kaydeder.
-          </div>
-        )}
-      </div>
-
-      {/* TARAMA */}
-      <div className="setting-group">
-        <h3>🔍 Tarama Ayarlari</h3>
-        <div className="setting-row">
-          <label>Tarama Araligi (dk)</label>
-          <input type="number" value={settings.scan_interval || '20'} 
-            onChange={e => handleChange('scan_interval', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Maksimum Coin</label>
-          <input type="number" value={settings.max_coins || '50'} 
-            onChange={e => handleChange('max_coins', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Minimum Hacim (USDT)</label>
-          <input type="number" value={settings.min_volume || '10000000'} 
-            onChange={e => handleChange('min_volume', e.target.value)} />
         </div>
       </div>
 
-      {/* SINYAL */}
-      <div className="setting-group">
-        <h3>📡 Sinyal Ayarlari</h3>
-        <div className="setting-row">
-          <label>Minimum Puan</label>
-          <input type="number" value={settings.min_score || '40'} 
-            onChange={e => handleChange('min_score', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>AI Guven Esigi (%)</label>
+      {/* TARAMA AYARLARI */}
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderRadius: 14,
+        padding: '20px 22px',
+        marginBottom: 16
+      }}>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Tarama Ayarlari</h3>
+        <Row label="Tarama Araligi (dk)">
+          <input type="number" value={settings.scan_interval || '20'} onChange={function(e) { handleChange('scan_interval', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Maksimum Coin">
+          <input type="number" value={settings.max_coins || '50'} onChange={function(e) { handleChange('max_coins', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Minimum Hacim (USDT)">
+          <input type="number" value={settings.min_volume || '10000000'} onChange={function(e) { handleChange('min_volume', e.target.value); }}
+            style={{width: 120, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+      </div>
+
+      {/* SINYAL AYARLARI */}
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderRadius: 14,
+        padding: '20px 22px',
+        marginBottom: 16
+      }}>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Sinyal Ayarlari</h3>
+        <Row label="Minimum Puan">
+          <input type="number" value={settings.min_score || '40'} onChange={function(e) { handleChange('min_score', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="AI Guven Esigi (%)">
           <input type="number" step="1" value={settings.machine_confidence_min ? String(parseFloat(settings.machine_confidence_min) * 100) : '70'} 
-            onChange={e => handleChange('machine_confidence_min', String(parseFloat(e.target.value) / 100))} />
-        </div>
+            onChange={function(e) { handleChange('machine_confidence_min', String(parseFloat(e.target.value) / 100)); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
       </div>
 
-      {/* RISK */}
-      <div className="setting-group">
-        <h3>⚠️ Risk Ayarlari</h3>
-        <div className="setting-row">
-          <label>Stop Loss (%)</label>
-          <input type="number" step="0.1" value={settings.stop_loss_percent || '2.0'} 
-            onChange={e => handleChange('stop_loss_percent', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Trailing Stop (%)</label>
-          <input type="number" step="0.1" value={settings.trailing_stop_percent || '0.5'} 
-            onChange={e => handleChange('trailing_stop_percent', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Minimum Kar (%)</label>
-          <input type="number" step="0.1" value={settings.min_profit_percent || '1.5'} 
-            onChange={e => handleChange('min_profit_percent', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Islem Mikari (USDT)</label>
-          <input type="number" value={settings.trade_amount_usdt || '100'} 
-            onChange={e => handleChange('trade_amount_usdt', e.target.value)} />
-        </div>
-        <div className="setting-row">
-          <label>Maksimum Pozisyon</label>
-          <input type="number" value={settings.max_open_positions || '3'} 
-            onChange={e => handleChange('max_open_positions', e.target.value)} />
-        </div>
+      {/* RISK AYARLARI */}
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderRadius: 14,
+        padding: '20px 22px',
+        marginBottom: 16
+      }}>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Risk Ayarlari</h3>
+        <Row label="Stop Loss (%)">
+          <input type="number" step="0.1" value={settings.stop_loss_percent || '2.0'} onChange={function(e) { handleChange('stop_loss_percent', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Trailing Stop (%)">
+          <input type="number" step="0.1" value={settings.trailing_stop_percent || '0.5'} onChange={function(e) { handleChange('trailing_stop_percent', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Minimum Kar (%)">
+          <input type="number" step="0.1" value={settings.min_profit_percent || '1.5'} onChange={function(e) { handleChange('min_profit_percent', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Islem Miktari (USDT)">
+          <input type="number" value={settings.trade_amount_usdt || '100'} onChange={function(e) { handleChange('trade_amount_usdt', e.target.value); }}
+            style={{width: 90, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
+        <Row label="Maksimum Pozisyon">
+          <input type="number" value={settings.max_open_positions || '3'} onChange={function(e) { handleChange('max_open_positions', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
       </div>
 
       {/* TELEGRAM */}
-      <div className="setting-group">
-        <h3>📱 Telegram</h3>
-        <div className="setting-row">
-          <label>Minimum Bildirim Puani</label>
-          <input type="number" value={settings.telegram_min_score || '60'} 
-            onChange={e => handleChange('telegram_min_score', e.target.value)} />
-        </div>
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderRadius: 14,
+        padding: '20px 22px',
+        marginBottom: 16
+      }}>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Telegram</h3>
+        <Row label="Minimum Bildirim Puani">
+          <input type="number" value={settings.telegram_min_score || '60'} onChange={function(e) { handleChange('telegram_min_score', e.target.value); }}
+            style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
+        </Row>
       </div>
 
-      <button className="btn" onClick={saveSettings} style={{padding: '14px 40px', fontSize: 16, marginTop: 10}}>
-        💾 Ayarlari Kaydet
+      <button onClick={saveSettings} style={{
+        marginTop: 8,
+        padding: '14px 0',
+        fontSize: 15,
+        fontWeight: 600,
+        width: '100%',
+        background: '#1e293b',
+        border: '1px solid #334155',
+        borderRadius: 10,
+        color: '#e2e8f0',
+        cursor: 'pointer'
+      }}>
+        Ayarlari Kaydet
       </button>
     </div>
   );
