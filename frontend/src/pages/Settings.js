@@ -40,13 +40,13 @@ function Settings() {
 
       {message && <div className="message">{message}</div>}
 
-      {/* GERÇEK ALIM */}
+      {/* GERCEK ALIM */}
       <div className="setting-group" style={{borderLeft: realTrading ? '4px solid #22c55e' : '4px solid #ef4444'}}>
         <h3>💰 GERÇEK ALIM</h3>
         <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
           {realTrading 
-            ? '🟢 AÇIK - Sinyaller gerçek işleme dönüşür!' 
-            : '🔴 KAPALI - Sadece sinyal üretilir.'}
+            ? '🟢 ACIK - Sinyaller gercek isleme donusur!' 
+            : '🔴 KAPALI - Sadece sinyal uretilir.'}
         </p>
         <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
           <label className="toggle-switch">
@@ -58,18 +58,18 @@ function Settings() {
             <span className="toggle-slider"></span>
           </label>
           <span style={{fontSize: 15, fontWeight: 600, color: realTrading ? '#22c55e' : '#ef4444'}}>
-            {realTrading ? 'AÇIK' : 'KAPALI'}
+            {realTrading ? 'ACIK' : 'KAPALI'}
           </span>
         </div>
       </div>
 
       {/* GITHUB SYNC */}
       <div className="setting-group" style={{borderLeft: githubSync ? '4px solid #8b5cf6' : '4px solid #64748b'}}>
-        <h3>🔗 GitHub Öğrenme Sync</h3>
+        <h3>🔗 GitHub Ogrenme Sync</h3>
         <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
           {githubSync 
-            ? '🟣 AÇIK - Makine öğrendiklerini GitHub''a kaydeder. Deploy sonrası kaybolmaz!' 
-            : '⚫ KAPALI - Öğrenmeler sadece bellekte kalır, deploy''da sıfırlanır.'}
+            ? '🟣 ACIK - Makine ogrendiklerini GitHuba kaydeder. Deploy sonrasi kaybolmaz!' 
+            : '⚫ KAPALI - Ogrenmeler sadece bellekte kalir.'}
         </p>
         <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
           <label className="toggle-switch">
@@ -78,29 +78,29 @@ function Settings() {
               checked={githubSync}
               onChange={(e) => handleChange('github_sync_enabled', e.target.checked ? 'true' : 'false')}
             />
-            <span className="toggle-slider" style={githubSync ? {background: '#4c1d95', borderColor: '#7c3aed'} : {}}></span>
+            <span className="toggle-slider"></span>
           </label>
           <span style={{fontSize: 15, fontWeight: 600, color: githubSync ? '#a78bfa' : '#64748b'}}>
-            {githubSync ? 'AÇIK' : 'KAPALI'}
+            {githubSync ? 'ACIK' : 'KAPALI'}
           </span>
         </div>
         {!githubSync && (
           <div style={{marginTop: 12, padding: 10, background: 'rgba(100,116,139,0.1)', borderRadius: 8, fontSize: 12, color: '#94a3b8'}}>
-            💡 Açmak için GITHUB_TOKEN ve GITHUB_LEARNING_REPO ortam değişkenlerini tanımlayın.
+            💡 Acmak icin GITHUB_TOKEN ve GITHUB_LEARNING_REPO ortam degiskenlerini tanimlayin.
           </div>
         )}
         {githubSync && (
           <div style={{marginTop: 12, padding: 10, background: 'rgba(139,92,246,0.1)', borderRadius: 8, fontSize: 12, color: '#a78bfa'}}>
-            🧠 Makine her 3 taramada bir öğrendiklerini GitHub'a kaydeder. Sunucu yeniden başlasa bile tüm desenler, ağırlıklar ve eşikler korunur.
+            🧠 Makine her 3 taramada bir ogrendiklerini GitHuba kaydeder.
           </div>
         )}
       </div>
 
       {/* TARAMA */}
       <div className="setting-group">
-        <h3>🔍 Tarama Ayarları</h3>
+        <h3>🔍 Tarama Ayarlari</h3>
         <div className="setting-row">
-          <label>Tarama Aralığı (dk)</label>
+          <label>Tarama Araligi (dk)</label>
           <input type="number" value={settings.scan_interval || '20'} 
             onChange={e => handleChange('scan_interval', e.target.value)} />
         </div>
@@ -116,24 +116,24 @@ function Settings() {
         </div>
       </div>
 
-      {/* SİNYAL */}
+      {/* SINYAL */}
       <div className="setting-group">
-        <h3>📡 Sinyal Ayarları</h3>
+        <h3>📡 Sinyal Ayarlari</h3>
         <div className="setting-row">
           <label>Minimum Puan</label>
           <input type="number" value={settings.min_score || '40'} 
             onChange={e => handleChange('min_score', e.target.value)} />
         </div>
         <div className="setting-row">
-          <label>AI Güven Eşiği (%)</label>
+          <label>AI Guven Esigi (%)</label>
           <input type="number" step="1" value={settings.machine_confidence_min ? String(parseFloat(settings.machine_confidence_min) * 100) : '70'} 
             onChange={e => handleChange('machine_confidence_min', String(parseFloat(e.target.value) / 100))} />
         </div>
       </div>
 
-      {/* RİSK */}
+      {/* RISK */}
       <div className="setting-group">
-        <h3>⚠️ Risk Ayarları</h3>
+        <h3>⚠️ Risk Ayarlari</h3>
         <div className="setting-row">
           <label>Stop Loss (%)</label>
           <input type="number" step="0.1" value={settings.stop_loss_percent || '2.0'} 
@@ -145,12 +145,12 @@ function Settings() {
             onChange={e => handleChange('trailing_stop_percent', e.target.value)} />
         </div>
         <div className="setting-row">
-          <label>Minimum Kâr (%)</label>
+          <label>Minimum Kar (%)</label>
           <input type="number" step="0.1" value={settings.min_profit_percent || '1.5'} 
             onChange={e => handleChange('min_profit_percent', e.target.value)} />
         </div>
         <div className="setting-row">
-          <label>İşlem Miktarı (USDT)</label>
+          <label>Islem Mikari (USDT)</label>
           <input type="number" value={settings.trade_amount_usdt || '100'} 
             onChange={e => handleChange('trade_amount_usdt', e.target.value)} />
         </div>
@@ -165,14 +165,14 @@ function Settings() {
       <div className="setting-group">
         <h3>📱 Telegram</h3>
         <div className="setting-row">
-          <label>Minimum Bildirim Puanı</label>
+          <label>Minimum Bildirim Puani</label>
           <input type="number" value={settings.telegram_min_score || '60'} 
             onChange={e => handleChange('telegram_min_score', e.target.value)} />
         </div>
       </div>
 
       <button className="btn" onClick={saveSettings} style={{padding: '14px 40px', fontSize: 16, marginTop: 10}}>
-        💾 Ayarları Kaydet
+        💾 Ayarlari Kaydet
       </button>
     </div>
   );
