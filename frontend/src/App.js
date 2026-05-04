@@ -1,136 +1,129 @@
 import React, { useState, useEffect } from 'react';
-import Dashboard  from './pages/Dashboard';
-import Signals    from './pages/Signals';
-import Positions  from './pages/Positions';
-import Backtest   from './pages/Backtest';
-import Settings   from './pages/Settings';
+import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
+import Dashboard from './pages/Dashboard';
+import Signals from './pages/Signals';
+import Positions from './pages/Positions';
 import Simulation from './pages/Simulation';
+import Backtest from './pages/Backtest';
+import Settings from './pages/Settings';
+import './App.css';
 
-const API_URL = '';
+function App() {
+  const [botRunning, setBotRunning] = useState(false);
+  const [message, setMessage] = useState('');
 
-const NAV = [
-  { id:'dashboard',  icon:'📊', label:'Dashboard' },
-  { id:'signals',    icon:'🚨', label:'Sinyaller' },
-  { id:'positions',  icon:'💼', label:'Pozisyonlar' },
-  { id:'simulation', icon:'🎮', label:'Simülasyon' },
-  { id:'backtest',   icon:'🔬', label:'Backtest' },
-  { id:'settings',   icon:'⚙️', label:'Ayarlar' },
-];
-
-export default function App() {
-  const [activePage,   setActivePage]   = useState('dashboard');
-  const [engineStatus, setEngineStatus] = useState('stopped');
-  const [totalPnl,     setTotalPnl]     = useState(0);
-  const [winRate,      setWinRate]      = useState(0);
-  const [openPos,      setOpenPos]      = useState(0);
-
-  useEffect(() => {
-    fetchStatus();
-    const iv = setInterval(fetchStatus, 5000);
-    return () => clearInterval(iv);
+  useEffect(function() {
+    fetch('/api/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setBotRunning(data.botRunning || false); })
+      .catch(function() {});
   }, []);
 
-  const fetchStatus = async () => {
-    try {
-      const res  = await fetch(`${API_URL}/api/status`);
-      const data = await res.json();
-      setEngineStatus(data.running ? 'running' : 'stopped');
-      setTotalPnl(data.totalPnl||0);
-      setWinRate(data.winRate||0);
-      setOpenPos(data.openPositions||0);
-    } catch(e) {}
-  };
-
-  const toggleEngine = async () => {
-    try {
-      const endpoint = engineStatus==='running' ? '/api/engine/stop' : '/api/engine/start';
-      await fetch(`${API_URL}${endpoint}`, { method:'POST' });
-      setTimeout(fetchStatus, 1000);
-    } catch(e) {}
+  var toggleBot = async function() {
+    setMessage('');
+    if (botRunning) {
+      try {
+        var res = await fetch('/api/bot/stop', { method: 'POST' });
+        var data = await res.json();
+        setMessage(data.message);
+        setBotRunning(false);
+      } catch(e) {
+        setMessage('Hata: ' + e.message);
+      }
+    } else {
+      try {
+        var res = await fetch('/api/bot/start', { method: 'POST' });
+        var data = await res.json();
+        setMessage(data.message);
+        setBotRunning(true);
+      } catch(e) {
+        setMessage('Hata: ' + e.message);
+      }
+    }
+    setTimeout(function() { setMessage(''); }, 3000);
   };
 
   return (
-    <div style={{ display:'flex', height:'100vh', background:'#060b14', color:'#e2e8f0', fontFamily:'system-ui,sans-serif' }}>
-
-      {/* Sol menü */}
-      <div style={{ width:200, background:'#0a0e1a', borderRight:'1px solid #1e2736', display:'flex', flexDirection:'column', padding:'20px 0' }}>
-
-        {/* Logo */}
-        <div style={{ padding:'0 20px 24px', borderBottom:'1px solid #1e2736' }}>
-          <div style={{ fontSize:18, fontWeight:800, color:'#60a5fa', letterSpacing:1 }}>⚡ CryptoBot</div>
-          <div style={{ fontSize:11, color:'#4a5568', marginTop:4 }}>v19 · 4H Setup + 1H Timing</div>
-        </div>
-
-        {/* Nav */}
-        <nav style={{ flex:1, padding:'12px 0' }}>
-          {NAV.map(item => (
-            <div key={item.id}
-              onClick={() => setActivePage(item.id)}
-              style={{
-                display:'flex', alignItems:'center', gap:10,
-                padding:'10px 20px', cursor:'pointer', fontSize:13, fontWeight:500,
-                color: activePage===item.id ? '#90cdf4' : '#718096',
-                background: activePage===item.id ? 'rgba(49,130,206,0.1)' : 'transparent',
-                borderLeft: activePage===item.id ? '3px solid #3182ce' : '3px solid transparent',
-                transition:'all 0.15s'
-              }}>
-              <span style={{ fontSize:16 }}>{item.icon}</span>
-              {item.label}
-            </div>
-          ))}
+    <Router>
+      <div className="app">
+        <nav>
+          <NavLink to="/" end>Dashboard</NavLink>
+          <NavLink to="/signals">Sinyaller</NavLink>
+          <NavLink to="/positions">Pozisyonlar</NavLink>
+          <NavLink to="/simulation">Simulasyon</NavLink>
+          <NavLink to="/backtest">Backtest</NavLink>
+          <NavLink to="/settings">Ayarlar</NavLink>
         </nav>
 
-        {/* Engine kontrolü */}
-        <div style={{ padding:'16px 20px', borderTop:'1px solid #1e2736' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-            <div style={{ width:8, height:8, borderRadius:'50%',
-              background:engineStatus==='running'?'#68d391':'#fc8181',
-              boxShadow:engineStatus==='running'?'0 0 6px #68d391':'none' }} />
-            <span style={{ fontSize:12, color:engineStatus==='running'?'#68d391':'#fc8181', fontWeight:600 }}>
-              {engineStatus==='running' ? 'Çalışıyor' : 'Durduruldu'}
-            </span>
+        {message && (
+          <div style={{
+            textAlign: 'center',
+            padding: '10px',
+            background: botRunning ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: botRunning ? '#22c55e' : '#ef4444',
+            fontSize: 13,
+            fontWeight: 500
+          }}>
+            {message}
           </div>
-          <button onClick={toggleEngine}
-            style={{
-              width:'100%', padding:'9px', borderRadius:6, cursor:'pointer', fontSize:12, fontWeight:600,
-              background: engineStatus==='running' ? 'rgba(252,129,129,0.15)' : 'rgba(104,211,145,0.15)',
-              border: engineStatus==='running' ? '1px solid #fc8181' : '1px solid #68d391',
-              color: engineStatus==='running' ? '#fc8181' : '#68d391'
-            }}>
-            {engineStatus==='running' ? '⏹ Durdur' : '▶ Başlat'}
+        )}
+
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/signals" element={<Signals />} />
+          <Route path="/positions" element={<Positions />} />
+          <Route path="/simulation" element={<Simulation />} />
+          <Route path="/backtest" element={<Backtest />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+
+        {/* ALT KONTROL BAR */}
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: '#0a0f1a',
+          borderTop: '1px solid #1a2540',
+          padding: '12px 20px',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: 15,
+          zIndex: 1000
+        }}>
+          <span style={{
+            width: 10, height: 10, borderRadius: '50%',
+            background: botRunning ? '#22c55e' : '#ef4444',
+            boxShadow: botRunning ? '0 0 10px rgba(34,197,94,0.5)' : '0 0 10px rgba(239,68,68,0.5)'
+          }}></span>
+          <span style={{color: '#94a3b8', fontSize: 13, fontWeight: 500}}>
+            {botRunning ? 'Bot Calisiyor' : 'Bot Durdu'}
+          </span>
+          <button onClick={toggleBot} style={{
+            padding: '10px 28px',
+            borderRadius: 8,
+            border: 'none',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            background: botRunning 
+              ? 'linear-gradient(135deg, #dc2626, #b91c1c)'
+              : 'linear-gradient(135deg, #16a34a, #15803d)',
+            color: '#fff',
+            boxShadow: botRunning 
+              ? '0 4px 15px rgba(220,38,38,0.3)'
+              : '0 4px 15px rgba(22,163,74,0.3)'
+          }}>
+            {botRunning ? '⏹ DURDUR' : '▶ BASLAT'}
           </button>
         </div>
 
-        {/* Özet metrikler */}
-        <div style={{ padding:'12px 20px', borderTop:'1px solid #1e2736' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8 }}>
-            <span style={{ fontSize:11, color:'#718096' }}>Toplam PnL</span>
-            <span style={{ fontSize:11, fontWeight:700, color:totalPnl>=0?'#68d391':'#fc8181' }}>
-              {totalPnl>=0?'+':''}{totalPnl.toFixed(2)} USDT
-            </span>
-          </div>
-          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8 }}>
-            <span style={{ fontSize:11, color:'#718096' }}>Kazanma</span>
-            <span style={{ fontSize:11, fontWeight:700, color:winRate>=50?'#68d391':'#f6ad55' }}>
-              %{winRate.toFixed(1)}
-            </span>
-          </div>
-          <div style={{ display:'flex', justifyContent:'space-between' }}>
-            <span style={{ fontSize:11, color:'#718096' }}>Açık Pos.</span>
-            <span style={{ fontSize:11, fontWeight:700, color:'#60a5fa' }}>{openPos}</span>
-          </div>
-        </div>
+        {/* Alt bar boşluğu */}
+        <div style={{height: 60}}></div>
       </div>
-
-      {/* Sağ içerik */}
-      <div style={{ flex:1, overflow:'auto', padding:24 }}>
-        {activePage==='dashboard'  && <Dashboard  api={API_URL} />}
-        {activePage==='signals'    && <Signals    api={API_URL} />}
-        {activePage==='positions'  && <Positions  api={API_URL} />}
-        {activePage==='simulation' && <Simulation api={API_URL} />}
-        {activePage==='backtest'   && <Backtest   api={API_URL} />}
-        {activePage==='settings'   && <Settings   api={API_URL} />}
-      </div>
-    </div>
+    </Router>
   );
 }
+
+export default App;
