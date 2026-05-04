@@ -4,22 +4,28 @@ function Dashboard() {
   const [realStats, setRealStats] = useState(null);
   const [positions, setPositions] = useState([]);
   const [signals, setSignals] = useState([]);
+  const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      const [statusRes, posRes, sigRes] = await Promise.all([
+      const [statusRes, posRes, sigRes, settingsRes] = await Promise.all([
         fetch('/api/status'),
         fetch('/api/positions'),
-        fetch('/api/signals')
+        fetch('/api/signals'),
+        fetch('/api/settings')
       ]);
       
       const status = await statusRes.json();
       const posData = await posRes.json();
       const sigData = await sigRes.json();
+      const settingsData = await settingsRes.json();
       
       setRealStats(status);
-      setPositions(posData || []);
+      setSettings(settingsData);
+      
+      // SADECE açık pozisyonları göster (gerçek işlem)
+      setPositions((posData || []).filter(p => p.status === 'OPEN'));
       setSignals(sigData || []);
     } catch(e) {
       console.error(e);
@@ -36,9 +42,17 @@ function Dashboard() {
 
   if (loading) return <div className="loading">⏳ Yükleniyor...</div>;
 
-  const openPositions = positions.filter(p => p.status === 'OPEN');
+  const openPositions = positions;
   const aiAcceptedSignals = signals.filter(s => (s.ai_comment || '').includes('✅'));
   const aiRejectedSignals = signals.filter(s => (s.ai_comment || '').includes('❌'));
+  const realTradingEnabled = settings.real_trading === 'true' || settings.real_trading === '1';
+
+  const formatTime = (timeStr) => {
+    if (!timeStr) return '-';
+    try {
+      return new Date(timeStr + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+    } catch(e) { return timeStr; }
+  };
 
   return (
     <div className="dashboard">
@@ -73,33 +87,41 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Gerçek İşlem Özeti */}
-      <h2>💰 Gerçek İşlem</h2>
+      {/* Gerçek İşlem Durumu */}
+      <h2>💰 Gerçek İşlem Durumu</h2>
       <div className="card-grid">
         <div className="card">
           <div className="card-label">📌 Açık Pozisyon</div>
           <div className="card-value gold">{openPositions.length}</div>
         </div>
         <div className="card">
-          <div className="card-label">🟢 Çalışma</div>
+          <div className="card-label">🟢 Bot</div>
           <div className={`card-value ${realStats?.botRunning ? 'green' : 'red'}`}>
             {realStats?.botRunning ? 'AKTİF' : 'DURDU'}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-label">⚙️ Gerçek Alım</div>
+          <div className={`card-value ${realTradingEnabled ? 'green' : 'red'}`}>
+            {realTradingEnabled ? 'AÇIK ✅' : 'KAPALI ❌'}
           </div>
         </div>
         <div className="card">
           <div className="card-label">🔢 Tarama</div>
           <div className="card-value">#{realStats?.scanCount || 0}</div>
         </div>
-        <div className="card">
-          <div className="card-label">⚙️ Gerçek Alım</div>
-          <div className="card-value gold">
-            {realStats?.realTrading ? 'AÇIK' : 'KAPALI'}
-          </div>
-        </div>
       </div>
 
-      {/* Açık Pozisyonlar */}
-      <h2>📌 Açık Pozisyonlar ({openPositions.length})</h2>
+      {/* Açık Pozisyonlar - SADECE GERÇEK */}
+      <h2>📌 Gerçek İşlem - Açık Pozisyonlar ({openPositions.length})</h2>
+      {!realTradingEnabled && (
+        <div style={{
+          background: '#1e293b', border: '1px solid #f59e0b', borderRadius: 10,
+          padding: 14, marginBottom: 15, color: '#fbbf24', fontSize: 13
+        }}>
+          ⚠️ Gerçek alım KAPALI. Ayarlar sayfasından aktif edin.
+        </div>
+      )}
       <div className="table-container">
         <table>
           <thead>
@@ -110,7 +132,8 @@ function Dashboard() {
               <th>PnL%</th>
               <th>Stop</th>
               <th>Hedef</th>
-              <th>AI Güven</th>
+              <th>AI</th>
+              <th>Açılış</th>
             </tr>
           </thead>
           <tbody>
@@ -129,10 +152,15 @@ function Dashboard() {
                     %{((pos.machine_confidence || 0) * 100).toFixed(0)}
                   </span>
                 </td>
+                <td style={{fontSize: 11, color: '#94a3b8'}}>{formatTime(pos.opened_at)}</td>
               </tr>
             ))}
             {openPositions.length === 0 && (
-              <tr><td colSpan="7" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Açık pozisyon yok</td></tr>
+              <tr>
+                <td colSpan="8" style={{textAlign: 'center', color: '#64748b', padding: 30}}>
+                  {realTradingEnabled ? 'Açık pozisyon yok' : 'Gerçek alım kapalı - Açık pozisyon yok'}
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -142,27 +170,27 @@ function Dashboard() {
       <h2>🧠 Makine Zekası</h2>
       <div className="card-grid">
         <div className="card ai-card">
-          <div className="card-label">Kabul Edilen</div>
+          <div className="card-label">✅ Kabul Edilen</div>
           <div className="card-value green">{aiAcceptedSignals.length}</div>
         </div>
         <div className="card ai-card">
-          <div className="card-label">Reddedilen</div>
+          <div className="card-label">❌ Reddedilen</div>
           <div className="card-value red">{aiRejectedSignals.length}</div>
         </div>
         <div className="card ai-card">
-          <div className="card-label">Kabul Oranı</div>
+          <div className="card-label">📋 Kabul Oranı</div>
           <div className="card-value gold">
             %{signals.length > 0 ? (aiAcceptedSignals.length / Math.max(1, aiAcceptedSignals.length + aiRejectedSignals.length) * 100).toFixed(0) : 0}
           </div>
         </div>
         <div className="card ai-card">
-          <div className="card-label">Son Tarama</div>
+          <div className="card-label">🔢 Son Tarama</div>
           <div className="card-value purple">{signals.length} sinyal</div>
         </div>
       </div>
 
       {/* Kabul Edilen Sinyaller */}
-      <h2>✅ Makine Kabul Edilen ({aiAcceptedSignals.length})</h2>
+      <h2>✅ Makinenin Kabul Ettiği Sinyaller ({aiAcceptedSignals.length})</h2>
       <div className="table-container">
         <table>
           <thead>
@@ -176,7 +204,7 @@ function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {aiAcceptedSignals.slice(0, 10).map((s, i) => (
+            {aiAcceptedSignals.slice(0, 15).map((s, i) => (
               <tr key={i} className="row-buy">
                 <td><strong>{s.symbol}</strong></td>
                 <td>{s.fiyat?.toFixed(6)}</td>
@@ -193,7 +221,7 @@ function Dashboard() {
         </table>
       </div>
 
-      {/* Reddedilen Sinyaller Özet */}
+      {/* Reddedilen Sinyaller */}
       <h2>❌ Reddedilen ({aiRejectedSignals.length})</h2>
       <div className="table-container">
         <table>
