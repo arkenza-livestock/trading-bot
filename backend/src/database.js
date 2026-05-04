@@ -1,7 +1,15 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const dbPath = path.join(__dirname, '..', 'data', 'trading.db');
+// Data klasörü yoksa oluştur
+const dbDir = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+  console.log('[DB] Data klasörü oluşturuldu:', dbDir);
+}
+
+const dbPath = path.join(dbDir, 'trading.db');
 const db = new Database(dbPath);
 
 // WAL modu - daha hızlı okuma/yazma
@@ -94,11 +102,7 @@ function initDatabase() {
     )
   `);
 
-  // ═══════════════════════════════════════════════
-  // ADIM 6: YENİ TABLOLAR (Makine öğrenmesi için)
-  // ═══════════════════════════════════════════════
-
-  // Makine öğrenme verileri
+  // Makine öğrenme - desenler
   db.exec(`
     CREATE TABLE IF NOT EXISTS machine_patterns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +115,7 @@ function initDatabase() {
     )
   `);
 
-  // Makine sinyal geçmişi
+  // Makine öğrenme - sinyaller
   db.exec(`
     CREATE TABLE IF NOT EXISTS machine_signals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +131,7 @@ function initDatabase() {
     )
   `);
 
-  // Makine geri bildirim döngüsü
+  // Makine öğrenme - geri bildirim
   db.exec(`
     CREATE TABLE IF NOT EXISTS machine_feedback (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +145,7 @@ function initDatabase() {
     )
   `);
 
-  // Gösterge ağırlıkları geçmişi
+  // Makine öğrenme - ağırlıklar
   db.exec(`
     CREATE TABLE IF NOT EXISTS machine_weights (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,48 +170,16 @@ function initDatabase() {
   // MIGRATION: Eski tablolara yeni sütunlar ekle
   // ═══════════════════════════════════════════════
 
-  // signals tablosuna makine sütunları
-  try {
-    db.exec(`ALTER TABLE signals ADD COLUMN machine_confidence REAL DEFAULT 0`);
-  } catch(e) { /* Sütun zaten varsa hata verme */ }
-  
-  try {
-    db.exec(`ALTER TABLE signals ADD COLUMN machine_action TEXT DEFAULT 'WAIT'`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE signals ADD COLUMN machine_reasoning TEXT DEFAULT ''`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE signals ADD COLUMN similar_patterns INTEGER DEFAULT 0`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE signals ADD COLUMN expected_return REAL DEFAULT 0`);
-  } catch(e) {}
-
-  // sim_positions tablosuna makine sütunları
-  try {
-    db.exec(`ALTER TABLE sim_positions ADD COLUMN machine_confidence REAL DEFAULT 0`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE sim_positions ADD COLUMN take_profit REAL`);
-  } catch(e) {}
-
-  // scan_logs tablosuna makine sütunları
-  try {
-    db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_accepted INTEGER DEFAULT 0`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_rejected INTEGER DEFAULT 0`);
-  } catch(e) {}
-  
-  try {
-    db.exec(`ALTER TABLE scan_logs ADD COLUMN rejection_reasons TEXT DEFAULT '{}'`);
-  } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_confidence REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_action TEXT DEFAULT 'WAIT'`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_reasoning TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN similar_patterns INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN expected_return REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE sim_positions ADD COLUMN machine_confidence REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE sim_positions ADD COLUMN take_profit REAL`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_accepted INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_rejected INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN rejection_reasons TEXT DEFAULT '{}'`); } catch(e) {}
 
   // ═══════════════════════════════════════════════
   // VARSAYILAN AYARLAR
@@ -232,18 +204,17 @@ function initDatabase() {
   };
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-  
   for (const [key, value] of Object.entries(defaultSettings)) {
     insertSetting.run(key, value);
   }
 
-  // İlk cüzdan bakiyesi
+  // İlk cüzdan
   const walletExists = db.prepare('SELECT COUNT(*) as count FROM sim_wallet').get();
   if (walletExists.count === 0) {
     db.prepare('INSERT INTO sim_wallet (balance) VALUES (1000)').run();
   }
 
-  console.log('[DB] Veritabani hazir');
+  console.log('[DB] ✅ Veritabani hazir:', dbPath);
 }
 
 // ═══════════════════════════════════════════════
@@ -251,27 +222,23 @@ function initDatabase() {
 // ═══════════════════════════════════════════════
 
 function saveMachinePattern(symbol, patternData, outcome, returnPct, similarity) {
-  return db.prepare(
-    'INSERT INTO machine_patterns (symbol, pattern_data, outcome, return_pct, similarity) VALUES (?,?,?,?,?)'
-  ).run(symbol, JSON.stringify(patternData), outcome, returnPct, similarity);
+  return db.prepare('INSERT INTO machine_patterns (symbol, pattern_data, outcome, return_pct, similarity) VALUES (?,?,?,?,?)')
+    .run(symbol, JSON.stringify(patternData), outcome, returnPct, similarity);
 }
 
 function saveMachineSignal(symbol, action, confidence, reasoning, expectedReturn, stopLoss, takeProfit, similarPatterns) {
-  return db.prepare(
-    'INSERT INTO machine_signals (symbol, action, confidence, reasoning, expected_return, stop_loss, take_profit, similar_patterns) VALUES (?,?,?,?,?,?,?,?)'
-  ).run(symbol, action, confidence, reasoning, expectedReturn, stopLoss, takeProfit, similarPatterns);
+  return db.prepare('INSERT INTO machine_signals (symbol, action, confidence, reasoning, expected_return, stop_loss, take_profit, similar_patterns) VALUES (?,?,?,?,?,?,?,?)')
+    .run(symbol, action, confidence, reasoning, expectedReturn, stopLoss, takeProfit, similarPatterns);
 }
 
 function saveMachineFeedback(symbol, signalTimestamp, actualReturn, maxFavorable, maxAdverse) {
-  return db.prepare(
-    'INSERT INTO machine_feedback (symbol, signal_timestamp, actual_return, max_favorable, max_adverse, profitable) VALUES (?,?,?,?,?,?)'
-  ).run(symbol, signalTimestamp, actualReturn, maxFavorable, maxAdverse, actualReturn > 0 ? 1 : 0);
+  return db.prepare('INSERT INTO machine_feedback (symbol, signal_timestamp, actual_return, max_favorable, max_adverse, profitable) VALUES (?,?,?,?,?,?)')
+    .run(symbol, signalTimestamp, actualReturn, maxFavorable, maxAdverse, actualReturn > 0 ? 1 : 0);
 }
 
 function saveMachineWeights(weightsData, threshold) {
-  return db.prepare(
-    'INSERT INTO machine_weights (weights_data, threshold) VALUES (?,?)'
-  ).run(JSON.stringify(weightsData), threshold);
+  return db.prepare('INSERT INTO machine_weights (weights_data, threshold) VALUES (?,?)')
+    .run(JSON.stringify(weightsData), threshold);
 }
 
 function getLatestMachineWeights() {
@@ -283,12 +250,7 @@ function getMachineFeedbackStats(limit = 50) {
   const total = feedback.length;
   const wins = feedback.filter(f => f.profitable === 1).length;
   const avgReturn = total > 0 ? feedback.reduce((s, f) => s + f.actual_return, 0) / total : 0;
-  
-  return {
-    total, wins, losses: total - wins,
-    winRate: total > 0 ? (wins / total * 100).toFixed(1) : 0,
-    avgReturn: avgReturn.toFixed(2)
-  };
+  return { total, wins, losses: total - wins, winRate: total > 0 ? (wins/total*100).toFixed(1) : 0, avgReturn: avgReturn.toFixed(2) };
 }
 
 function clearMachineData() {
@@ -299,9 +261,10 @@ function clearMachineData() {
   console.log('[DB] Makine verileri temizlendi');
 }
 
-// Veritabanını başlat
+// Başlat
 initDatabase();
 
+// Export
 module.exports = db;
 module.exports.saveMachinePattern = saveMachinePattern;
 module.exports.saveMachineSignal = saveMachineSignal;
