@@ -22,7 +22,6 @@ class TradingEngine {
       signalsRejected: 0,
       rejectionReasons: {}
     };
-    // GERÇEK POZİSYONLAR (Binance)
     this.realPositions = {};
   }
 
@@ -64,7 +63,6 @@ class TradingEngine {
     }
   }
 
-  // ── Gerçek pozisyonları güncelle ve gerekiyorsa sat ──
   async updateRealPositions() {
     const settings = this.getSettings();
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
@@ -81,20 +79,15 @@ class TradingEngine {
       const currentPrice = this.prices[symbol];
       if (!currentPrice) continue;
 
-      // En yüksek fiyatı güncelle (trailing stop için)
       if (currentPrice > pos.highestPrice) {
         pos.highestPrice = currentPrice;
       }
 
       const entryPrice = pos.entryPrice;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-
-      // Stop-loss: sabit yüzde
       const hardStop = entryPrice * (1 - hardStopPct);
-      // Trailing stop
       const trailingStop = pos.highestPrice * (1 - trailingPct);
       const effectiveStop = Math.max(trailingStop, hardStop);
-
       let sellReason = null;
 
       if (currentPrice <= hardStop) {
@@ -107,12 +100,10 @@ class TradingEngine {
 
       if (sellReason) {
         console.log(`[GERCEK] ${symbol} satis sinyali: ${sellReason} @ ${currentPrice}`);
-        // Gerçek satış
         try {
           const sellResult = await binance.realSell(symbol, pos.quantity);
           if (sellResult) {
             console.log(`[GERCEK] ✅ ${symbol} satildi`);
-            // Telegram bildirimi
             if (telegram) {
               const netPnl = (currentPrice - entryPrice) * pos.quantity;
               const netPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
@@ -120,17 +111,14 @@ class TradingEngine {
               const pnlIsaret = netPnl >= 0 ? '+' : '';
               const message = `${emoji} — ${symbol}\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
-                `💰 Giriş: ${entryPrice.toFixed(6)}\n` +
-                `💰 Çıkış: ${currentPrice.toFixed(6)}\n` +
+                `💰 Giris: ${entryPrice.toFixed(6)}\n` +
+                `💰 Cikis: ${currentPrice.toFixed(6)}\n` +
                 `${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${pnlIsaret}%${netPnlPct.toFixed(2)} (${pnlIsaret}${netPnl.toFixed(4)} USDT)\n` +
                 `🛑 Neden: ${sellReason}\n` +
                 `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
               telegram.sendMessage(message).catch(() => {});
             }
-            // Pozisyonu kaldır
             delete this.realPositions[symbol];
-          } else {
-            console.log(`[GERCEK] ❌ ${symbol} satis basarisiz`);
           }
         } catch(e) {
           console.error(`[GERCEK] ${symbol} satis hatasi:`, e.message);
@@ -146,7 +134,6 @@ class TradingEngine {
 
     const minHacim = parseFloat(settings.min_volume || 10000000);
     const maxCoin  = parseInt(settings.max_coins || 50);
-    const minScore = parseInt(settings.min_score || 40);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
 
     console.log('\n' + '='.repeat(50));
@@ -206,7 +193,7 @@ class TradingEngine {
 
         if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70) {
           sinyalTipi = 'ALIM'; machineOnay = true; machineAccepted++;
-        } else if (machineAnalysis.action === 'WAIT' && result.puan >= minScore) {
+        } else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
           rejectReason = 'MAKINE_BEKLE_DEDI';
         } else if (machineAnalysis.action === 'SELL') {
           sinyalTipi = 'SATIS'; rejectReason = 'MAKINE_SAT_DEDI';
@@ -233,7 +220,6 @@ class TradingEngine {
           signalsFound.push(result.symbol);
           console.log(`[✅ ALIM] ${result.symbol.padEnd(10)} | Puan:${String(finalScore).padStart(3)} | RSI:${result.rsi.toFixed(1)} | AI:%${(machineAnalysis.confidence*100).toFixed(0)} | Desen:${machineAnalysis.similarPatternsFound || 0} | ${result.trend}`);
 
-          // HER ZAMAN SİMÜLASYONA GÖNDER (sanal)
           simulation.openPosition({
             symbol: result.symbol, signal_type: 'ALIM', price: result.fiyat, fiyat: result.fiyat,
             score: finalScore, trend: result.trend,
@@ -245,12 +231,8 @@ class TradingEngine {
             similarPatternsFound: machineAnalysis.similarPatternsFound
           }, settings, this.btcTrend, this.candlesData);
 
-          // ═══════════════════════════════════════
-          // GERÇEK ALIM (Ayarlarda açıksa)
-          // ═══════════════════════════════════════
           if (realTrading && !this.realPositions[result.symbol]) {
             const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
-            console.log(`[GERCEK] ${result.symbol} alim yapiliyor...`);
             const buyResult = await binance.realBuy(result.symbol, tradeAmount, result.fiyat);
             if (buyResult) {
               const executedQty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
@@ -264,13 +246,9 @@ class TradingEngine {
                 entryTime: new Date().toISOString(),
                 machineConfidence: machineAnalysis.confidence
               };
-              console.log(`[GERCEK] ✅ ${result.symbol} alindi: ${executedQty} adet`);
-            } else {
-              console.log(`[GERCEK] ❌ ${result.symbol} alim basarisiz`);
             }
           }
 
-          // Telegram ALIM bildirimi
           if (telegram) {
             const message = `🟢 ALIM — ${result.symbol}\n` +
               `━━━━━━━━━━━━━━━━━━\n` +
@@ -297,12 +275,7 @@ class TradingEngine {
       }
     }
 
-    // Simülasyon pozisyonlarını güncelle (sanal)
     simulation.updatePositions(this.prices, settings, this.candlesData);
-
-    // ═══════════════════════════════════════
-    // GERÇEK POZİSYONLARI GÜNCELLE VE SAT
-    // ═══════════════════════════════════════
     await this.updateRealPositions();
 
     const sure = Date.now() - baslangic;
@@ -354,7 +327,7 @@ class TradingEngine {
           autoSync: false,
           syncInterval: 30
         });
-        const initResult = await this.learningManager.initialize(this.machine, simulation);
+        await this.learningManager.initialize(this.machine, simulation);
         console.log('[GITHUB] ✅ Ogrenme sync AKTIF');
       } catch(e) { console.error('[GITHUB] Sync hatasi:', e.message); }
     }
