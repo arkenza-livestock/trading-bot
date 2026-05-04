@@ -2,6 +2,9 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
+// Türkiye saat dilimi
+process.env.TZ = 'Europe/Istanbul';
+
 // Data klasörü yoksa oluştur
 const dbDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dbDir)) {
@@ -200,6 +203,7 @@ function initDatabase() {
     sim_balance: '1000',
     machine_confidence_min: '0.70',
     machine_learning_enabled: 'true',
+    real_trading: 'false',
     github_sync_enabled: 'false'
   };
 
