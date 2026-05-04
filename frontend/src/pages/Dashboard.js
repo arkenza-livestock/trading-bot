@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 function Dashboard() {
   const [realStats, setRealStats] = useState(null);
   const [signals, setSignals] = useState([]);
+  const [positions, setPositions] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -11,12 +12,14 @@ function Dashboard() {
       var results = await Promise.all([
         fetch('/api/status'),
         fetch('/api/signals'),
+        fetch('/api/positions'),
         fetch('/api/settings')
       ]);
       
       setRealStats(await results[0].json());
       setSignals(await results[1].json());
-      setSettings(await results[2].json());
+      setPositions(await results[2].json());
+      setSettings(await results[3].json());
     } catch(e) {
       console.error(e);
     } finally {
@@ -35,6 +38,11 @@ function Dashboard() {
   var aiAcceptedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('✅') !== -1; });
   var aiRejectedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('❌') !== -1; });
   var realTradingEnabled = settings.real_trading === 'true' || settings.real_trading === '1';
+
+  // Açık pozisyonları ayır
+  var openPositions = positions.filter(function(p) { return p.status === 'OPEN'; });
+  var realOpenPositions = openPositions.filter(function(p) { return p.is_real === 1; });
+  var simOpenPositions = openPositions.filter(function(p) { return p.is_real === 0; });
 
   var formatTime = function(timeStr) {
     if (!timeStr) return '-';
@@ -75,8 +83,8 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Gercek Islem Durumu */}
-      <h2>Gercek Islem Durumu</h2>
+      {/* Islem Durumu */}
+      <h2>Islem Durumu</h2>
       <div className="card-grid">
         <div className="card">
           <div className="card-label">Gercek Alim</div>
@@ -91,34 +99,89 @@ function Dashboard() {
           </div>
         </div>
         <div className="card">
+          <div className="card-label">Acik Pozisyon</div>
+          <div className="card-value gold">{openPositions.length}</div>
+        </div>
+        <div className="card">
           <div className="card-label">Tarama</div>
           <div className="card-value">#{realStats?.scanCount || 0}</div>
         </div>
       </div>
 
-      {/* Acik Pozisyonlar - SADECE GERCEK */}
-      <h2>Gercek Islem - Acik Pozisyonlar</h2>
+      {/* GERCEK POZISYONLAR */}
+      <h2>📌 Gercek Islem - Acik Pozisyonlar ({realOpenPositions.length})</h2>
       {!realTradingEnabled && (
         <div style={{
           background: '#1e293b', border: '1px solid #f59e0b', borderRadius: 10,
-          padding: 30, marginBottom: 15, textAlign: 'center'
+          padding: 25, marginBottom: 15, textAlign: 'center'
         }}>
-          <div style={{fontSize: 40, marginBottom: 10}}>🔒</div>
-          <div style={{color: '#fbbf24', fontSize: 14, fontWeight: 600, marginBottom: 5}}>Gercek Alim Kapali</div>
-          <div style={{color: '#64748b', fontSize: 13}}>Ayarlar sayfasindan gercek alimi aktif edin.</div>
-          <div style={{color: '#64748b', fontSize: 12, marginTop: 8}}>Simulasyon pozisyonlari burada gosterilmez.</div>
+          <div style={{fontSize: 35, marginBottom: 8}}>🔒</div>
+          <div style={{color: '#fbbf24', fontSize: 14, fontWeight: 600}}>Gercek Alim Kapali</div>
+          <div style={{color: '#64748b', fontSize: 12, marginTop: 5}}>Ayarlar sayfasindan gercek alimi aktif edin.</div>
         </div>
       )}
-      {realTradingEnabled && (
+      {realTradingEnabled && realOpenPositions.length > 0 && (
         <div className="table-container">
           <table>
             <thead>
-              <tr><th>Sembol</th><th>Giris</th><th>Stop</th><th>AI</th><th>Acilis</th></tr>
+              <tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th></tr>
             </thead>
             <tbody>
-              <tr><td colSpan="5" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Gercek alim aktif - Henuz pozisyon yok</td></tr>
+              {realOpenPositions.map(function(pos, i) {
+                return (
+                  <tr key={i} className={(pos.pnl_percent || 0) >= 0 ? 'row-profit' : 'row-loss'}>
+                    <td><strong>{pos.symbol}</strong> <span className="badge badge-buy" style={{fontSize: 9}}>GERCEK</span></td>
+                    <td>{pos.entry_price ? pos.entry_price.toFixed(6) : '-'}</td>
+                    <td>{pos.current_price ? pos.current_price.toFixed(6) : '-'}</td>
+                    <td style={{color: (pos.pnl_percent || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>%{(pos.pnl_percent || 0).toFixed(2)}</td>
+                    <td>{pos.stop_loss ? pos.stop_loss.toFixed(6) : '-'}</td>
+                    <td>{pos.take_profit ? pos.take_profit.toFixed(6) : '-'}</td>
+                    <td>%{((pos.machine_confidence || 0) * 100).toFixed(0)}</td>
+                    <td style={{fontSize: 11, color: '#94a3b8'}}>{formatTime(pos.opened_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        </div>
+      )}
+      {realTradingEnabled && realOpenPositions.length === 0 && (
+        <div className="table-container">
+          <table>
+            <thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th></tr></thead>
+            <tbody>
+              <tr><td colSpan="8" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* SIMULASYON POZISYONLARI (bilgi amacli) */}
+      {simOpenPositions.length > 0 && (
+        <div style={{marginTop: 20}}>
+          <h2>🧪 Simulasyon Acik Pozisyonlari ({simOpenPositions.length})</h2>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th></tr>
+              </thead>
+              <tbody>
+                {simOpenPositions.slice(0, 10).map(function(pos, i) {
+                  return (
+                    <tr key={i} className={(pos.pnl_percent || 0) >= 0 ? 'row-profit' : 'row-loss'}>
+                      <td><strong>{pos.symbol}</strong></td>
+                      <td>{pos.entry_price ? pos.entry_price.toFixed(6) : '-'}</td>
+                      <td>{pos.current_price ? pos.current_price.toFixed(6) : '-'}</td>
+                      <td style={{color: (pos.pnl_percent || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>%{(pos.pnl_percent || 0).toFixed(2)}</td>
+                      <td>{pos.stop_loss ? pos.stop_loss.toFixed(6) : '-'}</td>
+                      <td>%{((pos.machine_confidence || 0) * 100).toFixed(0)}</td>
+                      <td style={{fontSize: 11, color: '#94a3b8'}}>{formatTime(pos.opened_at)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
