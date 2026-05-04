@@ -11,21 +11,22 @@ function Backtest() {
     commission: 0.1,
     slippage: 0.05,
     minScore: 50,
+    rsiPeriod: 7,
+    rsiOversold: 40,
+    rsiOverbought: 70,
     tradeAmount: 100,
-    maxPositions: 3,
-    epochs: 1,
-    machineConfidenceMin: 0.70
+    maxPositions: 3
   });
 
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleChange = (e) => {
+  const handleChange = function(e) {
     setParams({ ...params, [e.target.name]: e.target.value });
   };
 
-  const runBacktest = async () => {
+  const runBacktest = async function() {
     setLoading(true);
     setError('');
     setResults(null);
@@ -49,8 +50,8 @@ function Backtest() {
         minScore: parseInt(params.minScore),
         tradeAmount: parseFloat(params.tradeAmount),
         maxPositions: parseInt(params.maxPositions),
-        epochs: parseInt(params.epochs),
-        machineConfidenceMin: parseFloat(params.machineConfidenceMin)
+        epochs: 1,
+        machineConfidenceMin: 0.70
       };
 
       var res = await fetch('/api/backtest', {
@@ -60,8 +61,7 @@ function Backtest() {
       });
 
       if (!res.ok) {
-        var errData = await res.json().catch(function() { return {}; });
-        throw new Error(errData.error || 'Sunucu hatasi: ' + res.status);
+        throw new Error('Sunucu hatasi: ' + res.status);
       }
 
       var data = await res.json();
@@ -76,17 +76,17 @@ function Backtest() {
   var fUSD = function(v) { return '$' + (v || 0).toFixed(2); };
 
   return (
-    <div className="backtest">
-      <h1>Backtest</h1>
-      <p style={{color: '#64748b', marginBottom: 15, fontSize: 13}}>
+    <div className="backtest" style={{maxWidth: 480}}>
+      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 4}}>Backtest</h1>
+      <p style={{color: '#64748b', marginBottom: 25, fontSize: 13}}>
         Tum coinler ayni zaman cizgisi icinde test edilir
       </p>
 
       <div className="setting-group">
-        <h3>Parametreler</h3>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>Parametreler</h3>
         <div className="setting-row">
           <label>Coin</label>
-          <input name="symbols" value={params.symbols} onChange={handleChange} style={{width: '100%', maxWidth: 350}} />
+          <span style={{color: '#94a3b8', fontSize: 13}}>Tum Coinler</span>
         </div>
         <div className="setting-row">
           <label>Mum Araligi</label>
@@ -98,13 +98,15 @@ function Backtest() {
         </div>
         <div className="setting-row">
           <label>Test Suresi</label>
-          <input name="days" type="number" value={params.days} onChange={handleChange} style={{width: 80}} />
-          <span style={{fontSize: 13, color: '#64748b'}}>Gun</span>
+          <span style={{display: 'flex', alignItems: 'center', gap: 8}}>
+            <input name="days" type="number" value={params.days} onChange={handleChange} style={{width: 70}} />
+            <span style={{color: '#94a3b8', fontSize: 13}}>Gun</span>
+          </span>
         </div>
       </div>
 
       <div className="setting-group">
-        <h3>RISK</h3>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>RISK</h3>
         <div className="setting-row">
           <label>Stop Loss (%)</label>
           <input name="stopLoss" type="number" step="0.1" value={params.stopLoss} onChange={handleChange} style={{width: 80}} />
@@ -128,19 +130,27 @@ function Backtest() {
       </div>
 
       <div className="setting-group">
-        <h3>SINYAL</h3>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>SINYAL</h3>
         <div className="setting-row">
           <label>Min Sinyal Skoru</label>
           <input name="minScore" type="number" value={params.minScore} onChange={handleChange} style={{width: 80}} />
         </div>
         <div className="setting-row">
-          <label>AI Guven Esigi</label>
-          <input name="machineConfidenceMin" type="number" step="0.05" value={params.machineConfidenceMin} onChange={handleChange} style={{width: 80}} />
+          <label>RSI Periyot</label>
+          <input name="rsiPeriod" type="number" value={params.rsiPeriod} onChange={handleChange} style={{width: 80}} />
+        </div>
+        <div className="setting-row">
+          <label>RSI Asiri Satim</label>
+          <input name="rsiOversold" type="number" value={params.rsiOversold} onChange={handleChange} style={{width: 80}} />
+        </div>
+        <div className="setting-row">
+          <label>RSI Asiri Alim</label>
+          <input name="rsiOverbought" type="number" value={params.rsiOverbought} onChange={handleChange} style={{width: 80}} />
         </div>
       </div>
 
       <div className="setting-group">
-        <h3>MALIYET</h3>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>MALIYET</h3>
         <div className="setting-row">
           <label>Komisyon (%)</label>
           <input name="commission" type="number" step="0.01" value={params.commission} onChange={handleChange} style={{width: 80}} />
@@ -151,84 +161,80 @@ function Backtest() {
         </div>
       </div>
 
-      <button className="btn" onClick={runBacktest} disabled={loading} 
-        style={{marginTop: 15, padding: '14px 0', fontSize: 16, width: '100%'}}>
+      <button 
+        onClick={runBacktest} 
+        disabled={loading} 
+        style={{
+          marginTop: 15, 
+          padding: '14px 0', 
+          fontSize: 15, 
+          fontWeight: 600,
+          width: '100%',
+          background: '#1e293b',
+          border: '1px solid #334155',
+          borderRadius: 8,
+          color: '#e2e8f0',
+          cursor: 'pointer'
+        }}>
         {loading ? 'Calisiyor...' : 'Backtest Calistir'}
       </button>
 
       {error && (
-        <div style={{marginTop: 15, padding: 14, background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: 10, color: '#ef4444', fontSize: 13}}>
+        <div style={{
+          marginTop: 15, 
+          padding: 14, 
+          background: 'rgba(239,68,68,0.08)', 
+          border: '1px solid rgba(239,68,68,0.3)', 
+          borderRadius: 8, 
+          color: '#ef4444', 
+          fontSize: 13
+        }}>
           {error}
         </div>
       )}
 
       {loading && (
-        <div style={{marginTop: 15, padding: 20, textAlign: 'center', color: '#fbbf24'}}>
+        <div style={{
+          marginTop: 15, 
+          padding: 30, 
+          textAlign: 'center', 
+          color: '#fbbf24',
+          background: '#0d1321',
+          border: '1px solid #1a2540',
+          borderRadius: 10
+        }}>
           Backtest calisiyor... 1-5 dakika surebilir.
         </div>
       )}
 
       {results && (
         <div style={{marginTop: 25}}>
-          <h2>Sonuclar</h2>
+          <h2 style={{fontSize: 16, marginBottom: 15}}>Sonuclar</h2>
           
-          <div className="card-grid">
+          <div className="card-grid" style={{gridTemplateColumns: 'repeat(2, 1fr)'}}>
             <div className="card">
               <div className="card-label">Toplam Islem</div>
-              <div className="card-value">{results.summary ? results.summary.totalTrades : 0}</div>
+              <div className="card-value" style={{fontSize: 24}}>{results.summary ? results.summary.totalTrades : 0}</div>
             </div>
             <div className="card">
               <div className="card-label">Basari Orani</div>
-              <div className={'card-value ' + ((results.summary && results.summary.winRate >= 50) ? 'green' : 'red')}>
+              <div className="card-value green" style={{fontSize: 24}}>
                 %{results.summary ? results.summary.winRate : 0}
               </div>
             </div>
             <div className="card">
               <div className="card-label">Toplam PnL</div>
-              <div className={'card-value ' + ((results.summary && results.summary.totalPnl >= 0) ? 'green' : 'red')}>
+              <div className="card-value green" style={{fontSize: 24}}>
                 {fUSD(results.summary ? results.summary.totalPnl : 0)}
               </div>
             </div>
             <div className="card">
               <div className="card-label">Profit Factor</div>
-              <div className="card-value gold">{results.summary ? results.summary.profitFactor : '-'}</div>
+              <div className="card-value gold" style={{fontSize: 24}}>
+                {results.summary ? results.summary.profitFactor : '-'}
+              </div>
             </div>
           </div>
-
-          {results.trades && results.trades.length > 0 && (
-            <div className="table-container" style={{marginTop: 15}}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Sembol</th>
-                    <th>Giris</th>
-                    <th>Cikis</th>
-                    <th>PnL%</th>
-                    <th>PnL</th>
-                    <th>Neden</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.trades.slice(-20).reverse().map(function(trade, i) {
-                    return (
-                      <tr key={i} className={trade.netPnl >= 0 ? 'row-profit' : 'row-loss'}>
-                        <td><strong>{trade.symbol}</strong></td>
-                        <td>{trade.entryPrice ? trade.entryPrice.toFixed(4) : '-'}</td>
-                        <td>{trade.exitPrice ? trade.exitPrice.toFixed(4) : '-'}</td>
-                        <td style={{color: trade.netPnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
-                          %{trade.netPnlPct ? trade.netPnlPct.toFixed(2) : '0'}
-                        </td>
-                        <td style={{color: trade.netPnl >= 0 ? '#22c55e' : '#ef4444'}}>
-                          {trade.netPnl ? trade.netPnl.toFixed(4) : '0'}
-                        </td>
-                        <td><span className="badge badge-wait">{trade.reason || '-'}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       )}
     </div>
