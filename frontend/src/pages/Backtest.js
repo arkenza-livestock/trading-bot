@@ -11,9 +11,6 @@ function Backtest() {
     commission: 0.1,
     slippage: 0.05,
     minScore: 50,
-    rsiPeriod: 7,
-    rsiOversold: 40,
-    rsiOverbought: 70,
     tradeAmount: 100,
     maxPositions: 3
   });
@@ -76,8 +73,8 @@ function Backtest() {
   var fUSD = function(v) { return '$' + (v || 0).toFixed(2); };
 
   return (
-    <div className="backtest" style={{maxWidth: 480}}>
-      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 4}}>Backtest</h1>
+    <div style={{maxWidth: 500, padding: '20px 0'}}>
+      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 4, color: '#f1f5f9'}}>Backtest</h1>
       <p style={{color: '#64748b', marginBottom: 25, fontSize: 13}}>
         Tum coinler ayni zaman cizgisi icinde test edilir
       </p>
@@ -130,26 +127,6 @@ function Backtest() {
       </div>
 
       <div className="setting-group">
-        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>SINYAL</h3>
-        <div className="setting-row">
-          <label>Min Sinyal Skoru</label>
-          <input name="minScore" type="number" value={params.minScore} onChange={handleChange} style={{width: 80}} />
-        </div>
-        <div className="setting-row">
-          <label>RSI Periyot</label>
-          <input name="rsiPeriod" type="number" value={params.rsiPeriod} onChange={handleChange} style={{width: 80}} />
-        </div>
-        <div className="setting-row">
-          <label>RSI Asiri Satim</label>
-          <input name="rsiOversold" type="number" value={params.rsiOversold} onChange={handleChange} style={{width: 80}} />
-        </div>
-        <div className="setting-row">
-          <label>RSI Asiri Alim</label>
-          <input name="rsiOverbought" type="number" value={params.rsiOverbought} onChange={handleChange} style={{width: 80}} />
-        </div>
-      </div>
-
-      <div className="setting-group">
         <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 16}}>MALIYET</h3>
         <div className="setting-row">
           <label>Komisyon (%)</label>
@@ -170,11 +147,11 @@ function Backtest() {
           fontSize: 15, 
           fontWeight: 600,
           width: '100%',
-          background: '#1e293b',
+          background: loading ? '#1a1a2e' : '#1e293b',
           border: '1px solid #334155',
           borderRadius: 8,
-          color: '#e2e8f0',
-          cursor: 'pointer'
+          color: loading ? '#64748b' : '#e2e8f0',
+          cursor: loading ? 'not-allowed' : 'pointer'
         }}>
         {loading ? 'Calisiyor...' : 'Backtest Calistir'}
       </button>
@@ -189,7 +166,7 @@ function Backtest() {
           color: '#ef4444', 
           fontSize: 13
         }}>
-          {error}
+          Hata: {error}
         </div>
       )}
 
@@ -209,7 +186,7 @@ function Backtest() {
 
       {results && (
         <div style={{marginTop: 25}}>
-          <h2 style={{fontSize: 16, marginBottom: 15}}>Sonuclar</h2>
+          <h2 style={{fontSize: 16, marginBottom: 15, color: '#94a3b8'}}>Sonuclar</h2>
           
           <div className="card-grid" style={{gridTemplateColumns: 'repeat(2, 1fr)'}}>
             <div className="card">
