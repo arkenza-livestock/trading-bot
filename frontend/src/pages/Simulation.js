@@ -24,7 +24,6 @@ function Simulation() {
       setSimRunning(statusData.simRunning || false);
       setTrades(tradesData || []);
       
-      // Coin bazlı performans hesapla
       const coinMap = {};
       (tradesData || []).forEach(t => {
         if (!coinMap[t.symbol]) {
@@ -97,16 +96,20 @@ function Simulation() {
 
   const fUSD = (v) => '$' + (v || 0).toFixed(2);
   const fPCT = (v) => '%' + (v || 0).toFixed(1);
+  const formatTime = (timeStr) => {
+    if (!timeStr) return '-';
+    try {
+      return new Date(timeStr + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+    } catch(e) { return timeStr; }
+  };
 
-  // Son 10 işlem için mini grafik verisi
   const last10Trades = trades.slice(-10).reverse();
   const maxAbsPnl = Math.max(...last10Trades.map(t => Math.abs(t.pnl_percent || 0)), 1);
-
-  // Kazanç dağılımı
   const allWins = trades.filter(t => t.pnl > 0);
   const allLosses = trades.filter(t => t.pnl < 0);
   const totalWinAmount = allWins.reduce((s, t) => s + (t.pnl || 0), 0);
   const totalLossAmount = Math.abs(allLosses.reduce((s, t) => s + (t.pnl || 0), 0));
+  const openPositions = trades.filter(t => t.status === 'OPEN');
 
   return (
     <div className="simulation">
@@ -142,7 +145,7 @@ function Simulation() {
           <div className="control-icon">📊</div>
           <h3>Özet</h3>
           <p className="control-desc">
-            <strong>{trades.length}</strong> işlem | 
+            <strong>{trades.filter(t => t.status !== 'OPEN').length}</strong> kapalı işlem | 
             <span style={{color: '#22c55e'}}> {allWins.length} kazanan</span> | 
             <span style={{color: '#ef4444'}}> {allLosses.length} kaybeden</span>
           </p>
@@ -167,9 +170,6 @@ function Simulation() {
               {stats?.consecutiveLosses || 0}
             </strong>
           </p>
-          {(stats?.consecutiveLosses || 0) >= 3 && (
-            <div style={{color: '#ef4444', fontSize: 12, marginTop: 8}}>🔴 Makine otomatik korumada!</div>
-          )}
         </div>
       </div>
 
@@ -178,11 +178,14 @@ function Simulation() {
         <button className={`filter-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
           📊 Genel Bakış
         </button>
+        <button className={`filter-btn ${activeTab === 'open' ? 'active' : ''}`} onClick={() => setActiveTab('open')}>
+          📌 Açık Pozisyonlar ({openPositions.length})
+        </button>
         <button className={`filter-btn ${activeTab === 'coins' ? 'active' : ''}`} onClick={() => setActiveTab('coins')}>
           🪙 Coin Bazlı
         </button>
         <button className={`filter-btn ${activeTab === 'trades' ? 'active' : ''}`} onClick={() => setActiveTab('trades')}>
-          📋 İşlemler
+          📋 Tüm İşlemler
         </button>
         <button className={`filter-btn ${activeTab === 'chart' ? 'active' : ''}`} onClick={() => setActiveTab('chart')}>
           📈 PnL Grafiği
@@ -250,30 +253,54 @@ function Simulation() {
               <div className="card-value red">%{stats?.worstTrade || 0}</div>
             </div>
           </div>
+        </>
+      )}
 
-          {/* Açık Pozisyonlar */}
-          <h2>📌 Açık Pozisyonlar</h2>
+      {/* AÇIK POZİSYONLAR - Pozisyonlar sayfasıyla aynı stil */}
+      {activeTab === 'open' && (
+        <>
+          <h2>📌 Açık Pozisyonlar ({openPositions.length})</h2>
           <div className="table-container">
             <table>
               <thead>
-                <tr><th>Sembol</th><th>Giriş</th><th>Anlık</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th></tr>
+                <tr>
+                  <th>Coin</th>
+                  <th>Yön</th>
+                  <th>Giriş</th>
+                  <th>Güncel</th>
+                  <th>Stop</th>
+                  <th>Hedef</th>
+                  <th>PnL%</th>
+                  <th>PnL USDT</th>
+                  <th>AI</th>
+                  <th>Açılış</th>
+                </tr>
               </thead>
               <tbody>
-                {(stats?.openPositions || []).map((pos, i) => (
+                {openPositions.map((pos, i) => (
                   <tr key={i} className={(pos.pnl_percent || 0) >= 0 ? 'row-profit' : 'row-loss'}>
                     <td><strong>{pos.symbol}</strong></td>
+                    <td><span className="badge badge-buy">LONG</span></td>
                     <td>{pos.entry_price?.toFixed(6)}</td>
                     <td>{pos.current_price?.toFixed(6)}</td>
+                    <td>{pos.stop_loss?.toFixed(6)}</td>
+                    <td>{pos.take_profit?.toFixed(6) || '-'}</td>
                     <td style={{color: (pos.pnl_percent || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
                       %{pos.pnl_percent?.toFixed(2)}
                     </td>
-                    <td>{pos.stop_loss?.toFixed(6)}</td>
-                    <td>{pos.take_profit?.toFixed(6) || '-'}</td>
-                    <td>%{((pos.machine_confidence || 0) * 100).toFixed(0)}</td>
+                    <td style={{color: (pos.pnl || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
+                      {pos.pnl?.toFixed(4)}
+                    </td>
+                    <td>
+                      <span className={`badge ${(pos.machine_confidence || 0) >= 0.80 ? 'badge-buy' : (pos.machine_confidence || 0) >= 0.65 ? 'badge-wait' : 'badge-sell'}`}>
+                        %{((pos.machine_confidence || 0) * 100).toFixed(0)}
+                      </span>
+                    </td>
+                    <td style={{fontSize: 11, color: '#94a3b8'}}>{formatTime(pos.opened_at)}</td>
                   </tr>
                 ))}
-                {(!stats?.openPositions || stats.openPositions.length === 0) && (
-                  <tr><td colSpan="7" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Açık pozisyon yok</td></tr>
+                {openPositions.length === 0 && (
+                  <tr><td colSpan="10" style={{textAlign: 'center', color: '#64748b', padding: 40}}>📌 Açık pozisyon yok</td></tr>
                 )}
               </tbody>
             </table>
@@ -288,7 +315,14 @@ function Simulation() {
           <div className="table-container">
             <table>
               <thead>
-                <tr><th>Sembol</th><th>İşlem</th><th>Kazanan</th><th>Başarı</th><th>Toplam PnL</th><th>Ort. PnL%</th></tr>
+                <tr>
+                  <th>Coin</th>
+                  <th>İşlem</th>
+                  <th>Kazanan</th>
+                  <th>Başarı</th>
+                  <th>Toplam PnL</th>
+                  <th>Ort. PnL%</th>
+                </tr>
               </thead>
               <tbody>
                 {coinStats.map((coin, i) => (
@@ -308,7 +342,7 @@ function Simulation() {
                   </tr>
                 ))}
                 {coinStats.length === 0 && (
-                  <tr><td colSpan="6" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Henüz işlem yok</td></tr>
+                  <tr><td colSpan="6" style={{textAlign: 'center', color: '#64748b', padding: 40}}>Henüz işlem yok</td></tr>
                 )}
               </tbody>
             </table>
@@ -316,33 +350,53 @@ function Simulation() {
         </>
       )}
 
-      {/* İŞLEMLER */}
+      {/* TÜM İŞLEMLER - Pozisyonlar sayfasıyla aynı stil */}
       {activeTab === 'trades' && (
         <>
-          <h2>📋 Tüm İşlemler ({trades.length})</h2>
+          <h2>📋 Tüm İşlemler ({trades.filter(t => t.status !== 'OPEN').length})</h2>
           <div className="table-container">
             <table>
               <thead>
-                <tr><th>Sembol</th><th>Giriş</th><th>Çıkış</th><th>PnL</th><th>PnL%</th><th>Neden</th><th>AI</th></tr>
+                <tr>
+                  <th>Coin</th>
+                  <th>Yön</th>
+                  <th>Giriş</th>
+                  <th>Çıkış</th>
+                  <th>PnL%</th>
+                  <th>PnL USDT</th>
+                  <th>Neden</th>
+                  <th>AI</th>
+                  <th>Kapanış</th>
+                </tr>
               </thead>
               <tbody>
-                {trades.slice(-50).reverse().map((t, i) => (
+                {trades.filter(t => t.status !== 'OPEN').slice(-50).reverse().map((t, i) => (
                   <tr key={i} className={t.pnl >= 0 ? 'row-profit' : 'row-loss'}>
                     <td><strong>{t.symbol}</strong></td>
+                    <td><span className="badge badge-buy">LONG</span></td>
                     <td>{t.entry_price?.toFixed(6)}</td>
-                    <td>{t.exit_price?.toFixed(6) || '-'}</td>
+                    <td>{t.exit_price?.toFixed(6)}</td>
                     <td style={{color: t.pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
-                      {fUSD(t.pnl)}
-                    </td>
-                    <td style={{color: t.pnl >= 0 ? '#22c55e' : '#ef4444'}}>
                       %{t.pnl_percent?.toFixed(2)}
                     </td>
-                    <td><span className={`badge ${t.close_reason === 'TAKE_PROFIT' || t.close_reason === 'TRAILING_STOP' ? 'badge-buy' : t.close_reason === 'STOP_LOSS' || t.close_reason === 'HARD_STOP' ? 'badge-sell' : 'badge-wait'}`}>{t.close_reason || t.status}</span></td>
-                    <td>%{((t.machine_confidence || 0) * 100).toFixed(0)}</td>
+                    <td style={{color: t.pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
+                      {t.pnl?.toFixed(4)}
+                    </td>
+                    <td>
+                      <span className={`badge ${t.close_reason === 'TAKE_PROFIT' || t.close_reason === 'TRAILING_STOP' ? 'badge-buy' : t.close_reason === 'STOP_LOSS' || t.close_reason === 'HARD_STOP' ? 'badge-sell' : 'badge-wait'}`}>
+                        {t.close_reason || 'KAPALI'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`badge ${(t.machine_confidence || 0) >= 0.80 ? 'badge-buy' : (t.machine_confidence || 0) >= 0.65 ? 'badge-wait' : 'badge-sell'}`}>
+                        %{((t.machine_confidence || 0) * 100).toFixed(0)}
+                      </span>
+                    </td>
+                    <td style={{fontSize: 11, color: '#94a3b8'}}>{formatTime(t.closed_at)}</td>
                   </tr>
                 ))}
-                {trades.length === 0 && (
-                  <tr><td colSpan="7" style={{textAlign: 'center', color: '#64748b', padding: 30}}>Henüz işlem yok</td></tr>
+                {trades.filter(t => t.status !== 'OPEN').length === 0 && (
+                  <tr><td colSpan="9" style={{textAlign: 'center', color: '#64748b', padding: 40}}>Henüz kapalı işlem yok</td></tr>
                 )}
               </tbody>
             </table>
@@ -353,7 +407,7 @@ function Simulation() {
       {/* PNL GRAFİĞİ */}
       {activeTab === 'chart' && (
         <>
-          <h2>📈 Son 10 İşlem PnL Grafiği</h2>
+          <h2>📈 Son 10 İşlem PnL</h2>
           <div style={{background: '#0d1321', border: '1px solid #1a2540', borderRadius: 14, padding: 30, marginBottom: 20}}>
             {last10Trades.length > 0 ? (
               <div style={{display: 'flex', alignItems: 'flex-end', gap: 12, height: 200, paddingTop: 20}}>
@@ -365,14 +419,11 @@ function Simulation() {
                         %{(t.pnl_percent || 0).toFixed(1)}
                       </span>
                       <div style={{
-                        width: '100%',
-                        maxWidth: 40,
-                        height,
+                        width: '100%', maxWidth: 40, height,
                         borderRadius: '6px 6px 0 0',
                         background: (t.pnl_percent || 0) >= 0 
                           ? 'linear-gradient(180deg, #22c55e, #166534)' 
                           : 'linear-gradient(180deg, #ef4444, #991b1b)',
-                        transition: 'all 0.3s'
                       }}></div>
                       <span style={{fontSize: 9, color: '#64748b'}}>{t.symbol?.replace('USDT','')}</span>
                     </div>
@@ -384,15 +435,13 @@ function Simulation() {
             )}
           </div>
 
-          {/* Kazanç/Kayıp Dağılımı */}
           <div className="card-grid">
             <div className="card" style={{textAlign: 'center'}}>
-              <div className="card-label">Kazanç/Kayıp Oranı</div>
+              <div className="card-label">Kazanç/Kayıp Dağılımı</div>
               <div style={{display: 'flex', height: 20, borderRadius: 10, overflow: 'hidden', marginTop: 10}}>
                 <div style={{
                   width: stats?.winRate + '%',
                   background: 'linear-gradient(90deg, #22c55e, #16a34a)',
-                  transition: 'all 0.5s'
                 }}></div>
                 <div style={{
                   width: (100 - (stats?.winRate || 0)) + '%',
