@@ -1,336 +1,235 @@
-const binance = require('./binance');
-const TechnicalAnalysis = require('./analysis');
-const MachineDecisionEngine = require('./MachineDecisionEngine');
-const db = require('./database');
+import React, { useState } from 'react';
 
-/**
- * ═══════════════════════════════════════════════════════════
- *   MAKİNE EĞİTİM BACKTEST MOTORU - v2.0
- *   - Epoch tabanlı eğitim
- *   - Train/Test ayrımı
- *   - Walk-forward analiz
- *   - Makine öğrenme metrikleri
- * ═══════════════════════════════════════════════════════════
- */
+function Backtest() {
+  const [params, setParams] = useState({
+    symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT',
+    interval: '4h',
+    days: 30,
+    stopLoss: 2.0,
+    trailingStop: 0.5,
+    minProfit: 1.5,
+    commission: 0.1,
+    slippage: 0.05,
+    minScore: 50,
+    tradeAmount: 100,
+    maxPositions: 3,
+    epochs: 3,
+    machineConfidenceMin: 0.70
+  });
 
-class MachineBacktestEngine {
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  constructor() {
-    this.machine = null;
-    this.results = {
-      epochs: [],
-      finalTest: null,
-      learningCurve: []
-    };
-  }
+  const handleChange = (e) => {
+    setParams({ ...params, [e.target.name]: e.target.value });
+  };
 
-  async run(params) {
-    const {
-      symbols = ['BTCUSDT'],
-      interval = '4h',
-      days = 30,
-      stopLoss = 2.0,
-      trailingStop = 0.5,
-      minProfit = 1.5,
-      commission = 0.1,
-      slippage = 0.05,
-      minScore = 50,
-      tradeAmount = 100,
-      maxPositions = 3,
-      epochs = 3,
-      trainSplit = 0.70,
-      machineConfidenceMin = 0.70,
-      enableLearning = true
-    } = params;
+  const runBacktest = async () => {
+    setLoading(true);
+    setError('');
+    setResults(null);
 
-    const totalCost = (commission + slippage) * 2 / 100;
-    const limit = Math.ceil(days * 6) + 200;
+    try {
+      const symbolArray = params.symbols.split(',').map(s => s.trim()).filter(s => s);
 
-    console.log('╔══════════════════════════════════════════════╗');
-    console.log('║   MAKİNE EĞİTİM BACKTEST - v2.0             ║');
-    console.log('╚══════════════════════════════════════════════╝');
-    console.log('Semboller: ' + symbols.length + ' | Periyot: ' + interval + ' | Gun: ' + days);
-    console.log('Epoch: ' + epochs + ' | Egitim: %' + (trainSplit*100) + ' | AI Guven: %' + (machineConfidenceMin*100));
-    console.log('='.repeat(50) + '\n');
-
-    // Veri topla
-    const allData = {};
-    for (const symbol of symbols) {
-      try {
-        const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
-        if (candles && candles.length >= 150) {
-          allData[symbol] = candles;
-          console.log('✅ ' + symbol + ': ' + candles.length + ' mum');
-        } else {
-          console.log('⚠️ ' + symbol + ': Yetersiz veri (' + (candles?.length || 0) + ')');
-        }
-        await new Promise(r => setTimeout(r, 200));
-      } catch(e) {
-        console.error('❌ ' + symbol + ': ' + e.message);
-      }
-    }
-
-    if (Object.keys(allData).length === 0) {
-      console.error('Hiç veri toplanamadı!');
-      return null;
-    }
-
-    // Eğitim ve test
-    const allTrades = [];
-    const epochResults = [];
-
-    for (const [symbol, candles] of Object.entries(allData)) {
-      const splitIndex = Math.floor(candles.length * trainSplit);
-      const trainData = candles.slice(0, splitIndex);
-      const testData = candles.slice(splitIndex);
-
-      console.log('\n' + '-'.repeat(50));
-      console.log('🪙 ' + symbol + ': Egitim=' + trainData.length + ' | Test=' + testData.length);
-
-      for (let epoch = 0; epoch < epochs; epoch++) {
-        console.log('  Epoch ' + (epoch + 1) + '/' + epochs + '...');
-        
-        if (epoch === 0 || epoch % 2 === 0) {
-          this.machine = new MachineDecisionEngine();
-        }
-
-        const trainTrades = await this.runSingleBacktest(symbol, trainData, {
-          stopLoss, trailingStop, minProfit, commission, slippage,
-          minScore, tradeAmount, maxPositions, machineConfidenceMin
-        }, 'TRAIN');
-
-        if (enableLearning) {
-          for (const trade of trainTrades) {
-            this.machine.feedbackSignalResult(
-              trade.entryTime,
-              trade.netPnlPct,
-              trade.maxFavorable || trade.netPnlPct,
-              trade.maxAdverse || trade.netPnlPct
-            );
-          }
-        }
-
-        const trainStats = this.calculateStats(trainTrades, symbol);
-        trainStats.epoch = epoch + 1;
-        trainStats.phase = 'TRAIN';
-        epochResults.push(trainStats);
-
-        if (trainTrades.length > 0) {
-          console.log('    Islem: ' + trainTrades.length + ' | Basari: %' + trainStats.winRate + ' | PnL: ' + trainStats.totalPnl?.toFixed(2));
-        }
-      }
-
-      // Test aşaması
-      if (testData.length > 100) {
-        console.log('  🧪 TEST...');
-        const testTrades = await this.runSingleBacktest(symbol, testData, {
-          stopLoss, trailingStop, minProfit, commission, slippage,
-          minScore, tradeAmount, maxPositions, machineConfidenceMin
-        }, 'TEST');
-
-        const testStats = this.calculateStats(testTrades, symbol);
-        testStats.phase = 'TEST';
-        epochResults.push(testStats);
-        allTrades.push(...testTrades);
-
-        console.log('    Islem: ' + testTrades.length + ' | Basari: %' + testStats.winRate + ' | PnL: ' + testStats.totalPnl?.toFixed(2));
-      }
-    }
-
-    this.results.epochs = epochResults;
-    this.results.finalTest = this.calculateStats(allTrades, 'TOPLAM');
-
-    // Sonuçları yazdır
-    this.printLearningCurve();
-
-    const finalStats = this.results.finalTest;
-    
-    return {
-      summary: {
-        totalTrades: finalStats.totalTrades,
-        wins: finalStats.wins,
-        losses: finalStats.losses,
-        winRate: finalStats.winRate,
-        totalPnl: finalStats.totalPnl,
-        profitFactor: finalStats.profitFactor,
-        avgWin: finalStats.avgWin,
-        avgLoss: finalStats.avgLoss,
-        bestTrade: finalStats.bestTrade,
-        worstTrade: finalStats.worstTrade,
-        sharpeRatio: finalStats.sharpeRatio
-      },
-      learningCurve: epochResults,
-      trades: allTrades.slice(0, 500),
-      params: { interval, days, minScore, stopLoss, trailingStop, tradeAmount, maxPositions, epochs, machineConfidenceMin }
-    };
-  }
-
-  async runSingleBacktest(symbol, candles, params, phase = 'TEST') {
-    const {
-      stopLoss, trailingStop, minProfit, commission, slippage,
-      tradeAmount, maxPositions, machineConfidenceMin
-    } = params;
-
-    const totalCost = (commission + slippage) * 2 / 100;
-    const trades = [];
-    let openPositions = [];
-    const startIndex = 100;
-
-    for (let i = startIndex; i < candles.length; i++) {
-      const currentSlice = candles.slice(0, i + 1);
-      const currentPrice = parseFloat(candles[i][4]);
-      const currentTime = parseInt(candles[i][6]);
-
-      // Açık pozisyonları güncelle
-      openPositions = openPositions.filter(pos => {
-        const entryPrice = pos.entryPrice;
-        let pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100 - totalCost * 100;
-
-        if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
-        if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
-
-        const trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
-        const hardStopPrice = entryPrice * (1 - stopLoss / 100);
-        const effectiveStop = Math.max(trailingStopPrice, hardStopPrice);
-
-        let closeReason = null;
-
-        if (pnlPct <= -stopLoss) {
-          closeReason = 'STOP_LOSS';
-        } else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) {
-          closeReason = 'TRAILING_STOP';
-        } else if (pos.takeProfit && currentPrice >= pos.takeProfit) {
-          closeReason = 'TAKE_PROFIT';
-        }
-
-        if (closeReason) {
-          const netPnl = tradeAmount * pnlPct / 100;
-          trades.push({
-            symbol, side: 'LONG',
-            entryPrice, exitPrice: currentPrice,
-            entryTime: pos.entryTime, exitTime: currentTime,
-            reason: closeReason,
-            score: pos.score || 0,
-            machineConfidence: pos.machineConfidence || 0,
-            netPnl: parseFloat(netPnl.toFixed(4)),
-            netPnlPct: parseFloat(pnlPct.toFixed(2)),
-            maxFavorable: pos.highestPrice ? ((pos.highestPrice - entryPrice) / entryPrice) * 100 : pnlPct,
-            maxAdverse: pos.lowestPrice ? ((pos.lowestPrice - entryPrice) / entryPrice) * 100 : pnlPct,
-            phase
-          });
-          return false;
-        }
-        return true;
+      const res = await fetch('/api/backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbols: symbolArray,
+          interval: params.interval,
+          days: parseInt(params.days),
+          stopLoss: parseFloat(params.stopLoss),
+          trailingStop: parseFloat(params.trailingStop),
+          minProfit: parseFloat(params.minProfit),
+          commission: parseFloat(params.commission),
+          slippage: parseFloat(params.slippage),
+          minScore: parseInt(params.minScore),
+          tradeAmount: parseFloat(params.tradeAmount),
+          maxPositions: parseInt(params.maxPositions),
+          epochs: parseInt(params.epochs),
+          machineConfidenceMin: parseFloat(params.machineConfidenceMin)
+        })
       });
 
-      if (openPositions.length >= maxPositions) continue;
-
-      // Makine analizi
-      if (!this.machine) this.machine = new MachineDecisionEngine();
-
-      let machineAnalysis;
-      try {
-        machineAnalysis = this.machine.analyze(currentSlice, {
-          symbol,
-          priceChangePercent: 0,
-          quoteVolume: parseFloat(candles[i][5]) || 0
-        });
-      } catch(e) {
-        continue;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Backtest başarısız');
       }
 
-      const shouldEnter = machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= machineConfidenceMin;
-      if (!shouldEnter) continue;
-
-      openPositions.push({
-        symbol, side: 'LONG',
-        entryPrice: currentPrice,
-        highestPrice: currentPrice,
-        lowestPrice: currentPrice,
-        entryTime: currentTime,
-        score: 0,
-        machineConfidence: machineAnalysis.confidence,
-        takeProfit: machineAnalysis.takeProfit || null,
-        stopLoss: machineAnalysis.stopLoss || null
-      });
+      const data = await res.json();
+      setResults(data);
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    // Açık pozisyonları kapat
-    const lastPrice = parseFloat(candles[candles.length - 1][4]);
-    const lastTime = parseInt(candles[candles.length - 1][6]);
+  return (
+    <div className="backtest">
+      <h1>🧪 Backtest</h1>
+      <p style={{color: '#9ca3af', marginBottom: 20}}>
+        v21 - Makine Zekası + Epoch Eğitim
+      </p>
 
-    for (const pos of openPositions) {
-      const pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
-      const netPnl = tradeAmount * pnlPct / 100;
-      trades.push({
-        symbol, side: 'LONG',
-        entryPrice: pos.entryPrice, exitPrice: lastPrice,
-        entryTime: pos.entryTime, exitTime: lastTime,
-        reason: 'PERIOD_END',
-        score: pos.score || 0,
-        machineConfidence: pos.machineConfidence || 0,
-        netPnl: parseFloat(netPnl.toFixed(4)),
-        netPnlPct: parseFloat(pnlPct.toFixed(2)),
-        maxFavorable: pos.highestPrice ? ((pos.highestPrice - pos.entryPrice) / pos.entryPrice) * 100 : pnlPct,
-        maxAdverse: pos.lowestPrice ? ((pos.lowestPrice - pos.entryPrice) / pos.entryPrice) * 100 : pnlPct,
-        phase
-      });
-    }
+      {/* Parametreler */}
+      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'}}>
+        <div className="setting-row">
+          <label>Coinler</label>
+          <input name="symbols" value={params.symbols} onChange={handleChange} style={{width: '100%'}} />
+        </div>
+        <div className="setting-row">
+          <label>Mum Aralığı</label>
+          <select name="interval" value={params.interval} onChange={handleChange}>
+            <option value="1h">1 Saat</option>
+            <option value="4h">4 Saat</option>
+            <option value="1d">1 Gün</option>
+          </select>
+        </div>
+        <div className="setting-row">
+          <label>Test Süresi (Gün)</label>
+          <input name="days" type="number" value={params.days} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Epoch</label>
+          <input name="epochs" type="number" value={params.epochs} onChange={handleChange} />
+        </div>
+      </div>
 
-    return trades;
-  }
+      <h2>📊 RİSK</h2>
+      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
+        <div className="setting-row">
+          <label>Stop Loss (%)</label>
+          <input name="stopLoss" type="number" step="0.1" value={params.stopLoss} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Trailing Stop (%)</label>
+          <input name="trailingStop" type="number" step="0.1" value={params.trailingStop} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Min Kar (%)</label>
+          <input name="minProfit" type="number" step="0.1" value={params.minProfit} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>İşlem (USDT)</label>
+          <input name="tradeAmount" type="number" value={params.tradeAmount} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Max Pozisyon</label>
+          <input name="maxPositions" type="number" value={params.maxPositions} onChange={handleChange} />
+        </div>
+      </div>
 
-  calculateStats(trades, symbol) {
-    const wins = trades.filter(t => t.netPnl > 0);
-    const losses = trades.filter(t => t.netPnl <= 0);
-    const totalPnl = trades.reduce((s, t) => s + t.netPnl, 0);
-    const gW = wins.reduce((s, t) => s + t.netPnl, 0);
-    const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
-    
-    const returns = trades.map(t => t.netPnlPct);
-    const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-    const stdReturn = returns.length > 1 ? Math.sqrt(returns.reduce((a, b) => a + Math.pow(b - avgReturn, 2), 0) / returns.length) : 0;
-    const sharpeRatio = stdReturn > 0 ? (avgReturn / stdReturn) * Math.sqrt(Math.max(1, trades.length)) : 0;
+      <h2>🧠 MAKİNE</h2>
+      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
+        <div className="setting-row">
+          <label>AI Güven Eşiği</label>
+          <input name="machineConfidenceMin" type="number" step="0.05" value={params.machineConfidenceMin} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Min Sinyal Skoru</label>
+          <input name="minScore" type="number" value={params.minScore} onChange={handleChange} />
+        </div>
+      </div>
 
-    return {
-      symbol,
-      totalTrades: trades.length,
-      wins: wins.length,
-      losses: losses.length,
-      winRate: trades.length > 0 ? parseFloat((wins.length / trades.length * 100).toFixed(1)) : 0,
-      totalPnl: parseFloat(totalPnl.toFixed(2)),
-      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
-      avgWin: wins.length > 0 ? parseFloat((wins.reduce((s, t) => s + t.netPnlPct, 0) / wins.length).toFixed(2)) : 0,
-      avgLoss: losses.length > 0 ? parseFloat((losses.reduce((s, t) => s + t.netPnlPct, 0) / losses.length).toFixed(2)) : 0,
-      bestTrade: trades.length > 0 ? parseFloat(Math.max(...trades.map(t => t.netPnlPct)).toFixed(2)) : 0,
-      worstTrade: trades.length > 0 ? parseFloat(Math.min(...trades.map(t => t.netPnlPct)).toFixed(2)) : 0,
-      sharpeRatio: parseFloat(sharpeRatio.toFixed(2))
-    };
-  }
+      <h2>💰 MALİYET</h2>
+      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
+        <div className="setting-row">
+          <label>Komisyon (%)</label>
+          <input name="commission" type="number" step="0.01" value={params.commission} onChange={handleChange} />
+        </div>
+        <div className="setting-row">
+          <label>Slippage (%)</label>
+          <input name="slippage" type="number" step="0.01" value={params.slippage} onChange={handleChange} />
+        </div>
+      </div>
 
-  printLearningCurve() {
-    console.log('\n╔══════════════════════════════════════════════════════╗');
-    console.log('║                ÖĞRENME EĞRİSİ                       ║');
-    console.log('╚══════════════════════════════════════════════════════╝');
-    console.log('Epoch | Sembol        | Islem | Basari% | PnL     | Sharpe');
-    console.log('──────┼───────────────┼───────┼─────────┼─────────┼───────');
+      <button className="btn" onClick={runBacktest} disabled={loading} style={{marginTop: 20, padding: '12px 30px', fontSize: 16}}>
+        {loading ? '⏳ Çalışıyor...' : '🚀 Backtest Çalıştır'}
+      </button>
 
-    for (const epoch of this.results.epochs) {
-      const sym = (epoch.symbol || 'ALL').padEnd(13);
-      const trd = String(epoch.totalTrades).padStart(5);
-      const win = String(epoch.winRate?.toFixed(1) + '%').padStart(7);
-      const pnl = String(epoch.totalPnl?.toFixed(2)).padStart(7);
-      const shrp = String(epoch.sharpeRatio?.toFixed(2) || '-').padStart(5);
-      console.log('  ' + String(epoch.epoch || '-').padStart(3) + '  | ' + sym + ' | ' + trd + ' | ' + win + ' | ' + pnl + ' | ' + shrp);
-    }
+      {error && <div className="message" style={{marginTop: 15, color: '#ff4444'}}>❌ {error}</div>}
 
-    if (this.results.finalTest) {
-      console.log('──────┼───────────────┼───────┼─────────┼─────────┼───────');
-      const ft = this.results.finalTest;
-      console.log('  TEST | TOPLAM        | ' + String(ft.totalTrades).padStart(5) + ' | ' + String(ft.winRate?.toFixed(1) + '%').padStart(7) + ' | ' + String(ft.totalPnl?.toFixed(2)).padStart(7) + ' | ' + String(ft.sharpeRatio?.toFixed(2) || '-').padStart(5));
-    }
-    console.log('='.repeat(62) + '\n');
-  }
+      {/* Sonuçlar */}
+      {results && (
+        <div style={{marginTop: 30}}>
+          <h2>📈 Sonuçlar</h2>
+          
+          <div className="card-grid">
+            <div className="card">
+              <div className="card-title">Toplam İşlem</div>
+              <div className="card-value">{results.summary?.totalTrades || 0}</div>
+            </div>
+            <div className="card">
+              <div className="card-title">Başarı Oranı</div>
+              <div className="card-value" style={{color: (results.summary?.winRate || 0) >= 50 ? '#00ff88' : '#ff4444'}}>
+                %{results.summary?.winRate || 0}
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-title">Toplam PnL</div>
+              <div className="card-value" style={{color: (results.summary?.totalPnl || 0) >= 0 ? '#00ff88' : '#ff4444'}}>
+                ${results.summary?.totalPnl?.toFixed(2) || '0'}
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-title">Profit Factor</div>
+              <div className="card-value">{results.summary?.profitFactor || '-'}</div>
+            </div>
+            <div className="card">
+              <div className="card-title">Sharpe</div>
+              <div className="card-value">{results.summary?.sharpeRatio || '-'}</div>
+            </div>
+            <div className="card">
+              <div className="card-title">Ort. Kazanç</div>
+              <div className="card-value" style={{color: '#00ff88'}}>%{results.summary?.avgWin || 0}</div>
+            </div>
+            <div className="card">
+              <div className="card-title">Ort. Kayıp</div>
+              <div className="card-value" style={{color: '#ff4444'}}>%{results.summary?.avgLoss || 0}</div>
+            </div>
+            <div className="card">
+              <div className="card-title">En İyi</div>
+              <div className="card-value" style={{color: '#00ff88'}}>%{results.summary?.bestTrade || 0}</div>
+            </div>
+          </div>
+
+          {/* İşlemler Tablosu */}
+          <h3>Son İşlemler</h3>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sembol</th>
+                  <th>Giriş</th>
+                  <th>Çıkış</th>
+                  <th>PnL%</th>
+                  <th>Neden</th>
+                  <th>AI Güven</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(results.trades || []).slice(0, 20).map((trade, i) => (
+                  <tr key={i} className={trade.netPnl >= 0 ? 'profit' : 'loss'}>
+                    <td><strong>{trade.symbol}</strong></td>
+                    <td>{trade.entryPrice?.toFixed(4)}</td>
+                    <td>{trade.exitPrice?.toFixed(4)}</td>
+                    <td style={{color: trade.netPnl >= 0 ? '#00ff88' : '#ff4444'}}>
+                      %{trade.netPnlPct?.toFixed(2)}
+                    </td>
+                    <td>{trade.reason}</td>
+                    <td>%{((trade.machineConfidence || 0) * 100).toFixed(0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-module.exports = new MachineBacktestEngine();
+export default Backtest;
