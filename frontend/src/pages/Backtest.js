@@ -31,23 +31,26 @@ function Backtest() {
     setResults(null);
 
     try {
-      const symbolArray = params.symbols.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+      var symbolArray = params.symbols.split(',').map(function(s) { 
+        return s.trim(); 
+      }).filter(function(s) { 
+        return s.length > 0; 
+      });
 
-      var body = {
-        symbols: symbolArray,
-        interval: params.interval,
-        days: parseInt(params.days),
-        stopLoss: parseFloat(params.stopLoss),
-        trailingStop: parseFloat(params.trailingStop),
-        minProfit: parseFloat(params.minProfit),
-        commission: parseFloat(params.commission),
-        slippage: parseFloat(params.slippage),
-        minScore: parseInt(params.minScore),
-        tradeAmount: parseFloat(params.tradeAmount),
-        maxPositions: parseInt(params.maxPositions),
-        epochs: parseInt(params.epochs),
-        machineConfidenceMin: parseFloat(params.machineConfidenceMin)
-      };
+      var body = {};
+      body.symbols = symbolArray;
+      body.interval = params.interval;
+      body.days = parseInt(params.days);
+      body.stopLoss = parseFloat(params.stopLoss);
+      body.trailingStop = parseFloat(params.trailingStop);
+      body.minProfit = parseFloat(params.minProfit);
+      body.commission = parseFloat(params.commission);
+      body.slippage = parseFloat(params.slippage);
+      body.minScore = parseInt(params.minScore);
+      body.tradeAmount = parseFloat(params.tradeAmount);
+      body.maxPositions = parseInt(params.maxPositions);
+      body.epochs = parseInt(params.epochs);
+      body.machineConfidenceMin = parseFloat(params.machineConfidenceMin);
 
       var res = await fetch('/api/backtest', {
         method: 'POST',
@@ -69,18 +72,17 @@ function Backtest() {
     }
   };
 
-  var formatUsd = function(v) { return '$' + (v || 0).toFixed(2); };
+  var fUSD = function(v) { return '$' + (v || 0).toFixed(2); };
 
   return (
     <div className="backtest">
-      <h1>🧪 Backtest</h1>
+      <h1>Backtest</h1>
       <p style={{color: '#64748b', marginBottom: 25, fontSize: 14}}>
         v21 - Makine Zekasi + Epoch Egitim
       </p>
 
-      <h2>📊 Parametreler</h2>
-
       <div className="setting-group">
+        <h3>Parametreler</h3>
         <div className="setting-row">
           <label>Coinler (virgulle)</label>
           <input name="symbols" value={params.symbols} onChange={handleChange} style={{width: '100%', maxWidth: 400}} />
@@ -103,8 +105,8 @@ function Backtest() {
         </div>
       </div>
 
-      <h2>⚠️ RISK</h2>
       <div className="setting-group">
+        <h3>Risk</h3>
         <div className="setting-row">
           <label>Stop Loss (%)</label>
           <input name="stopLoss" type="number" step="0.1" value={params.stopLoss} onChange={handleChange} />
@@ -127,8 +129,8 @@ function Backtest() {
         </div>
       </div>
 
-      <h2>🧠 MAKINE</h2>
       <div className="setting-group">
+        <h3>Makine</h3>
         <div className="setting-row">
           <label>AI Guven Esigi</label>
           <input name="machineConfidenceMin" type="number" step="0.05" value={params.machineConfidenceMin} onChange={handleChange} />
@@ -139,8 +141,8 @@ function Backtest() {
         </div>
       </div>
 
-      <h2>💰 MALIYET</h2>
       <div className="setting-group">
+        <h3>Maliyet</h3>
         <div className="setting-row">
           <label>Komisyon (%)</label>
           <input name="commission" type="number" step="0.01" value={params.commission} onChange={handleChange} />
@@ -153,24 +155,24 @@ function Backtest() {
 
       <button className="btn" onClick={runBacktest} disabled={loading} 
         style={{marginTop: 20, padding: '14px 40px', fontSize: 16, width: '100%'}}>
-        {loading ? '⏳ Calisiyor... (Bu islem dakikalar surebilir)' : '🚀 Backtest Calistir'}
+        {loading ? 'Calisiyor...' : 'Backtest Calistir'}
       </button>
 
       {error && (
         <div style={{marginTop: 15, padding: 14, background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: 10, color: '#ef4444'}}>
-          ❌ {error}
+          {error}
         </div>
       )}
 
       {loading && (
         <div style={{marginTop: 15, padding: 20, textAlign: 'center', color: '#fbbf24'}}>
-          ⏳ Backtest calisiyor... Coin sayisina bagli olarak 1-5 dakika surebilir.
+          Backtest calisiyor... Coin sayisina bagli olarak 1-5 dakika surebilir.
         </div>
       )}
 
       {results && (
         <div style={{marginTop: 30}}>
-          <h2>📈 Sonuclar</h2>
+          <h2>Sonuclar</h2>
           
           <div className="card-grid">
             <div className="card">
@@ -186,7 +188,7 @@ function Backtest() {
             <div className="card">
               <div className="card-label">Toplam PnL</div>
               <div className={'card-value ' + ((results.summary && results.summary.totalPnl >= 0) ? 'green' : 'red')}>
-                {formatUsd(results.summary ? results.summary.totalPnl : 0)}
+                {fUSD(results.summary ? results.summary.totalPnl : 0)}
               </div>
             </div>
             <div className="card">
@@ -216,7 +218,7 @@ function Backtest() {
 
           {results.trades && results.trades.length > 0 && (
             <div>
-              <h3>📋 Islemler ({results.trades.length})</h3>
+              <h3>Islemler ({results.trades.length})</h3>
               <div className="table-container">
                 <table>
                   <thead>
