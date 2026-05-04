@@ -1,8 +1,29 @@
 const binance = require('./binance');
 const TechnicalAnalysis = require('./analysis');
+const MachineDecisionEngine = require('./MachineDecisionEngine');
 const db = require('./database');
 
-class BacktestEngine {
+/**
+ * ═══════════════════════════════════════════════════════════
+ *   MAKİNE EĞİTİM BACKTEST MOTORU - v2.0
+ *   - Epoch tabanlı eğitim
+ *   - Train/Test ayrımı
+ *   - Walk-forward analiz
+ *   - Makine öğrenme metrikleri
+ * ═══════════════════════════════════════════════════════════
+ */
+
+class MachineBacktestEngine {
+
+  constructor() {
+    this.machine = null;
+    this.results = {
+      epochs: [],
+      finalTest: null,
+      learningCurve: []
+    };
+  }
+
   async run(params) {
     const {
       symbols = ['BTCUSDT'],
@@ -16,225 +37,300 @@ class BacktestEngine {
       minScore = 50,
       tradeAmount = 100,
       maxPositions = 3,
+      epochs = 3,
+      trainSplit = 0.70,
+      machineConfidenceMin = 0.70,
+      enableLearning = true
     } = params;
 
-    const totalCost    = (commission + slippage) * 2 / 100;
-    const limit        = Math.ceil(days * 6) + 200;
-    const results      = [];
-    const coinSummaries = [];
+    const totalCost = (commission + slippage) * 2 / 100;
+    const limit = Math.ceil(days * 6) + 200;
 
-    console.log(`Backtest v19: ${symbols.length} coin | ${days}g | ${interval}`);
+    console.log('╔══════════════════════════════════════════════╗');
+    console.log('║   MAKİNE EĞİTİM BACKTEST - v2.0             ║');
+    console.log('╚══════════════════════════════════════════════╝');
+    console.log('Semboller: ' + symbols.length + ' | Periyot: ' + interval + ' | Gun: ' + days);
+    console.log('Epoch: ' + epochs + ' | Egitim: %' + (trainSplit*100) + ' | AI Guven: %' + (machineConfidenceMin*100));
+    console.log('='.repeat(50) + '\n');
 
+    // Veri topla
+    const allData = {};
     for (const symbol of symbols) {
       try {
-        const [candles4H, candles1H, candles1D] = await Promise.all([
-          binance.getKlines(symbol, '4h', Math.min(limit, 1000)),
-          binance.getKlines(symbol, '1h', Math.min(limit * 4, 1000)),
-          binance.getKlines(symbol, '1d', Math.min(days + 100, 1000)),
-        ]);
-
-        if (!candles4H || candles4H.length < 150) {
-          console.log(`⚠️${symbol}: yetersiz(${candles4H?.length || 0})`);
-          continue;
+        const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
+        if (candles && candles.length >= 150) {
+          allData[symbol] = candles;
+          console.log('✅ ' + symbol + ': ' + candles.length + ' mum');
+        } else {
+          console.log('⚠️ ' + symbol + ': Yetersiz veri (' + (candles?.length || 0) + ')');
         }
-
-        console.log(`✅${symbol}: 4H:${candles4H.length} 1H:${candles1H?.length||0} 1D:${candles1D?.length||0}`);
-
-        const cutoff4H  = candles4H.length - Math.ceil(days * 6);
-        const cutoff1H  = (candles1H?.length||0) - Math.ceil(days * 24);
-        const cutoff1D  = (candles1D?.length||0) - days;
-
-        const trades       = [];
-        let openPositions  = [];
-        let wins = 0, losses = 0;
-        let grossWin = 0, grossLoss = 0;
-
-        for (let i = 100; i < candles4H.length - cutoff4H; i++) {
-          const symH4  = candles4H.slice(0, i + 1);
-          const sym1D  = candles1D ? candles1D.slice(0, Math.floor(i / 6) + 1) : [];
-          const ticker = { symbol, priceChangePercent: 0, quoteVolume: 999999999 };
-
-          // Açık pozisyonları güncelle
-          const currentPrice = parseFloat(candles4H[i][4]);
-          const currentTime  = parseInt(candles4H[i][6]);
-
-          openPositions = openPositions.filter(pos => {
-            const entryPrice  = pos.entryPrice;
-            const side        = pos.side || 'LONG';
-            let pnlPct;
-
-            if (side === 'SHORT') {
-              pnlPct = ((entryPrice - currentPrice) / entryPrice) * 100 - totalCost * 100;
-            } else {
-              pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100 - totalCost * 100;
-            }
-
-            // Trailing stop güncelle
-            if (side === 'LONG' && currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
-            if (side === 'SHORT' && currentPrice < pos.lowestPrice)  pos.lowestPrice  = currentPrice;
-
-            const trailingStopPrice = side === 'LONG'
-              ? pos.highestPrice * (1 - trailingStop / 100)
-              : pos.lowestPrice  * (1 + trailingStop / 100);
-            const hardStopPrice = side === 'LONG'
-              ? entryPrice * (1 - stopLoss / 100)
-              : entryPrice * (1 + stopLoss / 100);
-
-            let closeReason = null;
-            if (pnlPct <= -stopLoss)     closeReason = 'STOP_LOSS';
-            else if (pnlPct >= minProfit) {
-              if (side === 'LONG'  && currentPrice <= trailingStopPrice) closeReason = 'TRAILING_STOP';
-              if (side === 'SHORT' && currentPrice >= trailingStopPrice) closeReason = 'TRAILING_STOP';
-            }
-
-            if (closeReason) {
-              const netPnl    = tradeAmount * pnlPct / 100;
-              const netPnlPct = parseFloat(pnlPct.toFixed(2));
-              trades.push({
-                symbol, side,
-                entryPrice,
-                exitPrice:  currentPrice,
-                entryTime:  pos.entryTime,
-                exitTime:   currentTime,
-                reason:     closeReason,
-                score:      pos.score,
-                trend4H:    pos.trend4H,
-                trend1H:    pos.trend1H,
-                netPnl:     parseFloat(netPnl.toFixed(4)),
-                netPnlPct,
-              });
-              if (netPnl > 0) { wins++; grossWin += netPnl; }
-              else             { losses++; grossLoss += Math.abs(netPnl); }
-              return false;
-            }
-            return true;
-          });
-
-          if (openPositions.length >= maxPositions) continue;
-          if (openPositions.find(p => p.symbol === symbol)) continue;
-
-          // 4H setup analizi
-          const setup4H = TechnicalAnalysis.analyze4HSetup(symH4, sym1D, ticker, { min_score: minScore });
-          if (!setup4H || setup4H.setup === 'BEKLE') continue;
-
-          // 1H timing
-          const h1Start = cutoff1H + Math.floor(i * 4);
-          const symH1   = candles1H ? candles1H.slice(0, h1Start + 1) : [];
-          const timing  = symH1.length >= 50
-            ? TechnicalAnalysis.analyze1HTiming(symH1, setup4H, {})
-            : { signal: 'BEKLE' };
-
-          const side = setup4H.setup === 'LONG_ADAY' ? 'LONG' : 'SHORT';
-
-          // Giriş koşulu
-          let giris = false;
-          const sinyal = side === 'LONG' ? setup4H.longSinyal : setup4H.shortSinyal;
-
-          if (sinyal === 'GUCLU') {
-            giris = timing.signal !== 'BEKLE' || true; // direkt gir
-          } else if (sinyal === 'NORMAL') {
-            giris = timing.signal === 'ALIM' || timing.crossover;
-          } else if (sinyal === 'ZAYIF') {
-            giris = timing.signal === 'ALIM' && timing.crossover;
-          }
-
-          if (!giris) continue;
-
-          openPositions.push({
-            symbol,
-            side,
-            entryPrice:   currentPrice,
-            highestPrice: currentPrice,
-            lowestPrice:  currentPrice,
-            entryTime:    currentTime,
-            score:        setup4H.puan || setup4H.score || 0,
-            trend4H:      setup4H.trend4H || setup4H.trend || '-',
-            trend1H:      timing.trend || '-',
-          });
-        }
-
-        // Açık kalan pozisyonları kapat
-        const lastPrice = parseFloat(candles4H[candles4H.length-1][4]);
-        const lastTime  = parseInt(candles4H[candles4H.length-1][6]);
-        for (const pos of openPositions) {
-          const side = pos.side || 'LONG';
-          let pnlPct;
-          if (side === 'SHORT') {
-            pnlPct = ((pos.entryPrice - lastPrice) / pos.entryPrice) * 100 - totalCost * 100;
-          } else {
-            pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
-          }
-          const netPnl = tradeAmount * pnlPct / 100;
-          trades.push({
-            symbol, side,
-            entryPrice: pos.entryPrice,
-            exitPrice:  lastPrice,
-            entryTime:  pos.entryTime,
-            exitTime:   lastTime,
-            reason:     'PERIOD_END',
-            score:      pos.score,
-            trend4H:    pos.trend4H,
-            trend1H:    pos.trend1H,
-            netPnl:     parseFloat(netPnl.toFixed(4)),
-            netPnlPct:  parseFloat(pnlPct.toFixed(2)),
-          });
-          if (netPnl > 0) { wins++; grossWin += netPnl; }
-          else             { losses++; grossLoss += Math.abs(netPnl); }
-        }
-
-        const totalPnl  = trades.reduce((s, t) => s + t.netPnl, 0);
-        const winRate   = trades.length > 0 ? (wins / trades.length * 100).toFixed(1) : 0;
-        const profitFactor = grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : 999;
-
-        coinSummaries.push({
-          symbol,
-          totalTrades: trades.length,
-          wins, losses,
-          winRate:   parseFloat(winRate),
-          totalPnl:  parseFloat(totalPnl.toFixed(2)),
-          profitFactor: parseFloat(profitFactor),
-        });
-
-        results.push(...trades);
-
+        await new Promise(r => setTimeout(r, 200));
       } catch(e) {
-        console.error(`${symbol} backtest hatası:`, e.message);
+        console.error('❌ ' + symbol + ': ' + e.message);
       }
     }
 
-    // Genel özet
-    const allWins   = results.filter(t => t.netPnl > 0);
-    const allLosses = results.filter(t => t.netPnl <= 0);
-    const totalPnl  = results.reduce((s, t) => s + t.netPnl, 0);
-    const winRate   = results.length > 0 ? (allWins.length / results.length * 100).toFixed(1) : 0;
-    const gW        = allWins.reduce((s,t) => s + t.netPnl, 0);
-    const gL        = Math.abs(allLosses.reduce((s,t) => s + t.netPnl, 0));
-    const avgWin    = allWins.length > 0 ? (allWins.reduce((s,t) => s + t.netPnlPct, 0) / allWins.length).toFixed(2) : 0;
-    const avgLoss   = allLosses.length > 0 ? (allLosses.reduce((s,t) => s + t.netPnlPct, 0) / allLosses.length).toFixed(2) : 0;
-    const best      = results.length > 0 ? Math.max(...results.map(t => t.netPnlPct)).toFixed(2) : 0;
-    const worst     = results.length > 0 ? Math.min(...results.map(t => t.netPnlPct)).toFixed(2) : 0;
+    if (Object.keys(allData).length === 0) {
+      console.error('Hiç veri toplanamadı!');
+      return null;
+    }
 
+    // Eğitim ve test
+    const allTrades = [];
+    const epochResults = [];
+
+    for (const [symbol, candles] of Object.entries(allData)) {
+      const splitIndex = Math.floor(candles.length * trainSplit);
+      const trainData = candles.slice(0, splitIndex);
+      const testData = candles.slice(splitIndex);
+
+      console.log('\n' + '-'.repeat(50));
+      console.log('🪙 ' + symbol + ': Egitim=' + trainData.length + ' | Test=' + testData.length);
+
+      for (let epoch = 0; epoch < epochs; epoch++) {
+        console.log('  Epoch ' + (epoch + 1) + '/' + epochs + '...');
+        
+        if (epoch === 0 || epoch % 2 === 0) {
+          this.machine = new MachineDecisionEngine();
+        }
+
+        const trainTrades = await this.runSingleBacktest(symbol, trainData, {
+          stopLoss, trailingStop, minProfit, commission, slippage,
+          minScore, tradeAmount, maxPositions, machineConfidenceMin
+        }, 'TRAIN');
+
+        if (enableLearning) {
+          for (const trade of trainTrades) {
+            this.machine.feedbackSignalResult(
+              trade.entryTime,
+              trade.netPnlPct,
+              trade.maxFavorable || trade.netPnlPct,
+              trade.maxAdverse || trade.netPnlPct
+            );
+          }
+        }
+
+        const trainStats = this.calculateStats(trainTrades, symbol);
+        trainStats.epoch = epoch + 1;
+        trainStats.phase = 'TRAIN';
+        epochResults.push(trainStats);
+
+        if (trainTrades.length > 0) {
+          console.log('    Islem: ' + trainTrades.length + ' | Basari: %' + trainStats.winRate + ' | PnL: ' + trainStats.totalPnl?.toFixed(2));
+        }
+      }
+
+      // Test aşaması
+      if (testData.length > 100) {
+        console.log('  🧪 TEST...');
+        const testTrades = await this.runSingleBacktest(symbol, testData, {
+          stopLoss, trailingStop, minProfit, commission, slippage,
+          minScore, tradeAmount, maxPositions, machineConfidenceMin
+        }, 'TEST');
+
+        const testStats = this.calculateStats(testTrades, symbol);
+        testStats.phase = 'TEST';
+        epochResults.push(testStats);
+        allTrades.push(...testTrades);
+
+        console.log('    Islem: ' + testTrades.length + ' | Basari: %' + testStats.winRate + ' | PnL: ' + testStats.totalPnl?.toFixed(2));
+      }
+    }
+
+    this.results.epochs = epochResults;
+    this.results.finalTest = this.calculateStats(allTrades, 'TOPLAM');
+
+    // Sonuçları yazdır
+    this.printLearningCurve();
+
+    const finalStats = this.results.finalTest;
+    
     return {
       summary: {
-        totalTrades:   results.length,
-        wins:          allWins.length,
-        losses:        allLosses.length,
-        winRate:       parseFloat(winRate),
-        totalPnl:      parseFloat(totalPnl.toFixed(2)),
-        profitFactor:  gL > 0 ? parseFloat((gW/gL).toFixed(2)) : 999,
-        avgWin:        parseFloat(avgWin),
-        avgLoss:       parseFloat(avgLoss),
-        bestTrade:     parseFloat(best),
-        worstTrade:    parseFloat(worst),
+        totalTrades: finalStats.totalTrades,
+        wins: finalStats.wins,
+        losses: finalStats.losses,
+        winRate: finalStats.winRate,
+        totalPnl: finalStats.totalPnl,
+        profitFactor: finalStats.profitFactor,
+        avgWin: finalStats.avgWin,
+        avgLoss: finalStats.avgLoss,
+        bestTrade: finalStats.bestTrade,
+        worstTrade: finalStats.worstTrade,
+        sharpeRatio: finalStats.sharpeRatio
       },
-      coinSummaries,
-      trades: results.slice(0, 500),
-      params: {
-        interval, days, minScore, stopLoss,
-        trailingStop, tradeAmount, maxPositions
-      }
+      learningCurve: epochResults,
+      trades: allTrades.slice(0, 500),
+      params: { interval, days, minScore, stopLoss, trailingStop, tradeAmount, maxPositions, epochs, machineConfidenceMin }
     };
+  }
+
+  async runSingleBacktest(symbol, candles, params, phase = 'TEST') {
+    const {
+      stopLoss, trailingStop, minProfit, commission, slippage,
+      tradeAmount, maxPositions, machineConfidenceMin
+    } = params;
+
+    const totalCost = (commission + slippage) * 2 / 100;
+    const trades = [];
+    let openPositions = [];
+    const startIndex = 100;
+
+    for (let i = startIndex; i < candles.length; i++) {
+      const currentSlice = candles.slice(0, i + 1);
+      const currentPrice = parseFloat(candles[i][4]);
+      const currentTime = parseInt(candles[i][6]);
+
+      // Açık pozisyonları güncelle
+      openPositions = openPositions.filter(pos => {
+        const entryPrice = pos.entryPrice;
+        let pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100 - totalCost * 100;
+
+        if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+        if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
+
+        const trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
+        const hardStopPrice = entryPrice * (1 - stopLoss / 100);
+        const effectiveStop = Math.max(trailingStopPrice, hardStopPrice);
+
+        let closeReason = null;
+
+        if (pnlPct <= -stopLoss) {
+          closeReason = 'STOP_LOSS';
+        } else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) {
+          closeReason = 'TRAILING_STOP';
+        } else if (pos.takeProfit && currentPrice >= pos.takeProfit) {
+          closeReason = 'TAKE_PROFIT';
+        }
+
+        if (closeReason) {
+          const netPnl = tradeAmount * pnlPct / 100;
+          trades.push({
+            symbol, side: 'LONG',
+            entryPrice, exitPrice: currentPrice,
+            entryTime: pos.entryTime, exitTime: currentTime,
+            reason: closeReason,
+            score: pos.score || 0,
+            machineConfidence: pos.machineConfidence || 0,
+            netPnl: parseFloat(netPnl.toFixed(4)),
+            netPnlPct: parseFloat(pnlPct.toFixed(2)),
+            maxFavorable: pos.highestPrice ? ((pos.highestPrice - entryPrice) / entryPrice) * 100 : pnlPct,
+            maxAdverse: pos.lowestPrice ? ((pos.lowestPrice - entryPrice) / entryPrice) * 100 : pnlPct,
+            phase
+          });
+          return false;
+        }
+        return true;
+      });
+
+      if (openPositions.length >= maxPositions) continue;
+
+      // Makine analizi
+      if (!this.machine) this.machine = new MachineDecisionEngine();
+
+      let machineAnalysis;
+      try {
+        machineAnalysis = this.machine.analyze(currentSlice, {
+          symbol,
+          priceChangePercent: 0,
+          quoteVolume: parseFloat(candles[i][5]) || 0
+        });
+      } catch(e) {
+        continue;
+      }
+
+      const shouldEnter = machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= machineConfidenceMin;
+      if (!shouldEnter) continue;
+
+      openPositions.push({
+        symbol, side: 'LONG',
+        entryPrice: currentPrice,
+        highestPrice: currentPrice,
+        lowestPrice: currentPrice,
+        entryTime: currentTime,
+        score: 0,
+        machineConfidence: machineAnalysis.confidence,
+        takeProfit: machineAnalysis.takeProfit || null,
+        stopLoss: machineAnalysis.stopLoss || null
+      });
+    }
+
+    // Açık pozisyonları kapat
+    const lastPrice = parseFloat(candles[candles.length - 1][4]);
+    const lastTime = parseInt(candles[candles.length - 1][6]);
+
+    for (const pos of openPositions) {
+      const pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
+      const netPnl = tradeAmount * pnlPct / 100;
+      trades.push({
+        symbol, side: 'LONG',
+        entryPrice: pos.entryPrice, exitPrice: lastPrice,
+        entryTime: pos.entryTime, exitTime: lastTime,
+        reason: 'PERIOD_END',
+        score: pos.score || 0,
+        machineConfidence: pos.machineConfidence || 0,
+        netPnl: parseFloat(netPnl.toFixed(4)),
+        netPnlPct: parseFloat(pnlPct.toFixed(2)),
+        maxFavorable: pos.highestPrice ? ((pos.highestPrice - pos.entryPrice) / pos.entryPrice) * 100 : pnlPct,
+        maxAdverse: pos.lowestPrice ? ((pos.lowestPrice - pos.entryPrice) / pos.entryPrice) * 100 : pnlPct,
+        phase
+      });
+    }
+
+    return trades;
+  }
+
+  calculateStats(trades, symbol) {
+    const wins = trades.filter(t => t.netPnl > 0);
+    const losses = trades.filter(t => t.netPnl <= 0);
+    const totalPnl = trades.reduce((s, t) => s + t.netPnl, 0);
+    const gW = wins.reduce((s, t) => s + t.netPnl, 0);
+    const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
+    
+    const returns = trades.map(t => t.netPnlPct);
+    const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+    const stdReturn = returns.length > 1 ? Math.sqrt(returns.reduce((a, b) => a + Math.pow(b - avgReturn, 2), 0) / returns.length) : 0;
+    const sharpeRatio = stdReturn > 0 ? (avgReturn / stdReturn) * Math.sqrt(Math.max(1, trades.length)) : 0;
+
+    return {
+      symbol,
+      totalTrades: trades.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: trades.length > 0 ? parseFloat((wins.length / trades.length * 100).toFixed(1)) : 0,
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
+      avgWin: wins.length > 0 ? parseFloat((wins.reduce((s, t) => s + t.netPnlPct, 0) / wins.length).toFixed(2)) : 0,
+      avgLoss: losses.length > 0 ? parseFloat((losses.reduce((s, t) => s + t.netPnlPct, 0) / losses.length).toFixed(2)) : 0,
+      bestTrade: trades.length > 0 ? parseFloat(Math.max(...trades.map(t => t.netPnlPct)).toFixed(2)) : 0,
+      worstTrade: trades.length > 0 ? parseFloat(Math.min(...trades.map(t => t.netPnlPct)).toFixed(2)) : 0,
+      sharpeRatio: parseFloat(sharpeRatio.toFixed(2))
+    };
+  }
+
+  printLearningCurve() {
+    console.log('\n╔══════════════════════════════════════════════════════╗');
+    console.log('║                ÖĞRENME EĞRİSİ                       ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    console.log('Epoch | Sembol        | Islem | Basari% | PnL     | Sharpe');
+    console.log('──────┼───────────────┼───────┼─────────┼─────────┼───────');
+
+    for (const epoch of this.results.epochs) {
+      const sym = (epoch.symbol || 'ALL').padEnd(13);
+      const trd = String(epoch.totalTrades).padStart(5);
+      const win = String(epoch.winRate?.toFixed(1) + '%').padStart(7);
+      const pnl = String(epoch.totalPnl?.toFixed(2)).padStart(7);
+      const shrp = String(epoch.sharpeRatio?.toFixed(2) || '-').padStart(5);
+      console.log('  ' + String(epoch.epoch || '-').padStart(3) + '  | ' + sym + ' | ' + trd + ' | ' + win + ' | ' + pnl + ' | ' + shrp);
+    }
+
+    if (this.results.finalTest) {
+      console.log('──────┼───────────────┼───────┼─────────┼─────────┼───────');
+      const ft = this.results.finalTest;
+      console.log('  TEST | TOPLAM        | ' + String(ft.totalTrades).padStart(5) + ' | ' + String(ft.winRate?.toFixed(1) + '%').padStart(7) + ' | ' + String(ft.totalPnl?.toFixed(2)).padStart(7) + ' | ' + String(ft.sharpeRatio?.toFixed(2) || '-').padStart(5));
+    }
+    console.log('='.repeat(62) + '\n');
   }
 }
 
-module.exports = new BacktestEngine();
+module.exports = new MachineBacktestEngine();
