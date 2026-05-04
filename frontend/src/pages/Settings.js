@@ -102,11 +102,6 @@ function Settings() {
             <p style={{color: '#64748b', fontSize: 12, margin: 0}}>
               {githubSync ? 'ACIK - Makine ogrendiklerini GitHubda saklar' : 'KAPALI - Ogrenmeler bellekte kalir'}
             </p>
-            {!githubSync && (
-              <p style={{color: '#64748b', fontSize: 11, marginTop: 4}}>
-                Acmak icin GITHUB_TOKEN ve GITHUB_LEARNING_REPO tanimlayin
-              </p>
-            )}
           </div>
           <label className="toggle-switch">
             <input type="checkbox" checked={githubSync}
@@ -199,6 +194,16 @@ function Settings() {
         marginBottom: 16
       }}>
         <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Telegram</h3>
+        <Row label="Bot Token">
+          <input type="text" value={settings.telegram_token || ''} onChange={function(e) { handleChange('telegram_token', e.target.value); }}
+            placeholder="123456:ABCdef..."
+            style={{width: 200, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, textAlign: 'left'}} />
+        </Row>
+        <Row label="Chat ID">
+          <input type="text" value={settings.telegram_chat_id || ''} onChange={function(e) { handleChange('telegram_chat_id', e.target.value); }}
+            placeholder="-100123456"
+            style={{width: 160, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, textAlign: 'left'}} />
+        </Row>
         <Row label="Minimum Bildirim Puani">
           <input type="number" value={settings.telegram_min_score || '60'} onChange={function(e) { handleChange('telegram_min_score', e.target.value); }}
             style={{width: 70, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
