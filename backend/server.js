@@ -17,7 +17,7 @@ const frontendPath = path.join(__dirname, '..', 'frontend', 'build');
 app.use(express.static(frontendPath));
 
 // ═══════════════════════════════════════════════
-// BOT ENGINE (Lazy load - döngüsel bağımlılığı önler)
+// BOT ENGINE (Lazy load)
 // ═══════════════════════════════════════════════
 let engine = null;
 function getEngine() {
@@ -68,12 +68,22 @@ app.get('/api/simulation/stats', (req, res) => {
   }
 });
 
+// ── Simülasyon Tüm İşlemler ────────────────────
+app.get('/api/simulation/trades', (req, res) => {
+  try {
+    const trades = db.prepare("SELECT * FROM sim_positions WHERE status != 'OPEN' ORDER BY closed_at DESC LIMIT 200").all();
+    res.json(trades);
+  } catch(e) {
+    res.json([]);
+  }
+});
+
 // ── Simülasyon Sıfırla ─────────────────────────
 app.post('/api/simulation/reset', (req, res) => {
   try {
     const { startBalance } = req.body;
     simulation.reset(startBalance || 1000);
-    res.json({ message: 'Simülasyon sıfırlandı', balance: startBalance || 1000 });
+    res.json({ message: '✅ Simülasyon sıfırlandı', balance: startBalance || 1000 });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
@@ -169,7 +179,7 @@ app.post('/api/backtest', async (req, res) => {
       enableLearning: req.body.enableLearning !== false
     };
 
-    console.log('[BACKTEST] Başlatılıyor... ' + params.symbols.length + ' coin, ' + params.days + ' gün, ' + params.epochs + ' epoch');
+    console.log('[BACKTEST] ' + params.symbols.length + ' coin, ' + params.days + ' gun, ' + params.epochs + ' epoch');
     const results = await backtest.run(params);
     res.json(results);
   } catch(e) {
@@ -274,8 +284,12 @@ app.get('*', (req, res) => {
     res.json({ 
       message: '🚀 Trading Bot API v21', 
       status: 'running',
-      endpoints: ['/api/status', '/api/signals', '/api/simulation/stats', '/api/machine/report', '/api/backtest', '/api/settings', '/api/positions'],
-      frontend: 'Build bulunamadı. cd frontend && npm run build'
+      endpoints: [
+        '/api/status', '/api/signals', '/api/simulation/stats', 
+        '/api/simulation/trades', '/api/simulation/start', '/api/simulation/stop',
+        '/api/machine/report', '/api/backtest', '/api/settings', '/api/positions',
+        '/api/bot/start', '/api/bot/stop', '/api/bot/scan'
+      ]
     });
   }
 });
@@ -284,8 +298,8 @@ app.get('*', (req, res) => {
 // BAŞLAT
 // ═══════════════════════════════════════════════
 app.listen(PORT, () => {
-  console.log(`🚀 Server: http://localhost:${PORT}`);
-  console.log('📊 Trading Bot v21 — Makine Zekası Aktif');
+  console.log(`\n🚀 Server: http://localhost:${PORT}`);
+  console.log('📊 Trading Bot v21 — Makine Zekası Aktif\n');
   
   // Botu otomatik başlat
   const eng = getEngine();
