@@ -32,6 +32,7 @@ function Settings() {
   };
 
   const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+  const githubSync = settings.github_sync_enabled === 'true' || settings.github_sync_enabled === '1';
 
   return (
     <div className="settings-page">
@@ -44,8 +45,8 @@ function Settings() {
         <h3>💰 GERÇEK ALIM</h3>
         <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
           {realTrading 
-            ? '🟢 AÇIK - Sinyaller gerçek işleme dönüşür, Binance API ile alım yapılır!' 
-            : '🔴 KAPALI - Sadece sinyal üretilir, alım yapılmaz.'}
+            ? '🟢 AÇIK - Sinyaller gerçek işleme dönüşür!' 
+            : '🔴 KAPALI - Sadece sinyal üretilir.'}
         </p>
         <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
           <label className="toggle-switch">
@@ -60,9 +61,37 @@ function Settings() {
             {realTrading ? 'AÇIK' : 'KAPALI'}
           </span>
         </div>
-        {realTrading && (
-          <div style={{marginTop: 12, padding: 10, background: 'rgba(34,197,94,0.1)', borderRadius: 8, fontSize: 12, color: '#22c55e'}}>
-            ⚡ Gerçek alım aktif! Makinenin onayladığı tüm sinyaller Binance'de işleme dönüşür.
+      </div>
+
+      {/* GITHUB SYNC */}
+      <div className="setting-group" style={{borderLeft: githubSync ? '4px solid #8b5cf6' : '4px solid #64748b'}}>
+        <h3>🔗 GitHub Öğrenme Sync</h3>
+        <p style={{color: '#94a3b8', fontSize: 13, marginBottom: 15}}>
+          {githubSync 
+            ? '🟣 AÇIK - Makine öğrendiklerini GitHub''a kaydeder. Deploy sonrası kaybolmaz!' 
+            : '⚫ KAPALI - Öğrenmeler sadece bellekte kalır, deploy''da sıfırlanır.'}
+        </p>
+        <div style={{display: 'flex', alignItems: 'center', gap: 15}}>
+          <label className="toggle-switch">
+            <input 
+              type="checkbox" 
+              checked={githubSync}
+              onChange={(e) => handleChange('github_sync_enabled', e.target.checked ? 'true' : 'false')}
+            />
+            <span className="toggle-slider" style={githubSync ? {background: '#4c1d95', borderColor: '#7c3aed'} : {}}></span>
+          </label>
+          <span style={{fontSize: 15, fontWeight: 600, color: githubSync ? '#a78bfa' : '#64748b'}}>
+            {githubSync ? 'AÇIK' : 'KAPALI'}
+          </span>
+        </div>
+        {!githubSync && (
+          <div style={{marginTop: 12, padding: 10, background: 'rgba(100,116,139,0.1)', borderRadius: 8, fontSize: 12, color: '#94a3b8'}}>
+            💡 Açmak için GITHUB_TOKEN ve GITHUB_LEARNING_REPO ortam değişkenlerini tanımlayın.
+          </div>
+        )}
+        {githubSync && (
+          <div style={{marginTop: 12, padding: 10, background: 'rgba(139,92,246,0.1)', borderRadius: 8, fontSize: 12, color: '#a78bfa'}}>
+            🧠 Makine her 3 taramada bir öğrendiklerini GitHub'a kaydeder. Sunucu yeniden başlasa bile tüm desenler, ağırlıklar ve eşikler korunur.
           </div>
         )}
       </div>
