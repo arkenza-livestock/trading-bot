@@ -213,11 +213,52 @@ app.post('/api/settings', (req, res) => {
   }
 });
 
-// ── Pozisyonlar ────────────────────────────────
+// ── Pozisyonlar (Gerçek + Simülasyon) ──────────
 app.get('/api/positions', (req, res) => {
   try {
-    const positions = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 50").all();
-    res.json(positions);
+    const eng = getEngine();
+    const simPositions = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 50").all();
+    
+    // Simülasyon pozisyonlarına işaret ekle
+    const simData = simPositions.map(p => ({ ...p, is_real: 0 }));
+    
+    // Gerçek pozisyonları engine'den al
+    const realData = [];
+    if (eng && eng.realPositions) {
+      Object.keys(eng.realPositions).forEach(symbol => {
+        const pos = eng.realPositions[symbol];
+        const currentPrice = eng.prices[pos.symbol] || pos.entryPrice;
+        const pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        const pnl = (currentPrice - pos.entryPrice) * pos.quantity;
+        realData.push({
+          id: 0,
+          symbol: pos.symbol,
+          side: 'LONG',
+          quantity: pos.quantity,
+          entry_price: pos.entryPrice,
+          current_price: currentPrice,
+          exit_price: null,
+          stop_loss: pos.stopLoss,
+          take_profit: pos.takeProfit,
+          highest_price: pos.highestPrice || pos.entryPrice,
+          lowest_price: pos.entryPrice,
+          pnl: pnl,
+          pnl_percent: pnlPct,
+          status: 'OPEN',
+          signal_guc: 'GERCEK',
+          trend4H: '-',
+          trend1D: '-',
+          score: 0,
+          machine_confidence: pos.machineConfidence || 0,
+          close_reason: null,
+          opened_at: pos.entryTime,
+          closed_at: null,
+          is_real: 1
+        });
+      });
+    }
+    
+    res.json([...realData, ...simData]);
   } catch(e) {
     res.json([]);
   }
@@ -301,7 +342,6 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Server: http://localhost:${PORT}`);
   console.log('📊 Trading Bot v21 — Makine Zekası Aktif\n');
   
-  // Botu otomatik başlat
   const eng = getEngine();
   eng.start().catch(e => {
     console.error('Bot başlatma hatası:', e.message);
