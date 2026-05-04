@@ -71,7 +71,7 @@ app.get('/api/simulation/stats', (req, res) => {
 // ── Simülasyon Tüm İşlemler ────────────────────
 app.get('/api/simulation/trades', (req, res) => {
   try {
-    const trades = db.prepare("SELECT * FROM sim_positions WHERE status != 'OPEN' ORDER BY closed_at DESC LIMIT 200").all();
+    const trades = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC LIMIT 200").all();
     res.json(trades);
   } catch(e) {
     res.json([]);
