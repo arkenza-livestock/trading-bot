@@ -2,13 +2,6 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-/**
- * ═══════════════════════════════════════════════════════════
- *   GITHUB ÖĞRENME SENKRONİZASYON MOTORU
- *   Makinenin öğrendiği her şeyi GitHub'a kaydeder
- * ═══════════════════════════════════════════════════════════
- */
-
 class GitHubLearningSync {
   
   constructor(config = {}) {
@@ -17,8 +10,8 @@ class GitHubLearningSync {
       branch: config.branch || 'main',
       token: config.token || process.env.GITHUB_TOKEN || '',
       localPath: config.localPath || path.join(__dirname, '..', '..', 'machine_learning_data'),
-      commitAuthor: config.commitAuthor || 'Machine Learning Bot',
-      commitEmail: config.commitEmail || 'bot@crypto-trading.ai',
+      commitAuthor: config.commitAuthor || 'Trading Bot',
+      commitEmail: config.commitEmail || 'bot@trading.ai',
       autoSync: config.autoSync !== false,
       syncInterval: config.syncInterval || 30,
     };
@@ -48,6 +41,14 @@ class GitHubLearningSync {
         }
       });
 
+      // Git kimlik bilgilerini HER SEFERİNDE ayarla
+      try {
+        execSync('git config user.email "bot@trading.ai"', { cwd: this.config.localPath });
+        execSync('git config user.name "Trading Bot"', { cwd: this.config.localPath });
+      } catch(e) {
+        // Repo henüz yoksa hata verebilir, önemli değil
+      }
+
       if (this.isGitRepo()) {
         console.log('[GITHUB] Mevcut repo bulundu');
         this.pull();
@@ -65,6 +66,10 @@ class GitHubLearningSync {
 
   initGitRepo() {
     try {
+      // Kimlik bilgilerini tekrar ayarla
+      execSync('git config user.email "bot@trading.ai"', { cwd: this.config.localPath });
+      execSync('git config user.name "Trading Bot"', { cwd: this.config.localPath });
+      
       execSync('git init', { cwd: this.config.localPath });
 
       const gitignore = `node_modules/\n.env\n*.tmp\n*.log\n.DS_Store\n*.zip\n`;
@@ -94,9 +99,14 @@ class GitHubLearningSync {
     if (!this.state.initialized) return false;
 
     try {
+      // Kimlik bilgilerini tekrar ayarla
+      try {
+        execSync('git config user.email "bot@trading.ai"', { cwd: this.config.localPath });
+        execSync('git config user.name "Trading Bot"', { cwd: this.config.localPath });
+      } catch(e) {}
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-      // Pattern kütüphanesi
       if (machineEngine.memory?.patternLibrary) {
         const patterns = machineEngine.memory.patternLibrary;
         const patternFile = path.join(this.paths.patterns, `patterns_${timestamp}.json`);
@@ -112,7 +122,6 @@ class GitHubLearningSync {
         }, null, 2));
       }
 
-      // Gösterge ağırlıkları
       if (machineEngine.indicatorWeights) {
         const weightsFile = path.join(this.paths.models, `weights_${timestamp}.json`);
         fs.writeFileSync(weightsFile, JSON.stringify({
@@ -126,7 +135,6 @@ class GitHubLearningSync {
         }, null, 2));
       }
 
-      // Sinyal geçmişi
       if (machineEngine.memory?.outcomes) {
         const outcomes = machineEngine.memory.outcomes;
         const recentOutcomes = outcomes.slice(-100);
@@ -142,14 +150,12 @@ class GitHubLearningSync {
         }, null, 2));
       }
 
-      // Simülasyon durumu
       if (simulationEngine?.getStats) {
         const simStats = simulationEngine.getStats();
         const simFile = path.join(this.paths.stats, `simulation_${timestamp}.json`);
         fs.writeFileSync(simFile, JSON.stringify({ timestamp, stats: simStats }, null, 2));
       }
 
-      // Öğrenme özeti (her zaman güncel)
       const summaryFile = path.join(this.paths.root, 'learning_summary.json');
       fs.writeFileSync(summaryFile, JSON.stringify({
         lastUpdated: timestamp,
@@ -161,7 +167,7 @@ class GitHubLearningSync {
       }, null, 2));
 
       this.state.lastSync = timestamp;
-      console.log(`[GITHUB] 💾 Durum kaydedildi (${timestamp})`);
+      console.log('[GITHUB] 💾 Durum kaydedildi');
       return true;
     } catch (e) {
       console.error('[GITHUB] Kaydetme hatası:', e.message);
@@ -174,6 +180,12 @@ class GitHubLearningSync {
     if (!this.state.initialized) return false;
 
     try {
+      // Kimlik bilgilerini tekrar ayarla
+      try {
+        execSync('git config user.email "bot@trading.ai"', { cwd: this.config.localPath });
+        execSync('git config user.name "Trading Bot"', { cwd: this.config.localPath });
+      } catch(e) {}
+
       const message = commitMessage || `🤖 Öğrenme güncellemesi - ${new Date().toISOString()}`;
 
       execSync('git add .', { cwd: this.config.localPath });
@@ -245,7 +257,6 @@ class GitHubLearningSync {
 
   applyLearningToMachine(machineEngine, learningData) {
     if (!learningData || !machineEngine) return false;
-
     try {
       if (learningData.weights?.weights) {
         machineEngine.indicatorWeights = learningData.weights.weights;
@@ -256,7 +267,7 @@ class GitHubLearningSync {
       if (learningData.patterns?.patterns) {
         machineEngine.memory.patternLibrary = learningData.patterns.patterns;
       }
-      console.log(`[GITHUB] ✅ Öğrenme makineye uygulandı`);
+      console.log('[GITHUB] ✅ Öğrenme makineye uygulandı');
       return true;
     } catch (e) {
       console.error('[GITHUB] Uygulama hatası:', e.message);
@@ -266,7 +277,6 @@ class GitHubLearningSync {
 
   startAutoSync(machineEngine, simulationEngine) {
     if (!this.config.autoSync) return;
-
     console.log(`[GITHUB] 🔄 Otomatik sync başladı (${this.config.syncInterval}dk)`);
     this.syncInterval = setInterval(async () => {
       await this.saveMachineState(machineEngine, simulationEngine);
@@ -275,19 +285,13 @@ class GitHubLearningSync {
   }
 
   stopAutoSync() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-    }
+    if (this.syncInterval) clearInterval(this.syncInterval);
   }
 
   getStatus() {
     return {
       ...this.state,
-      config: {
-        repoUrl: this.config.repoUrl ? '✅' : '❌',
-        token: this.config.token ? '✅' : '❌',
-        autoSync: this.config.autoSync
-      }
+      config: { repoUrl: this.config.repoUrl ? '✅' : '❌', token: this.config.token ? '✅' : '❌', autoSync: this.config.autoSync }
     };
   }
 
@@ -295,15 +299,13 @@ class GitHubLearningSync {
     try {
       execSync('git rev-parse --is-inside-work-tree', { cwd: this.config.localPath });
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 }
 
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════
 // ENTEGRE ÖĞRENME YÖNETİCİSİ
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════
 
 class IntegratedLearningManager {
   
@@ -316,7 +318,6 @@ class IntegratedLearningManager {
   async initialize(machineEngine, simulationEngine) {
     this.machine = machineEngine;
     this.simulation = simulationEngine;
-
     console.log('[ÖĞRENME] 🚀 Başlatılıyor...');
 
     const learningData = this.github.loadLearningData();
@@ -328,7 +329,6 @@ class IntegratedLearningManager {
     }
 
     this.github.startAutoSync(this.machine, this.simulation);
-
     return { loaded: !!learningData, summary: learningData?.lastUpdated || 'Yeni' };
   }
 
@@ -351,9 +351,7 @@ class IntegratedLearningManager {
     };
   }
 
-  stop() {
-    this.github.stopAutoSync();
-  }
+  stop() { this.github.stopAutoSync(); }
 }
 
 module.exports = { GitHubLearningSync, IntegratedLearningManager };
