@@ -1,235 +1,152 @@
-import React, { useState } from 'react';
+// backend/src/backtest.js
+const binance = require('./binance');
+const analysis = require('./analysis');
+const MachineDecisionEngine = require('./MachineDecisionEngine');
 
-function Backtest() {
-  const [params, setParams] = useState({
-    symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT',
-    interval: '4h',
-    days: 30,
-    stopLoss: 2.0,
-    trailingStop: 0.5,
-    minProfit: 1.5,
-    commission: 0.1,
-    slippage: 0.05,
-    minScore: 50,
-    tradeAmount: 100,
-    maxPositions: 3,
-    epochs: 3,
-    machineConfidenceMin: 0.70
-  });
+class MachineBacktestEngine {
+  async run(params) {
+    const {
+      symbols = ['BTCUSDT'],
+      interval = '4h',
+      days = 30,
+      stopLoss = 2.0,
+      trailingStop = 0.5,
+      minProfit = 1.5,
+      commission = 0.1,
+      slippage = 0.05,
+      minScore = 50,
+      tradeAmount = 100,
+      maxPositions = 3,
+      epochs = 1,
+      machineConfidenceMin = 0.70
+    } = params;
 
-  const [results, setResults] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+    const totalCost = (commission + slippage) * 2 / 100;
+    const limit = Math.ceil(days * 6) + 200;
+    const allTrades = [];
 
-  const handleChange = (e) => {
-    setParams({ ...params, [e.target.name]: e.target.value });
-  };
+    console.log(`[BACKTEST] Başlıyor: ${symbols.length} coin, ${days} gün, ${interval}`);
 
-  const runBacktest = async () => {
-    setLoading(true);
-    setError('');
-    setResults(null);
+    for (const symbol of symbols) {
+      try {
+        const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
+        if (!candles || candles.length < 150) {
+          console.log(`[BACKTEST] ${symbol}: yetersiz veri (${candles?.length || 0})`);
+          continue;
+        }
 
-    try {
-      const symbolArray = params.symbols.split(',').map(s => s.trim()).filter(s => s);
+        const engine = new MachineDecisionEngine();
+        const trades = [];
+        const openPositions = [];
+        const startIdx = 100;
 
-      const res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbols: symbolArray,
-          interval: params.interval,
-          days: parseInt(params.days),
-          stopLoss: parseFloat(params.stopLoss),
-          trailingStop: parseFloat(params.trailingStop),
-          minProfit: parseFloat(params.minProfit),
-          commission: parseFloat(params.commission),
-          slippage: parseFloat(params.slippage),
-          minScore: parseInt(params.minScore),
-          tradeAmount: parseFloat(params.tradeAmount),
-          maxPositions: parseInt(params.maxPositions),
-          epochs: parseInt(params.epochs),
-          machineConfidenceMin: parseFloat(params.machineConfidenceMin)
-        })
-      });
+        for (let i = startIdx; i < candles.length; i++) {
+          const slice = candles.slice(0, i + 1);
+          const currentPrice = parseFloat(candles[i][4]);
+          const currentTime = parseInt(candles[i][6]);
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Backtest başarısız');
+          // Pozisyonları güncelle
+          for (let j = openPositions.length - 1; j >= 0; j--) {
+            const pos = openPositions[j];
+            let pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
+
+            if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+
+            const trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
+            const hardStopPrice = pos.entryPrice * (1 - stopLoss / 100);
+            let closeReason = null;
+
+            if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
+            else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) closeReason = 'TRAILING_STOP';
+
+            if (closeReason) {
+              const netPnl = tradeAmount * pnlPct / 100;
+              trades.push({
+                symbol, side: 'LONG',
+                entryPrice: pos.entryPrice, exitPrice: currentPrice,
+                entryTime: pos.entryTime, exitTime: currentTime,
+                reason: closeReason,
+                score: pos.score || 0,
+                machineConfidence: pos.machineConfidence || 0,
+                netPnl: parseFloat(netPnl.toFixed(4)),
+                netPnlPct: parseFloat(pnlPct.toFixed(2)),
+                phase: 'BACKTEST'
+              });
+              openPositions.splice(j, 1);
+            }
+          }
+
+          // Yeni sinyal ara
+          if (openPositions.length >= maxPositions) continue;
+          const analysisResult = analysis.analyze(slice, { symbol, priceChangePercent: 0, quoteVolume: 999999 });
+          if (!analysisResult) continue;
+
+          // Basit sinyal: puan bazlı giriş
+          if (analysisResult.puan < minScore) continue;
+
+          // Makine onayı kontrolü
+          const machineAnalysis = engine.analyze(slice, { symbol });
+          if (machineAnalysis.action !== 'BUY' || machineAnalysis.confidence < machineConfidenceMin) continue;
+
+          openPositions.push({
+            symbol,
+            side: 'LONG',
+            entryPrice: currentPrice,
+            highestPrice: currentPrice,
+            entryTime: currentTime,
+            score: analysisResult.puan,
+            machineConfidence: machineAnalysis.confidence
+          });
+        }
+
+        // Açık kalanları kapat
+        const lastPrice = parseFloat(candles[candles.length - 1][4]);
+        const lastTime = parseInt(candles[candles.length - 1][6]);
+        for (const pos of openPositions) {
+          let pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
+          const netPnl = tradeAmount * pnlPct / 100;
+          trades.push({
+            symbol, side: 'LONG',
+            entryPrice: pos.entryPrice, exitPrice: lastPrice,
+            entryTime: pos.entryTime, exitTime: lastTime,
+            reason: 'PERIOD_END',
+            score: pos.score || 0,
+            machineConfidence: pos.machineConfidence || 0,
+            netPnl: parseFloat(netPnl.toFixed(4)),
+            netPnlPct: parseFloat(pnlPct.toFixed(2)),
+            phase: 'BACKTEST'
+          });
+        }
+
+        allTrades.push(...trades);
+        console.log(`[BACKTEST] ${symbol}: ${trades.length} işlem`);
+      } catch (e) {
+        console.error(`[BACKTEST] ${symbol} hata:`, e.message);
       }
-
-      const data = await res.json();
-      setResults(data);
-    } catch(e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
     }
-  };
 
-  return (
-    <div className="backtest">
-      <h1>🧪 Backtest</h1>
-      <p style={{color: '#9ca3af', marginBottom: 20}}>
-        v21 - Makine Zekası + Epoch Eğitim
-      </p>
+    // Özet hesapla
+    const wins = allTrades.filter(t => t.netPnl > 0);
+    const losses = allTrades.filter(t => t.netPnl <= 0);
+    const totalPnl = allTrades.reduce((s, t) => s + t.netPnl, 0);
+    const gW = wins.reduce((s, t) => s + t.netPnl, 0);
+    const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
 
-      {/* Parametreler */}
-      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'}}>
-        <div className="setting-row">
-          <label>Coinler</label>
-          <input name="symbols" value={params.symbols} onChange={handleChange} style={{width: '100%'}} />
-        </div>
-        <div className="setting-row">
-          <label>Mum Aralığı</label>
-          <select name="interval" value={params.interval} onChange={handleChange}>
-            <option value="1h">1 Saat</option>
-            <option value="4h">4 Saat</option>
-            <option value="1d">1 Gün</option>
-          </select>
-        </div>
-        <div className="setting-row">
-          <label>Test Süresi (Gün)</label>
-          <input name="days" type="number" value={params.days} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Epoch</label>
-          <input name="epochs" type="number" value={params.epochs} onChange={handleChange} />
-        </div>
-      </div>
+    const summary = {
+      totalTrades: allTrades.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: allTrades.length > 0 ? parseFloat((wins.length / allTrades.length * 100).toFixed(1)) : 0,
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
+      avgWin: wins.length > 0 ? parseFloat((wins.reduce((s, t) => s + t.netPnlPct, 0) / wins.length).toFixed(2)) : 0,
+      avgLoss: losses.length > 0 ? parseFloat((losses.reduce((s, t) => s + t.netPnlPct, 0) / losses.length).toFixed(2)) : 0,
+      bestTrade: allTrades.length > 0 ? parseFloat(Math.max(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0,
+      worstTrade: allTrades.length > 0 ? parseFloat(Math.min(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0
+    };
 
-      <h2>📊 RİSK</h2>
-      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
-        <div className="setting-row">
-          <label>Stop Loss (%)</label>
-          <input name="stopLoss" type="number" step="0.1" value={params.stopLoss} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Trailing Stop (%)</label>
-          <input name="trailingStop" type="number" step="0.1" value={params.trailingStop} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Min Kar (%)</label>
-          <input name="minProfit" type="number" step="0.1" value={params.minProfit} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>İşlem (USDT)</label>
-          <input name="tradeAmount" type="number" value={params.tradeAmount} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Max Pozisyon</label>
-          <input name="maxPositions" type="number" value={params.maxPositions} onChange={handleChange} />
-        </div>
-      </div>
-
-      <h2>🧠 MAKİNE</h2>
-      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
-        <div className="setting-row">
-          <label>AI Güven Eşiği</label>
-          <input name="machineConfidenceMin" type="number" step="0.05" value={params.machineConfidenceMin} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Min Sinyal Skoru</label>
-          <input name="minScore" type="number" value={params.minScore} onChange={handleChange} />
-        </div>
-      </div>
-
-      <h2>💰 MALİYET</h2>
-      <div className="card-grid" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
-        <div className="setting-row">
-          <label>Komisyon (%)</label>
-          <input name="commission" type="number" step="0.01" value={params.commission} onChange={handleChange} />
-        </div>
-        <div className="setting-row">
-          <label>Slippage (%)</label>
-          <input name="slippage" type="number" step="0.01" value={params.slippage} onChange={handleChange} />
-        </div>
-      </div>
-
-      <button className="btn" onClick={runBacktest} disabled={loading} style={{marginTop: 20, padding: '12px 30px', fontSize: 16}}>
-        {loading ? '⏳ Çalışıyor...' : '🚀 Backtest Çalıştır'}
-      </button>
-
-      {error && <div className="message" style={{marginTop: 15, color: '#ff4444'}}>❌ {error}</div>}
-
-      {/* Sonuçlar */}
-      {results && (
-        <div style={{marginTop: 30}}>
-          <h2>📈 Sonuçlar</h2>
-          
-          <div className="card-grid">
-            <div className="card">
-              <div className="card-title">Toplam İşlem</div>
-              <div className="card-value">{results.summary?.totalTrades || 0}</div>
-            </div>
-            <div className="card">
-              <div className="card-title">Başarı Oranı</div>
-              <div className="card-value" style={{color: (results.summary?.winRate || 0) >= 50 ? '#00ff88' : '#ff4444'}}>
-                %{results.summary?.winRate || 0}
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Toplam PnL</div>
-              <div className="card-value" style={{color: (results.summary?.totalPnl || 0) >= 0 ? '#00ff88' : '#ff4444'}}>
-                ${results.summary?.totalPnl?.toFixed(2) || '0'}
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Profit Factor</div>
-              <div className="card-value">{results.summary?.profitFactor || '-'}</div>
-            </div>
-            <div className="card">
-              <div className="card-title">Sharpe</div>
-              <div className="card-value">{results.summary?.sharpeRatio || '-'}</div>
-            </div>
-            <div className="card">
-              <div className="card-title">Ort. Kazanç</div>
-              <div className="card-value" style={{color: '#00ff88'}}>%{results.summary?.avgWin || 0}</div>
-            </div>
-            <div className="card">
-              <div className="card-title">Ort. Kayıp</div>
-              <div className="card-value" style={{color: '#ff4444'}}>%{results.summary?.avgLoss || 0}</div>
-            </div>
-            <div className="card">
-              <div className="card-title">En İyi</div>
-              <div className="card-value" style={{color: '#00ff88'}}>%{results.summary?.bestTrade || 0}</div>
-            </div>
-          </div>
-
-          {/* İşlemler Tablosu */}
-          <h3>Son İşlemler</h3>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Sembol</th>
-                  <th>Giriş</th>
-                  <th>Çıkış</th>
-                  <th>PnL%</th>
-                  <th>Neden</th>
-                  <th>AI Güven</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(results.trades || []).slice(0, 20).map((trade, i) => (
-                  <tr key={i} className={trade.netPnl >= 0 ? 'profit' : 'loss'}>
-                    <td><strong>{trade.symbol}</strong></td>
-                    <td>{trade.entryPrice?.toFixed(4)}</td>
-                    <td>{trade.exitPrice?.toFixed(4)}</td>
-                    <td style={{color: trade.netPnl >= 0 ? '#00ff88' : '#ff4444'}}>
-                      %{trade.netPnlPct?.toFixed(2)}
-                    </td>
-                    <td>{trade.reason}</td>
-                    <td>%{((trade.machineConfidence || 0) * 100).toFixed(0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    return { summary, trades: allTrades.slice(0, 200) };
+  }
 }
 
-export default Backtest;
+module.exports = new MachineBacktestEngine();
