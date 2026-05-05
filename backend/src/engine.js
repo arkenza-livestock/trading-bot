@@ -167,8 +167,7 @@ class TradingEngine {
     const minHacim = parseFloat(settings.min_volume || 10000000);
     const maxCoin  = parseInt(settings.max_coins || 50);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
-
-    // T2: SHORT ayarları
+    const longEnabled = settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined;
     const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
     const shortConfMin = parseFloat(settings.short_confidence_min || 0.85);
     const btcDown = this.btcTrend.trend === 'ASAGI' || this.btcTrend.trend === 'HAFIF_ASAGI';
@@ -176,8 +175,7 @@ class TradingEngine {
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
     console.log(`[BTC] ${this.btcTrend.trend} | RSI:${(this.btcTrend.rsi||50).toFixed(1)} | Guc:${(this.btcTrend.strength||0).toFixed(1)}`);
-    console.log(`[ISLEM] LONG aktif${shortEnabled ? ' | SHORT aktif (esik:%'+Math.round(shortConfMin*100)+' btcDown:'+btcDown+')' : ' | SHORT kapali'}`);
-    console.log(`${realTrading ? ' | GERCEK ✅' : ''}`);
+    console.log(`[ISLEM] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled&&btcDown?'✅':'❌'}${realTrading ? ' | GERCEK ✅' : ''}`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -190,17 +188,15 @@ class TradingEngine {
       return;
     }
 
-    for (const t of tickers) {
-      this.prices[t.symbol] = parseFloat(t.lastPrice);
-    }
+    for (const t of tickers) { this.prices[t.symbol] = parseFloat(t.lastPrice); }
 
     const tumFiltreli = [];
     for (const t of tickers) {
       if (!t.symbol.endsWith('USDT')) continue;
       if (STABLES.has(t.symbol)) continue;
-      const hacim   = parseFloat(t.quoteVolume) || 0;
+      const hacim = parseFloat(t.quoteVolume) || 0;
       const degisim = parseFloat(t.priceChangePercent) || 0;
-      const fiyat   = parseFloat(t.lastPrice) || 0;
+      const fiyat = parseFloat(t.lastPrice) || 0;
       if (fiyat <= 0 || hacim < minHacim || degisim <= -15 || degisim >= 15) continue;
       tumFiltreli.push(t);
     }
@@ -225,33 +221,35 @@ class TradingEngine {
         if (!result) continue;
 
         const machineAnalysis = this.machine.analyze(candles4H, {
-          symbol: ticker.symbol,
-          priceChangePercent: ticker.priceChangePercent || 0,
-          quoteVolume: ticker.quoteVolume || 0
+          symbol: ticker.symbol, priceChangePercent: ticker.priceChangePercent || 0, quoteVolume: ticker.quoteVolume || 0
         });
 
         let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
         // LONG sinyali
-        if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70) {
+        if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70 && longEnabled) {
           sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
         }
-        // SHORT sinyali (T2: eşik + BTC şartı)
+        // SHORT sinyali
         else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) {
           sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
         }
         else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
           rejectReason = 'MAKINE_BEKLE_DEDI';
+        } else if (!longEnabled && machineAnalysis.action === 'BUY') {
+          rejectReason = 'LONG_KAPALI';
+        } else if (!shortEnabled && machineAnalysis.action === 'SELL') {
+          rejectReason = 'SHORT_KAPALI';
         } else if (machineAnalysis.confidence < 0.70) {
           rejectReason = 'DUSUK_GUVEN';
-        } else if (machineAnalysis.action === 'SELL' && (!shortEnabled || machineAnalysis.confidence < shortConfMin || !btcDown)) {
-          rejectReason = 'SHORT_KAPALI_VEYA_SART_SAGLANMADI';
+        } else if (machineAnalysis.action === 'SELL' && (!btcDown || machineAnalysis.confidence < shortConfMin)) {
+          rejectReason = 'SHORT_SART_SAGLANMADI';
         }
 
         if (machineOnay) {
           machineAccepted++;
           if (side === 'LONG') longCount++;
-          else if (side === 'SHORT') shortCount++;
+          else shortCount++;
         } else if (rejectReason) {
           machineRejected++;
           rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1;
@@ -288,9 +286,9 @@ class TradingEngine {
             if (side === 'LONG') {
               const buyResult = await binance.realBuy(result.symbol, tradeAmount, result.fiyat);
               if (buyResult) {
-                const executedQty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
+                const qty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
                 this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: executedQty,
+                  symbol: result.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: qty,
                   highestPrice: result.fiyat, lowestPrice: result.fiyat,
                   stopLoss: machineAnalysis.stopLoss || result.stop_loss || result.fiyat * 0.98,
                   takeProfit: machineAnalysis.takeProfit || result.hedef,
@@ -300,9 +298,9 @@ class TradingEngine {
             } else if (side === 'SHORT') {
               const sellResult = await binance.realSell(result.symbol, tradeAmount / result.fiyat);
               if (sellResult) {
-                const executedQty = parseFloat(sellResult.executedQty) || (tradeAmount / result.fiyat);
+                const qty = parseFloat(sellResult.executedQty) || (tradeAmount / result.fiyat);
                 this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: executedQty,
+                  symbol: result.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: qty,
                   highestPrice: result.fiyat, lowestPrice: result.fiyat,
                   stopLoss: result.fiyat * 1.02, takeProfit: result.fiyat * 0.95,
                   entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence
@@ -333,10 +331,7 @@ class TradingEngine {
     const sure = Date.now() - baslangic;
     const simStats = simulation.getStats();
 
-    this.performance.scans.push({
-      timestamp: Date.now(), coinsScanned: filtreli.length,
-      signalsFound: signalsFound.length, machineAccepted, machineRejected, duration: sure
-    });
+    this.performance.scans.push({ timestamp: Date.now(), coinsScanned: filtreli.length, signalsFound: signalsFound.length, machineAccepted, machineRejected, duration: sure });
     this.performance.signalsGenerated += signalsFound.length;
     this.performance.signalsAccepted += machineAccepted;
     this.performance.signalsRejected += machineRejected;
@@ -346,9 +341,7 @@ class TradingEngine {
     console.log(`[MAKINE] ✅ ${machineAccepted} kabul | ❌ ${machineRejected} red`);
     console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Islem: ${simStats.totalTrades} | Basari: %${simStats.winRate}`);
 
-    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(
-      filtreli.length, signalsFound.length, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected
-    );
+    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(filtreli.length, signalsFound.length, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected);
 
     if (this.learningManager && this.scanCount % 3 === 0) {
       try { await this.learningManager.saveAndSync('Tarama #' + this.scanCount); } catch(e) {}
@@ -370,16 +363,11 @@ class TradingEngine {
     if (githubEnabled && githubToken) {
       try {
         const { IntegratedLearningManager } = require('./github_learning_sync');
-        this.learningManager = new IntegratedLearningManager({
-          repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data',
-          token: githubToken, branch: 'main', autoSync: false, syncInterval: 30
-        });
+        this.learningManager = new IntegratedLearningManager({ repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data', token: githubToken, branch: 'main', autoSync: false, syncInterval: 30 });
         await this.learningManager.initialize(this.machine, simulation);
         console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
       } catch(e) { console.error('[GITHUB] ❌ Sync hatasi:', e.message); }
-    } else {
-      console.log('[GITHUB] ⏸️ Öğrenme sync kapali');
-    }
+    } else { console.log('[GITHUB] ⏸️ Öğrenme sync kapali'); }
 
     const self = this;
     this.priceInterval = setInterval(async () => { await self.checkPositionsQuick(); }, 30000);
@@ -388,10 +376,11 @@ class TradingEngine {
     await this.scan();
     const intervalMin = parseInt(settings.scan_interval || 20);
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
+    const longEnabled = settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined;
+    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
     console.log(`[BOT] Her ${intervalMin} dakikada bir tarama`);
     console.log(`[BOT] Makine guven esigi: %${(this.machine.settings.confidenceRequired * 100).toFixed(0)}`);
-    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
-    console.log(`[BOT] LONG aktif${shortEnabled ? ' | SHORT aktif (BTC düsüş sarti var)' : ' | SHORT kapali'}${settings.real_trading === 'true' ? ' | GERCEK ✅' : ''}`);
+    console.log(`[BOT] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled?'✅':'❌'}${settings.real_trading==='true'?' | GERCEK ✅':''}`);
   }
 
   stop() {
@@ -407,11 +396,7 @@ class TradingEngine {
     return {
       bot: { running: this.running, scanCount: this.scanCount, btcTrend: this.btcTrend },
       machine: { adaptiveThreshold: simulation.getAdaptiveThreshold(), consecutiveLosses: simStats.consecutiveLosses || 0 },
-      performance: {
-        signalsGenerated: this.performance.signalsGenerated, signalsAccepted: this.performance.signalsAccepted,
-        signalsRejected: this.performance.signalsRejected,
-        acceptanceRate: this.performance.signalsGenerated > 0 ? (this.performance.signalsAccepted / this.performance.signalsGenerated * 100).toFixed(1) : 0
-      },
+      performance: { signalsGenerated: this.performance.signalsGenerated, signalsAccepted: this.performance.signalsAccepted, signalsRejected: this.performance.signalsRejected, acceptanceRate: this.performance.signalsGenerated > 0 ? (this.performance.signalsAccepted / this.performance.signalsGenerated * 100).toFixed(1) : 0 },
       simulation: { balance: simStats.balance, totalPnl: simStats.totalPnl, winRate: simStats.winRate, profitFactor: simStats.profitFactor }
     };
   }
