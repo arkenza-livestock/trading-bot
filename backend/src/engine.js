@@ -9,6 +9,7 @@ class TradingEngine {
   constructor() {
     this.running   = false;
     this.interval  = null;
+    this.priceInterval = null;  // YENİ: Fiyat kontrol döngüsü
     this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0 };
     this.scanCount = 0;
     this.prices    = {};
@@ -38,6 +39,55 @@ class TradingEngine {
     return new TelegramService(s.telegram_token, s.telegram_chat_id);
   }
 
+  // ═══════════════════════════════════════════
+  // YENİ: Hızlı fiyat çekme (sadece açık pozisyonlar için)
+  // ═══════════════════════════════════════════
+  async fetchPricesForOpenPositions() {
+    const symbolsToCheck = new Set();
+    
+    // Simülasyon açık pozisyonları
+    const simOpen = db.prepare("SELECT DISTINCT symbol FROM sim_positions WHERE status='OPEN'").all();
+    simOpen.forEach(p => symbolsToCheck.add(p.symbol));
+    
+    // Gerçek açık pozisyonlar
+    Object.keys(this.realPositions).forEach(s => symbolsToCheck.add(s));
+    
+    if (symbolsToCheck.size === 0) return;
+    
+    // Tek seferde tüm fiyatları çek
+    try {
+      const tickers = await binance.getAllTickers();
+      if (!tickers) return;
+      
+      for (const t of tickers) {
+        if (symbolsToCheck.has(t.symbol)) {
+          this.prices[t.symbol] = parseFloat(t.lastPrice);
+        }
+      }
+    } catch(e) {
+      // Sessiz hata, bir sonraki döngüde tekrar dener
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // YENİ: Hızlı pozisyon kontrolü (her 30 sn)
+  // ═══════════════════════════════════════════
+  async checkPositionsQuick() {
+    const settings = this.getSettings();
+    const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+    
+    // 1. Fiyatları güncelle
+    await this.fetchPricesForOpenPositions();
+    
+    // 2. Simülasyon pozisyonlarını kontrol et
+    simulation.updatePositions(this.prices, settings, this.candlesData);
+    
+    // 3. Gerçek pozisyonları kontrol et
+    if (realTrading && Object.keys(this.realPositions).length > 0) {
+      await this.updateRealPositions();
+    }
+  }
+
   async updateBTCTrend() {
     try {
       const candles = await binance.getKlines('BTCUSDT', '4h', 200);
@@ -65,10 +115,6 @@ class TradingEngine {
 
   async updateRealPositions() {
     const settings = this.getSettings();
-    const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
-    if (!realTrading) return;
-    if (Object.keys(this.realPositions).length === 0) return;
-
     const trailingPct = parseFloat(settings.trailing_stop_percent || 0.5) / 100;
     const minProfitPct = parseFloat(settings.min_profit_percent || 1.5) / 100;
     const hardStopPct = parseFloat(settings.stop_loss_percent || 2.0) / 100;
@@ -79,31 +125,23 @@ class TradingEngine {
       const currentPrice = this.prices[symbol];
       if (!currentPrice) continue;
 
-      if (currentPrice > pos.highestPrice) {
-        pos.highestPrice = currentPrice;
-      }
+      if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
 
       const entryPrice = pos.entryPrice;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
       const hardStop = entryPrice * (1 - hardStopPct);
       const trailingStop = pos.highestPrice * (1 - trailingPct);
-      const effectiveStop = Math.max(trailingStop, hardStop);
       let sellReason = null;
 
-      if (currentPrice <= hardStop) {
-        sellReason = 'STOP_LOSS';
-      } else if (pnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) {
-        sellReason = 'TRAILING_STOP';
-      } else if (pos.takeProfit && currentPrice >= pos.takeProfit) {
-        sellReason = 'TAKE_PROFIT';
-      }
+      if (currentPrice <= hardStop) sellReason = 'STOP_LOSS';
+      else if (pnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) sellReason = 'TRAILING_STOP';
+      else if (pos.takeProfit && currentPrice >= pos.takeProfit) sellReason = 'TAKE_PROFIT';
 
       if (sellReason) {
         console.log(`[GERCEK] ${symbol} satis sinyali: ${sellReason} @ ${currentPrice}`);
         try {
           const sellResult = await binance.realSell(symbol, pos.quantity);
           if (sellResult) {
-            console.log(`[GERCEK] ✅ ${symbol} satildi`);
             if (telegram) {
               const netPnl = (currentPrice - entryPrice) * pos.quantity;
               const netPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
@@ -120,9 +158,7 @@ class TradingEngine {
             }
             delete this.realPositions[symbol];
           }
-        } catch(e) {
-          console.error(`[GERCEK] ${symbol} satis hatasi:`, e.message);
-        }
+        } catch(e) { console.error(`[GERCEK] ${symbol} satis hatasi:`, e.message); }
       }
     }
   }
@@ -150,6 +186,11 @@ class TradingEngine {
     } catch(e) {
       console.error('[TARAMA] Ticker hatasi:', e.message);
       return;
+    }
+
+    // Tüm fiyatları kaydet
+    for (const t of tickers) {
+      this.prices[t.symbol] = parseFloat(t.lastPrice);
     }
 
     const tumFiltreli = [];
@@ -181,7 +222,6 @@ class TradingEngine {
         this.candlesData[ticker.symbol] = candles4H;
         const result = analysis.analyze(candles4H, ticker);
         if (!result) continue;
-        this.prices[ticker.symbol] = result.fiyat;
 
         const machineAnalysis = this.machine.analyze(candles4H, {
           symbol: ticker.symbol,
@@ -293,9 +333,7 @@ class TradingEngine {
     console.log(`[TARAMA] Tamamlandi (${(sure/1000).toFixed(1)}s) — ${signalCount} ALIM sinyali`);
     console.log(`[MAKINE] ✅ ${machineAccepted} kabul | ❌ ${machineRejected} red`);
     console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Islem: ${simStats.totalTrades} | Basari: %${simStats.winRate}`);
-    if (realTrading) {
-      console.log(`[GERCEK] Acik pozisyon: ${Object.keys(this.realPositions).length}`);
-    }
+    if (realTrading) console.log(`[GERCEK] Acik pozisyon: ${Object.keys(this.realPositions).length}`);
 
     db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(
       filtreli.length, signalCount, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected
@@ -332,9 +370,17 @@ class TradingEngine {
       } catch(e) { console.error('[GITHUB] Sync hatasi:', e.message); }
     }
 
+    // ═══════════════════════════════════════════
+    // YENİ: Bağımsız fiyat kontrol döngüsü (30 sn)
+    // ═══════════════════════════════════════════
+    const self = this;
+    this.priceInterval = setInterval(async () => {
+      await self.checkPositionsQuick();
+    }, 30000); // 30 saniye
+    console.log('[KONTROL] Fiyat kontrol dongusu basladi (her 30 sn)');
+
     await this.scan();
     const intervalMin = parseInt(settings.scan_interval || 20);
-    const self = this;
     this.interval = setInterval(async () => {
       await self.updateBTCTrend();
       await self.scan();
@@ -346,8 +392,10 @@ class TradingEngine {
 
   stop() {
     if (this.interval) clearInterval(this.interval);
+    if (this.priceInterval) clearInterval(this.priceInterval);
     this.running = false;
     this.interval = null;
+    this.priceInterval = null;
     if (this.learningManager) { this.learningManager.stop(); }
     console.log('[BOT] Durduruldu.');
   }
