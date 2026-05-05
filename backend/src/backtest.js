@@ -17,7 +17,10 @@ class MachineBacktestEngine {
       tradeAmount = 100,
       maxPositions = 3,
       epochs = 1,
-      machineConfidenceMin = 0.70
+      machineConfidenceMin = 0.70,
+      shortEnabled = true,
+      shortConfMin = 0.85,
+      btcDownRequired = true
     } = params;
 
     const totalCost = (commission + slippage) * 2 / 100;
@@ -25,7 +28,7 @@ class MachineBacktestEngine {
     const allTrades = [];
 
     console.log(`[BACKTEST] Başlıyor: ${symbols.length} coin, ${days} gün, ${interval}`);
-    console.log(`[BACKTEST] 🟢 LONG & 🔴 SHORT modu`);
+    console.log(`[BACKTEST] 🟢 LONG (esik:%${Math.round(machineConfidenceMin*100)}) ${shortEnabled ? '| 🔴 SHORT (esik:%'+Math.round(shortConfMin*100)+' btcDown:'+btcDownRequired+')' : '| 🔴 SHORT kapali'}`);
 
     for (const symbol of symbols) {
       try {
@@ -40,36 +43,49 @@ class MachineBacktestEngine {
         const openPositions = [];
         const startIdx = 100;
 
+        // BTC verisini de çek (SHORT için BTC trend kontrolü)
+        let btcCandles = null;
+        if (shortEnabled && btcDownRequired && symbol !== 'BTCUSDT') {
+          try {
+            btcCandles = await binance.getKlines('BTCUSDT', interval, Math.min(limit, 1000));
+          } catch(e) {}
+        }
+
         for (let i = startIdx; i < candles.length; i++) {
           const slice = candles.slice(0, i + 1);
           const currentPrice = parseFloat(candles[i][4]);
           const currentTime = parseInt(candles[i][6]);
 
-          // Pozisyonları güncelle (LONG & SHORT)
+          // BTC trend kontrolü (SHORT için)
+          let btcDown = true;
+          if (shortEnabled && btcDownRequired && btcCandles && i < btcCandles.length) {
+            const btcSlice = btcCandles.slice(0, i + 1);
+            const btcCloses = btcSlice.map(c => parseFloat(c[4]));
+            const btcEma21 = analysis.hesaplaEMA(btcCloses, 21);
+            const btcEma50 = btcCloses.length >= 50 ? analysis.hesaplaEMA(btcCloses, 50) : btcEma21;
+            const btcPrice = btcCloses[btcCloses.length - 1];
+            btcDown = btcPrice < btcEma21 && btcEma21 < btcEma50;
+          }
+
+          // Pozisyonları güncelle
           for (let j = openPositions.length - 1; j >= 0; j--) {
             var pos = openPositions[j];
             var side = pos.side || 'LONG';
             var pnlPct, closeReason = null;
 
             if (side === 'SHORT') {
-              // SHORT: fiyat düşerse kâr
               if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
               pnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 - totalCost * 100;
-
               var hardStop = pos.entryPrice * (1 + stopLoss / 100);
               var trailingStopPrice = pos.lowestPrice * (1 + trailingStop / 100);
-
               if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
               else if (pnlPct >= minProfit && currentPrice >= trailingStopPrice) closeReason = 'TRAILING_STOP';
               else if (pos.takeProfit && currentPrice <= pos.takeProfit) closeReason = 'TAKE_PROFIT';
             } else {
-              // LONG: fiyat yükselirse kâr
               if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
               pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
-
               var hardStop = pos.entryPrice * (1 - stopLoss / 100);
               var trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
-
               if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
               else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) closeReason = 'TRAILING_STOP';
               else if (pos.takeProfit && currentPrice >= pos.takeProfit) closeReason = 'TAKE_PROFIT';
@@ -81,8 +97,7 @@ class MachineBacktestEngine {
                 symbol, side: side,
                 entryPrice: pos.entryPrice, exitPrice: currentPrice,
                 entryTime: pos.entryTime, exitTime: currentTime,
-                reason: closeReason,
-                score: pos.score || 0,
+                reason: closeReason, score: pos.score || 0,
                 machineConfidence: pos.machineConfidence || 0,
                 netPnl: parseFloat(netPnl.toFixed(4)),
                 netPnlPct: parseFloat(pnlPct.toFixed(2)),
@@ -92,7 +107,6 @@ class MachineBacktestEngine {
             }
           }
 
-          // Yeni sinyal ara
           if (openPositions.length >= maxPositions) continue;
 
           const analysisResult = analysis.analyze(slice, { symbol, priceChangePercent: 0, quoteVolume: 999999 });
@@ -106,11 +120,10 @@ class MachineBacktestEngine {
 
           if (machineAnalysis.action === 'BUY' && confidenceOk) {
             side = 'LONG';
-          } else if (machineAnalysis.action === 'SELL' && confidenceOk) {
+          } else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) {
             side = 'SHORT';
           }
 
-          // Puan filtresi (opsiyonel)
           if (side && analysisResult.puan < minScore) continue;
 
           if (side) {
@@ -124,16 +137,12 @@ class MachineBacktestEngine {
             }
 
             openPositions.push({
-              symbol,
-              side: side,
+              symbol, side: side,
               entryPrice: currentPrice,
-              highestPrice: currentPrice,
-              lowestPrice: currentPrice,
-              entryTime: currentTime,
-              score: analysisResult.puan,
+              highestPrice: currentPrice, lowestPrice: currentPrice,
+              entryTime: currentTime, score: analysisResult.puan,
               machineConfidence: machineAnalysis.confidence,
-              takeProfit: takePrice,
-              stopLoss: stopPrice
+              takeProfit: takePrice, stopLoss: stopPrice
             });
           }
         }
@@ -150,17 +159,7 @@ class MachineBacktestEngine {
             pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
           }
           const netPnl = tradeAmount * pnlPct / 100;
-          trades.push({
-            symbol, side: side,
-            entryPrice: pos.entryPrice, exitPrice: lastPrice,
-            entryTime: pos.entryTime, exitTime: lastTime,
-            reason: 'PERIOD_END',
-            score: pos.score || 0,
-            machineConfidence: pos.machineConfidence || 0,
-            netPnl: parseFloat(netPnl.toFixed(4)),
-            netPnlPct: parseFloat(pnlPct.toFixed(2)),
-            phase: 'BACKTEST'
-          });
+          trades.push({ symbol, side, entryPrice: pos.entryPrice, exitPrice: lastPrice, entryTime: pos.entryTime, exitTime: lastTime, reason: 'PERIOD_END', score: pos.score || 0, machineConfidence: pos.machineConfidence || 0, netPnl: parseFloat(netPnl.toFixed(4)), netPnlPct: parseFloat(pnlPct.toFixed(2)), phase: 'BACKTEST' });
         }
 
         allTrades.push(...trades);
@@ -170,14 +169,12 @@ class MachineBacktestEngine {
       }
     }
 
-    // Özet hesapla
     const wins = allTrades.filter(t => t.netPnl > 0);
     const losses = allTrades.filter(t => t.netPnl <= 0);
     const totalPnl = allTrades.reduce((s, t) => s + t.netPnl, 0);
     const gW = wins.reduce((s, t) => s + t.netPnl, 0);
     const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
 
-    // LONG & SHORT ayrı ayrı
     const longTrades = allTrades.filter(t => t.side === 'LONG');
     const shortTrades = allTrades.filter(t => t.side === 'SHORT');
     const longWins = longTrades.filter(t => t.netPnl > 0).length;
@@ -185,8 +182,7 @@ class MachineBacktestEngine {
 
     const summary = {
       totalTrades: allTrades.length,
-      wins: wins.length,
-      losses: losses.length,
+      wins: wins.length, losses: losses.length,
       winRate: allTrades.length > 0 ? parseFloat((wins.length / allTrades.length * 100).toFixed(1)) : 0,
       totalPnl: parseFloat(totalPnl.toFixed(2)),
       profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
