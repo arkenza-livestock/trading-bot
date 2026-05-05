@@ -64,21 +64,19 @@ class AdvancedSimulationEngine {
       var side = signal.side || 'LONG';
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
-      var stopLoss, takeProfit;
+      var stopLoss;
 
       if (side === 'SHORT') {
         stopLoss = signal.stop_loss || signal.stopLoss || price * 1.02;
-        takeProfit = signal.target || price * 0.95;
       } else {
         stopLoss = signal.stop_loss || signal.stopLoss || price * 0.98;
-        takeProfit = signal.target || price * 1.05;
       }
 
       var guc = (signal.machineConfidence || 0) >= 0.80 ? 'AI_GUCLU' : (signal.machineConfidence || 0) >= 0.65 ? 'AI_NORMAL' : 'AI_ZAYIF';
 
       var result = db.prepare(
         'INSERT INTO sim_positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,highest_price,lowest_price,signal_guc,trend4H,trend1D,score,machine_confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
-      ).run(signal.symbol, side, quantity, price, price, stopLoss, takeProfit, price, price, guc, signal.trend || '-', signal.trend || '-', signal.score || signal.puan || 0, signal.machineConfidence || 0);
+      ).run(signal.symbol, side, quantity, price, price, stopLoss, 0, price, price, guc, signal.trend || '-', signal.trend || '-', signal.score || signal.puan || 0, signal.machineConfidence || 0);
 
       db.prepare('UPDATE sim_wallet SET balance=balance-?, updated_at=CURRENT_TIMESTAMP').run(baseAmt);
 
@@ -89,7 +87,7 @@ class AdvancedSimulationEngine {
         entryTime: Date.now(),
         machineConfidence: signal.machineConfidence || 0
       };
-      this.performance.signals.push({ symbol: signal.symbol, side: side, entryPrice: price, stopLoss: stopLoss, takeProfit: takeProfit, machineConfidence: signal.machineConfidence || 0, timestamp: Date.now() });
+      this.performance.signals.push({ symbol: signal.symbol, side: side, entryPrice: price, stopLoss: stopLoss, machineConfidence: signal.machineConfidence || 0, timestamp: Date.now() });
 
       console.log('[SIM] ACILDI: ' + signal.symbol + ' (' + side + ') @ ' + price + ' | ' + baseAmt + ' USDT | Guc:' + guc + ' | AI:%' + ((signal.machineConfidence||0)*100).toFixed(0));
       return result.lastInsertRowid;
@@ -189,7 +187,6 @@ class AdvancedSimulationEngine {
 
         if (currentPrice >= hardStop) { closeReason = 'STOP_LOSS'; }
         else if (brutoPnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) { closeReason = 'TRAILING_STOP'; }
-        else if (pos.take_profit && currentPrice <= pos.take_profit) { closeReason = 'TAKE_PROFIT'; }
       } else {
         if (currentPrice > trailing.highestPrice) { trailing.highestPrice = currentPrice; newHighest = currentPrice; }
         if (currentPrice < trailing.lowestPrice) { newLowest = currentPrice; }
@@ -199,7 +196,6 @@ class AdvancedSimulationEngine {
 
         if (currentPrice <= hardStop) { closeReason = 'STOP_LOSS'; }
         else if (brutoPnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) { closeReason = 'TRAILING_STOP'; }
-        else if (pos.take_profit && currentPrice >= pos.take_profit) { closeReason = 'TAKE_PROFIT'; }
       }
 
       if (closeReason) { this.closePosition(pos, currentPrice, closeReason); }
