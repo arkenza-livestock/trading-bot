@@ -1,11 +1,11 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
-// ═══════════════════════════════════════════════
-// BINANCE API - PUBLIC ENDPOINTS
-// ═══════════════════════════════════════════════
-
 const BASE_URL = 'https://api.binance.com';
+
+// ═══════════════════════════════════════════
+// PUBLIC ENDPOINTS
+// ═══════════════════════════════════════════
 
 async function getKlines(symbol, interval, limit) {
   try {
@@ -28,17 +28,28 @@ async function getAllTickers() {
   }
 }
 
-// ═══════════════════════════════════════════════
-// BINANCE API - PRIVATE (GERÇEK ALIM-SATIM)
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════
+// AYARLARDAN API ANAHTARI OKUMA
+// ═══════════════════════════════════════════
 
-function getBinanceConfig() {
-  return {
-    apiKey: process.env.BINANCE_API_KEY || '',
-    apiSecret: process.env.BINANCE_API_SECRET || '',
-    baseUrl: BASE_URL
-  };
+function getBinanceKeys() {
+  try {
+    var db = require('./database');
+    var rows = db.prepare("SELECT key, value FROM settings WHERE key IN ('binance_api_key','binance_api_secret')").all();
+    var settings = {};
+    rows.forEach(function(r) { settings[r.key] = r.value; });
+    return {
+      apiKey: settings.binance_api_key || '',
+      apiSecret: settings.binance_api_secret || ''
+    };
+  } catch(e) {
+    return { apiKey: '', apiSecret: '' };
+  }
 }
+
+// ═══════════════════════════════════════════
+// PRIVATE (GERÇEK ALIM-SATIM)
+// ═══════════════════════════════════════════
 
 function sign(params, secret) {
   var query = Object.keys(params)
@@ -49,24 +60,24 @@ function sign(params, secret) {
 }
 
 async function binanceRequest(method, endpoint, params) {
-  var config = getBinanceConfig();
+  var keys = getBinanceKeys();
   
-  if (!config.apiKey || !config.apiSecret) {
-    throw new Error('BINANCE_API_KEY ve BINANCE_API_SECRET tanimlanmamis');
+  if (!keys.apiKey || !keys.apiSecret) {
+    throw new Error('Binance API anahtarlari ayarlarda tanimlanmamis');
   }
 
   params.timestamp = Date.now();
-  params.signature = sign(params, config.apiSecret);
+  params.signature = sign(params, keys.apiSecret);
 
-  var headers = { 'X-MBX-APIKEY': config.apiKey };
+  var headers = { 'X-MBX-APIKEY': keys.apiKey };
 
   try {
     var response;
     if (method === 'GET') {
       var query = Object.keys(params).map(function(k) { return k + '=' + params[k]; }).join('&');
-      response = await axios.get(config.baseUrl + endpoint + '?' + query, { headers: headers });
+      response = await axios.get(BASE_URL + endpoint + '?' + query, { headers: headers });
     } else {
-      response = await axios.post(config.baseUrl + endpoint, null, { headers: headers, params: params });
+      response = await axios.post(BASE_URL + endpoint, null, { headers: headers, params: params });
     }
     return response.data;
   } catch(e) {
@@ -77,10 +88,9 @@ async function binanceRequest(method, endpoint, params) {
   }
 }
 
-// Bakiye sorgulama
 async function getBalance(asset) {
-  var config = getBinanceConfig();
-  if (!config.apiKey) return 0;
+  var keys = getBinanceKeys();
+  if (!keys.apiKey) return 0;
 
   try {
     var data = await binanceRequest('GET', '/api/v3/account', {});
@@ -92,10 +102,9 @@ async function getBalance(asset) {
   }
 }
 
-// Gerçek ALIM (MARKET)
 async function realBuy(symbol, usdtAmount, currentPrice) {
-  var config = getBinanceConfig();
-  if (!config.apiKey) {
+  var keys = getBinanceKeys();
+  if (!keys.apiKey) {
     console.log('[BINANCE] ❌ API anahtari yok, alim yapilmadi');
     return null;
   }
@@ -104,8 +113,7 @@ async function realBuy(symbol, usdtAmount, currentPrice) {
     var symbolFixed = symbol.replace('USDT', '') + 'USDT';
     var quantity = usdtAmount / currentPrice;
 
-    // LOT_SIZE filtresi
-    var info = await axios.get(config.baseUrl + '/api/v3/exchangeInfo?symbol=' + symbolFixed);
+    var info = await axios.get(BASE_URL + '/api/v3/exchangeInfo?symbol=' + symbolFixed);
     var lotFilter = info.data.symbols[0].filters.find(function(f) { return f.filterType === 'LOT_SIZE'; });
     var stepSize = parseFloat(lotFilter.stepSize);
     var precision = Math.floor(Math.log10(1 / stepSize));
@@ -117,13 +125,7 @@ async function realBuy(symbol, usdtAmount, currentPrice) {
       return null;
     }
 
-    var params = {
-      symbol: symbolFixed,
-      side: 'BUY',
-      type: 'MARKET',
-      quantity: qty
-    };
-
+    var params = { symbol: symbolFixed, side: 'BUY', type: 'MARKET', quantity: qty };
     var result = await binanceRequest('POST', '/api/v3/order', params);
     console.log('[BINANCE] ✅ GERCEK ALIM:', symbolFixed, '| Miktar:', qty, '| Yaklasik:', usdtAmount + ' USDT');
     return result;
@@ -133,10 +135,9 @@ async function realBuy(symbol, usdtAmount, currentPrice) {
   }
 }
 
-// Gerçek SATIM (MARKET)
 async function realSell(symbol, quantity) {
-  var config = getBinanceConfig();
-  if (!config.apiKey) {
+  var keys = getBinanceKeys();
+  if (!keys.apiKey) {
     console.log('[BINANCE] ❌ API anahtari yok, satis yapilmadi');
     return null;
   }
@@ -144,8 +145,7 @@ async function realSell(symbol, quantity) {
   try {
     var symbolFixed = symbol.replace('USDT', '') + 'USDT';
 
-    // LOT_SIZE filtresi
-    var info = await axios.get(config.baseUrl + '/api/v3/exchangeInfo?symbol=' + symbolFixed);
+    var info = await axios.get(BASE_URL + '/api/v3/exchangeInfo?symbol=' + symbolFixed);
     var lotFilter = info.data.symbols[0].filters.find(function(f) { return f.filterType === 'LOT_SIZE'; });
     var stepSize = parseFloat(lotFilter.stepSize);
     var precision = Math.floor(Math.log10(1 / stepSize));
@@ -157,13 +157,7 @@ async function realSell(symbol, quantity) {
       return null;
     }
 
-    var params = {
-      symbol: symbolFixed,
-      side: 'SELL',
-      type: 'MARKET',
-      quantity: qty
-    };
-
+    var params = { symbol: symbolFixed, side: 'SELL', type: 'MARKET', quantity: qty };
     var result = await binanceRequest('POST', '/api/v3/order', params);
     console.log('[BINANCE] ✅ GERCEK SATIS:', symbolFixed, '| Miktar:', qty);
     return result;
