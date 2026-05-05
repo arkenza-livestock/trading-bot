@@ -242,15 +242,44 @@ class AdvancedSimulationEngine {
     var avgWin = wins.length > 0 ? wins.reduce(function(s, p) { return s + (p.pnl_percent || 0); }, 0) / wins.length : 0;
     var avgLoss = losses.length > 0 ? losses.reduce(function(s, p) { return s + (p.pnl_percent || 0); }, 0) / losses.length : 0;
     var startBal = parseFloat((db.prepare("SELECT value FROM settings WHERE key='sim_balance'").get() || {}).value || 1000);
+
+    // Sharpe Ratio
+    var returns = closed.map(function(p) { return p.pnl_percent || 0; });
+    var avgReturn = returns.length > 0 ? returns.reduce(function(a, b) { return a + b; }, 0) / returns.length : 0;
+    var variance = returns.length > 1 ? returns.reduce(function(a, b) { return a + Math.pow(b - avgReturn, 2); }, 0) / returns.length : 0;
+    var stdDev = Math.sqrt(variance);
+    var sharpe = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(Math.max(1, closed.length)) : 0;
+
+    // Max Drawdown
+    var peak = startBal;
+    var maxDD = 0;
+    var runningBal = startBal;
+    for (var i = 0; i < closed.length; i++) {
+      runningBal += (closed[i].pnl || 0);
+      if (runningBal > peak) peak = runningBal;
+      var dd = (peak - runningBal) / peak * 100;
+      if (dd > maxDD) maxDD = dd;
+    }
+
     return {
-      balance: parseFloat((wallet ? wallet.balance : startBal).toFixed(4)), startBalance: startBal,
-      totalPnl: parseFloat(totalPnl.toFixed(4)), totalPnlPct: parseFloat((totalPnl / startBal * 100).toFixed(2)),
-      totalTrades: closed.length, openTrades: openPos.length, wins: wins.length, losses: losses.length,
-      winRate: parseFloat(winRate.toFixed(1)), profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
-      avgWin: parseFloat(avgWin.toFixed(2)), avgLoss: parseFloat(avgLoss.toFixed(2)),
+      balance: parseFloat((wallet ? wallet.balance : startBal).toFixed(4)),
+      startBalance: startBal,
+      totalPnl: parseFloat(totalPnl.toFixed(4)),
+      totalPnlPct: parseFloat((totalPnl / startBal * 100).toFixed(2)),
+      totalTrades: closed.length,
+      openTrades: openPos.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: parseFloat(winRate.toFixed(1)),
+      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
+      avgWin: parseFloat(avgWin.toFixed(2)),
+      avgLoss: parseFloat(avgLoss.toFixed(2)),
+      sharpeRatio: parseFloat(sharpe.toFixed(2)),
+      maxDrawdown: parseFloat(maxDD.toFixed(2)),
       adaptiveThreshold: parseFloat((this.performance.adaptiveThreshold * 100).toFixed(1)),
       consecutiveLosses: this.performance.consecutiveLosses,
-      openPositions: openPos, recentTrades: allPos.slice(0, 30)
+      openPositions: openPos,
+      recentTrades: allPos.slice(0, 30)
     };
   }
 }
