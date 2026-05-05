@@ -20,13 +20,29 @@ function getEngine() {
   return engine;
 }
 
-// ── Bot Durumu
-app.get('/api/status', (req, res) => {
+// ── Bot Durumu (Gerçek Bakiye Eklendi)
+app.get('/api/status', async (req, res) => {
   try {
     const eng = getEngine();
     const stats = simulation.getStats();
-    res.json({ botRunning: eng.running, simRunning: eng.running, scanCount: eng.scanCount, btcTrend: eng.btcTrend, stats });
-  } catch(e) { res.json({ botRunning: false, simRunning: false, scanCount: 0, btcTrend: { trend:'BELIRSIZ' }, stats:{} }); }
+    let realBalance = 0;
+    if (eng && eng.running) {
+      try {
+        const binance = require('./src/binance');
+        realBalance = await binance.getBalance('USDT');
+      } catch(e) {}
+    }
+    res.json({
+      botRunning: eng.running,
+      simRunning: eng.running,
+      scanCount: eng.scanCount,
+      btcTrend: eng.btcTrend,
+      realBalance: realBalance,
+      stats
+    });
+  } catch(e) {
+    res.json({ botRunning: false, simRunning: false, scanCount: 0, btcTrend: { trend:'BELIRSIZ' }, realBalance: 0, stats:{} });
+  }
 });
 
 // ── Sinyaller
@@ -73,7 +89,12 @@ app.get('/api/machine/report', (req, res) => {
     const eng = getEngine();
     const stats = simulation.getStats();
     if (eng.getMachineReport) return res.json(eng.getMachineReport());
-    res.json({ bot:{ running:eng.running, scanCount:eng.scanCount, btcTrend:eng.btcTrend }, machine:{ adaptiveThreshold:stats.adaptiveThreshold||70, consecutiveLosses:stats.consecutiveLosses||0 }, performance:{ signalsGenerated:eng.performance?.signalsGenerated||0, signalsAccepted:eng.performance?.signalsAccepted||0, signalsRejected:eng.performance?.signalsRejected||0, acceptanceRate:eng.performance?.signalsGenerated>0?(eng.performance.signalsAccepted/eng.performance.signalsGenerated*100).toFixed(1):0 }, simulation:stats });
+    res.json({
+      bot:{ running:eng.running, scanCount:eng.scanCount, btcTrend:eng.btcTrend },
+      machine:{ adaptiveThreshold:stats.adaptiveThreshold||70, consecutiveLosses:stats.consecutiveLosses||0 },
+      performance:{ signalsGenerated:eng.performance?.signalsGenerated||0, signalsAccepted:eng.performance?.signalsAccepted||0, signalsRejected:eng.performance?.signalsRejected||0, acceptanceRate:eng.performance?.signalsGenerated>0?(eng.performance.signalsAccepted/eng.performance.signalsGenerated*100).toFixed(1):0 },
+      simulation:stats
+    });
   } catch(e) { res.json({ bot:{}, machine:{}, performance:{}, simulation:{} }); }
 });
 
@@ -90,9 +111,8 @@ app.post('/api/backtest', async (req, res) => {
       tradeAmount: parseFloat(req.body.tradeAmount||100), maxPositions: parseInt(req.body.maxPositions||3),
       epochs: parseInt(req.body.epochs||3), machineConfidenceMin: parseFloat(req.body.machineConfidenceMin||0.70)
     };
-    console.log('[BACKTEST] '+p.symbols.length+' coin, '+p.days+' gun');
     res.json(await backtest.run(p));
-  } catch(e) { console.error('[BACKTEST]',e.message); res.status(500).json({ error:e.message }); }
+  } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
 // ── Ayarlar
@@ -117,53 +137,62 @@ app.get('/api/positions', (req, res) => {
       Object.keys(eng.realPositions).forEach(sym => {
         const pos = eng.realPositions[sym];
         const cp = eng.prices[pos.symbol] || pos.entryPrice;
-        const pnlPct = ((cp-pos.entryPrice)/pos.entryPrice)*100;
-        realData.push({ id:0, symbol:pos.symbol, side:'LONG', quantity:pos.quantity, entry_price:pos.entryPrice, current_price:cp, exit_price:null, stop_loss:pos.stopLoss, take_profit:pos.takeProfit, highest_price:pos.highestPrice||pos.entryPrice, lowest_price:pos.entryPrice, pnl:(cp-pos.entryPrice)*pos.quantity, pnl_percent:pnlPct, status:'OPEN', signal_guc:'GERCEK', trend4H:'-', trend1D:'-', score:0, machine_confidence:pos.machineConfidence||0, close_reason:null, opened_at:pos.entryTime, closed_at:null, is_real:1 });
+        const pnlPct = pos.side === 'SHORT' ? ((pos.entryPrice-cp)/pos.entryPrice)*100 : ((cp-pos.entryPrice)/pos.entryPrice)*100;
+        const pnl = pos.side === 'SHORT' ? (pos.entryPrice-cp)*pos.quantity : (cp-pos.entryPrice)*pos.quantity;
+        realData.push({
+          id:0, symbol:pos.symbol, side:pos.side||'LONG', quantity:pos.quantity,
+          entry_price:pos.entryPrice, current_price:cp, exit_price:null,
+          stop_loss:pos.stopLoss, take_profit:pos.takeProfit,
+          highest_price:pos.highestPrice||pos.entryPrice, lowest_price:pos.lowestPrice||pos.entryPrice,
+          pnl:pnl, pnl_percent:pnlPct, status:'OPEN', signal_guc:'GERCEK',
+          trend4H:'-', trend1D:'-', score:0, machine_confidence:pos.machineConfidence||0,
+          close_reason:null, opened_at:pos.entryTime, closed_at:null, is_real:1
+        });
       });
     }
     res.json([...realData,...simData]);
   } catch(e) { res.json([]); }
 });
 
-// ── MANUEL SATIŞ (Gerçek veya Simülasyon)
+// ── Manuel Satış
 app.post('/api/positions/close', async (req, res) => {
   try {
     const { symbol, is_real } = req.body;
     if (!symbol) return res.status(400).json({ error:'Sembol gerekli' });
-
     if (is_real === 1 || is_real === '1') {
       const eng = getEngine();
       if (!eng || !eng.realPositions || !eng.realPositions[symbol]) return res.status(404).json({ error:'Pozisyon bulunamadi' });
       const pos = eng.realPositions[symbol];
       const cp = eng.prices[symbol] || pos.entryPrice;
-
-      const sellResult = await require('./src/binance').realSell(symbol, pos.quantity);
+      const side = pos.side || 'LONG';
+      let sellResult;
+      if (side === 'SHORT') {
+        sellResult = await require('./src/binance').realBuy(symbol, pos.quantity * cp, cp);
+      } else {
+        sellResult = await require('./src/binance').realSell(symbol, pos.quantity);
+      }
       if (sellResult) {
-        // Telegram bildirimi
         try {
           const settings = {}; db.prepare('SELECT key,value FROM settings').all().forEach(r=>settings[r.key]=r.value);
           if (settings.telegram_token && settings.telegram_chat_id) {
             const TelegramService = require('./src/telegram');
             const tg = new TelegramService(settings.telegram_token, settings.telegram_chat_id);
-            const pnl = (cp-pos.entryPrice)*pos.quantity;
-            const pnlPct = ((cp-pos.entryPrice)/pos.entryPrice)*100;
+            const pnl = side==='SHORT' ? (pos.entryPrice-cp)*pos.quantity : (cp-pos.entryPrice)*pos.quantity;
+            const pnlPct = side==='SHORT' ? ((pos.entryPrice-cp)/pos.entryPrice)*100 : ((cp-pos.entryPrice)/pos.entryPrice)*100;
             const emoji = pnl>=0?'✅ KAR':'❌ ZARAR';
             const isaret = pnl>=0?'+':'';
             tg.sendMessage(`${emoji} — ${symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${pos.entryPrice.toFixed(6)}\n💰 Cikis: ${cp.toFixed(6)}\n${pnl>=0?'📈 Kar':'📉 Zarar'}: ${isaret}%${pnlPct.toFixed(2)} (${isaret}${pnl.toFixed(4)} USDT)\n🛑 Neden: MANUEL_KAPATMA\n🕐 ${new Date().toLocaleString('tr-TR',{timeZone:'Europe/Istanbul'})}`).catch(()=>{});
           }
         } catch(e) {}
         delete eng.realPositions[symbol];
-        res.json({ message:'✅ '+symbol+' manuel satildi', price:cp });
-      } else {
-        res.status(500).json({ error:'Satis basarisiz' });
-      }
+        res.json({ message:'✅ '+symbol+' manuel kapatildi', price:cp });
+      } else { res.status(500).json({ error:'Kapatma basarisiz' }); }
     } else {
       const pos = db.prepare("SELECT * FROM sim_positions WHERE symbol=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1").get(symbol);
-      if (!pos) return res.status(404).json({ error:'Simulasyon pozisyonu bulunamadi' });
+      if (!pos) return res.status(404).json({ error:'Pozisyon bulunamadi' });
       const cp = pos.current_price || pos.entry_price;
-      const closeResult = simulation.closePosition(pos, cp, 'MANUEL_KAPATMA');
-      if (closeResult) res.json({ message:'✅ '+symbol+' simülasyon pozisyonu kapatildi', price:cp });
-      else res.status(500).json({ error:'Kapatma basarisiz' });
+      simulation.closePosition(pos, cp, 'MANUEL_KAPATMA');
+      res.json({ message:'✅ '+symbol+' simülasyon pozisyonu kapatildi' });
     }
   } catch(e) { res.status(500).json({ error:e.message }); }
 });
