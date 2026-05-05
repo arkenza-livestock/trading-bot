@@ -87,6 +87,29 @@ function Settings() {
         </div>
       </div>
 
+      {/* BINANCE API */}
+      <div style={{
+        background: '#0d1321',
+        border: '1px solid #1a2540',
+        borderLeft: '4px solid #f59e0b',
+        borderRadius: 14,
+        padding: '20px 22px',
+        marginBottom: 16
+      }}>
+        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1}}>Binance API</h3>
+        <p style={{color: '#64748b', fontSize: 11, marginBottom: 12}}>Gercek alim icin gerekli</p>
+        <Row label="API Key">
+          <input type="password" value={settings.binance_api_key || ''} onChange={function(e) { handleChange('binance_api_key', e.target.value); }}
+            placeholder="API Key..."
+            style={{width: 220, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, textAlign: 'left'}} />
+        </Row>
+        <Row label="Secret Key">
+          <input type="password" value={settings.binance_api_secret || ''} onChange={function(e) { handleChange('binance_api_secret', e.target.value); }}
+            placeholder="Secret Key..."
+            style={{width: 220, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, textAlign: 'left'}} />
+        </Row>
+      </div>
+
       {/* GITHUB SYNC */}
       <div style={{
         background: '#0d1321',
