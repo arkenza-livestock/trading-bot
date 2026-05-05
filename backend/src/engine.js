@@ -9,7 +9,7 @@ class TradingEngine {
   constructor() {
     this.running   = false;
     this.interval  = null;
-    this.priceInterval = null;  // YENİ: Fiyat kontrol döngüsü
+    this.priceInterval = null;
     this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0 };
     this.scanCount = 0;
     this.prices    = {};
@@ -39,50 +39,28 @@ class TradingEngine {
     return new TelegramService(s.telegram_token, s.telegram_chat_id);
   }
 
-  // ═══════════════════════════════════════════
-  // YENİ: Hızlı fiyat çekme (sadece açık pozisyonlar için)
-  // ═══════════════════════════════════════════
   async fetchPricesForOpenPositions() {
     const symbolsToCheck = new Set();
-    
-    // Simülasyon açık pozisyonları
     const simOpen = db.prepare("SELECT DISTINCT symbol FROM sim_positions WHERE status='OPEN'").all();
     simOpen.forEach(p => symbolsToCheck.add(p.symbol));
-    
-    // Gerçek açık pozisyonlar
     Object.keys(this.realPositions).forEach(s => symbolsToCheck.add(s));
-    
     if (symbolsToCheck.size === 0) return;
-    
-    // Tek seferde tüm fiyatları çek
     try {
       const tickers = await binance.getAllTickers();
       if (!tickers) return;
-      
       for (const t of tickers) {
         if (symbolsToCheck.has(t.symbol)) {
           this.prices[t.symbol] = parseFloat(t.lastPrice);
         }
       }
-    } catch(e) {
-      // Sessiz hata, bir sonraki döngüde tekrar dener
-    }
+    } catch(e) {}
   }
 
-  // ═══════════════════════════════════════════
-  // YENİ: Hızlı pozisyon kontrolü (her 30 sn)
-  // ═══════════════════════════════════════════
   async checkPositionsQuick() {
     const settings = this.getSettings();
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
-    
-    // 1. Fiyatları güncelle
     await this.fetchPricesForOpenPositions();
-    
-    // 2. Simülasyon pozisyonlarını kontrol et
     simulation.updatePositions(this.prices, settings, this.candlesData);
-    
-    // 3. Gerçek pozisyonları kontrol et
     if (realTrading && Object.keys(this.realPositions).length > 0) {
       await this.updateRealPositions();
     }
@@ -124,7 +102,6 @@ class TradingEngine {
       const pos = this.realPositions[symbol];
       const currentPrice = this.prices[symbol];
       if (!currentPrice) continue;
-
       if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
 
       const entryPrice = pos.entryPrice;
@@ -188,7 +165,6 @@ class TradingEngine {
       return;
     }
 
-    // Tüm fiyatları kaydet
     for (const t of tickers) {
       this.prices[t.symbol] = parseFloat(t.lastPrice);
     }
@@ -356,27 +332,39 @@ class TradingEngine {
     const githubEnabled = settings.github_sync_enabled === 'true';
     const githubToken = process.env.GITHUB_TOKEN;
 
+    console.log('[GITHUB] Debug: githubEnabled=' + githubEnabled + ', tokenVar=' + (githubToken ? 'Evet' : 'Hayir'));
+
     if (githubEnabled && githubToken) {
       try {
+        console.log('[GITHUB] Sync başlatiliyor...');
         const { IntegratedLearningManager } = require('./github_learning_sync');
         this.learningManager = new IntegratedLearningManager({
-          repoUrl: process.env.GITHUB_LEARNING_REPO || '',
+          repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data',
           token: githubToken,
+          branch: 'main',
           autoSync: false,
           syncInterval: 30
         });
-        await this.learningManager.initialize(this.machine, simulation);
-        console.log('[GITHUB] ✅ Ogrenme sync AKTIF');
-      } catch(e) { console.error('[GITHUB] Sync hatasi:', e.message); }
+        const initResult = await this.learningManager.initialize(this.machine, simulation);
+        console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
+        if (initResult && initResult.loaded) {
+          console.log('[GITHUB] 📂 Önceki öğrenmeler yüklendi');
+        }
+      } catch(e) {
+        console.error('[GITHUB] ❌ Sync başlatma hatasi:', e.message);
+      }
+    } else {
+      if (githubEnabled && !githubToken) {
+        console.log('[GITHUB] ⚠️ Sync ACIK ama GITHUB_TOKEN bulunamadi!');
+      } else {
+        console.log('[GITHUB] ⏸️ Öğrenme sync kapali (ayar: ' + githubEnabled + ')');
+      }
     }
 
-    // ═══════════════════════════════════════════
-    // YENİ: Bağımsız fiyat kontrol döngüsü (30 sn)
-    // ═══════════════════════════════════════════
     const self = this;
     this.priceInterval = setInterval(async () => {
       await self.checkPositionsQuick();
-    }, 30000); // 30 saniye
+    }, 30000);
     console.log('[KONTROL] Fiyat kontrol dongusu basladi (her 30 sn)');
 
     await this.scan();
