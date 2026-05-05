@@ -109,7 +109,10 @@ app.post('/api/backtest', async (req, res) => {
       minProfit: parseFloat(req.body.minProfit||1.5), commission: parseFloat(req.body.commission||0.1),
       slippage: parseFloat(req.body.slippage||0.05), minScore: parseInt(req.body.minScore||50),
       tradeAmount: parseFloat(req.body.tradeAmount||100), maxPositions: parseInt(req.body.maxPositions||3),
-      epochs: parseInt(req.body.epochs||3), machineConfidenceMin: parseFloat(req.body.machineConfidenceMin||0.70)
+      epochs: parseInt(req.body.epochs||3), machineConfidenceMin: parseFloat(req.body.machineConfidenceMin||0.70),
+      longEnabled: req.body.longEnabled !== false,
+      shortEnabled: req.body.shortEnabled !== false,
+      shortConfMin: parseFloat(req.body.shortConfMin || 0.85)
     };
     res.json(await backtest.run(p));
   } catch(e) { res.status(500).json({ error:e.message }); }
