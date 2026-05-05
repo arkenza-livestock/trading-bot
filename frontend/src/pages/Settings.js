@@ -30,6 +30,7 @@ function Settings() {
   };
 
   var realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+  var longEnabled = settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined;
   var shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
   var githubSync = settings.github_sync_enabled === 'true' || settings.github_sync_enabled === '1';
 
@@ -56,6 +57,14 @@ function Settings() {
         </div>
       </div>
 
+      {/* LONG AYARLARI */}
+      <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:longEnabled?'4px solid #22c55e':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🟢 LONG Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{longEnabled?'ACIK - LONG sinyalleri isleme alinir':'KAPALI - LONG sinyaller pas gecilir'}</p></div>
+          <label className="toggle-switch"><input type="checkbox" checked={longEnabled} onChange={function(e){handleChange('long_enabled',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
+        </div>
+      </div>
+
       {/* SHORT AYARLARI */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:shortEnabled?'4px solid #ef4444':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
@@ -65,7 +74,7 @@ function Settings() {
         {shortEnabled && (
           <div>
             <Row label="SHORT Guven Esigi (%)">
-              <input type="number" step="1" value={settings.short_confidence_min ? String(parseFloat(settings.short_confidence_min)*100) : '85'} onChange={function(e){handleChange('short_confidence_min',String(parseFloat(e.target.value)/100));}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} />
+              <input type="number" step="1" value={settings.short_confidence_min?String(parseFloat(settings.short_confidence_min)*100):'85'} onChange={function(e){handleChange('short_confidence_min',String(parseFloat(e.target.value)/100));}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} />
             </Row>
             <div style={{marginTop:10,padding:10,background:'rgba(239,68,68,0.08)',borderRadius:8,fontSize:11,color:'#fca5a5'}}>
               🔴 SHORT sadece BTC düsüs trendindeyken acilir (ek koruma)
@@ -85,7 +94,6 @@ function Settings() {
       {/* BINANCE API */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:'4px solid #f59e0b',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Binance API</h3>
-        <p style={{color:'#64748b',fontSize:11,marginBottom:12}}>Gercek alim icin gerekli</p>
         <Row label="API Key"><input type="password" value={settings.binance_api_key||''} onChange={function(e){handleChange('binance_api_key',e.target.value);}} placeholder="API Key..." style={{width:220,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:12,textAlign:'left'}} /></Row>
         <Row label="Secret Key"><input type="password" value={settings.binance_api_secret||''} onChange={function(e){handleChange('binance_api_secret',e.target.value);}} placeholder="Secret Key..." style={{width:220,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:12,textAlign:'left'}} /></Row>
       </div>
