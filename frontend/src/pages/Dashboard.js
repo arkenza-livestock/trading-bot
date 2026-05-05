@@ -32,7 +32,7 @@ function Dashboard() {
   }, [fetchData]);
 
   var manualSell = async function(symbol) {
-    if (!window.confirm(symbol + ' icin manuel satis yapilsin mi?')) return;
+    if (!window.confirm(symbol + ' icin manuel kapatma yapilsin mi?')) return;
     setMessage('');
     try {
       var res = await fetch('/api/positions/close', {
@@ -74,7 +74,7 @@ function Dashboard() {
         </div>
       </div>
       <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
-        Canli durum ve performans ozeti
+        Canli durum ve performans ozeti | 🟢 LONG & 🔴 SHORT
         {realStats?.botRunning && <span style={{color:'#22c55e', marginLeft:10}}>🟢 Calisiyor</span>}
         {!realStats?.botRunning && <span style={{color:'#ef4444', marginLeft:10}}>🔴 Durdu</span>}
       </p>
@@ -108,20 +108,30 @@ function Dashboard() {
       {realTradingEnabled && openPositions.length > 0 && (
         <div className="table-container">
           <table>
-            <thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
+            <thead>
+              <tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr>
+            </thead>
             <tbody>
               {openPositions.map(function(pos, i) {
+                var side = pos.side || 'LONG';
+                var isLong = side === 'LONG';
+                var pnlColor = (pos.pnl_percent||0) >= 0 ? '#22c55e' : '#ef4444';
                 return (
                   <tr key={i} className={(pos.pnl_percent||0)>=0?'row-profit':'row-loss'}>
-                    <td><strong>{pos.symbol}</strong> <span className="badge badge-buy" style={{fontSize:9}}>GERCEK</span></td>
+                    <td><strong>{pos.symbol}</strong> <span className="badge" style={{fontSize:9, background: isLong?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)', color: isLong?'#22c55e':'#ef4444'}}>GERCEK</span></td>
+                    <td><span className={'badge ' + (isLong?'badge-buy':'badge-sell')}>{side}</span></td>
                     <td>{pos.entry_price?pos.entry_price.toFixed(6):'-'}</td>
                     <td>{pos.current_price?pos.current_price.toFixed(6):'-'}</td>
-                    <td style={{color:(pos.pnl_percent||0)>=0?'#22c55e':'#ef4444',fontWeight:600}}>%{(pos.pnl_percent||0).toFixed(2)}</td>
+                    <td style={{color:pnlColor,fontWeight:600}}>%{(pos.pnl_percent||0).toFixed(2)}</td>
                     <td>{pos.stop_loss?pos.stop_loss.toFixed(6):'-'}</td>
-                    <td>{pos.take_profit?pos.take_profit.toFixed(6):'-'}</td>
                     <td>%{((pos.machine_confidence||0)*100).toFixed(0)}</td>
                     <td style={{fontSize:11,color:'#94a3b8'}}>{formatTime(pos.opened_at)}</td>
-                    <td><button onClick={function(){manualSell(pos.symbol);}} style={{padding:'6px 14px',background:'#dc2626',border:'none',borderRadius:6,color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}}>SAT</button></td>
+                    <td>
+                      <button onClick={function(){manualSell(pos.symbol);}} style={{
+                        padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6,
+                        color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'
+                      }}>SAT</button>
+                    </td>
                   </tr>
                 );
               })}
@@ -132,7 +142,7 @@ function Dashboard() {
       {realTradingEnabled && openPositions.length === 0 && (
         <div className="table-container">
           <table>
-            <thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
+            <thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
             <tbody><tr><td colSpan="9" style={{textAlign:'center',color:'#64748b',padding:30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr></tbody>
           </table>
         </div>
