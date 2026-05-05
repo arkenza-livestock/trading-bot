@@ -7,6 +7,7 @@ function Dashboard() {
   var [settings, setSettings] = useState({});
   var [loading, setLoading] = useState(true);
   var [message, setMessage] = useState('');
+  var [lastUpdate, setLastUpdate] = useState('');
 
   var fetchData = useCallback(async function() {
     try {
@@ -20,6 +21,7 @@ function Dashboard() {
       setSignals(await results[1].json());
       setPositions(await results[2].json());
       setSettings(await results[3].json());
+      setLastUpdate(new Date().toLocaleTimeString('tr-TR'));
     } catch(e) { console.error(e); } finally { setLoading(false); }
   }, []);
 
@@ -49,8 +51,6 @@ function Dashboard() {
   var aiAcceptedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('✅') !== -1; });
   var aiRejectedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('❌') !== -1; });
   var realTradingEnabled = settings.real_trading === 'true' || settings.real_trading === '1';
-  
-  // SADECE gerçek pozisyonlar (is_real=1)
   var realPositions = positions.filter(function(p) { return p.is_real === 1; });
   var openPositions = realPositions.filter(function(p) { return p.status === 'OPEN'; });
   var closedPositions = realPositions.filter(function(p) { return p.status !== 'OPEN'; });
@@ -63,8 +63,17 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <h1>Dashboard</h1>
-      <p style={{color:'#64748b', marginBottom:25, fontSize:14}}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10}}>
+        <h1 style={{margin:0}}>Dashboard</h1>
+        <div style={{display:'flex', alignItems:'center', gap:15}}>
+          <span style={{color:'#64748b', fontSize:12}}>Son guncelleme: {lastUpdate}</span>
+          <button onClick={fetchData} style={{
+            padding:'6px 14px', background:'#1e293b', border:'1px solid #334155',
+            borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'
+          }}>🔄 Yenile</button>
+        </div>
+      </div>
+      <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
         Canli durum ve performans ozeti
         {realStats?.botRunning && <span style={{color:'#22c55e', marginLeft:10}}>🟢 Calisiyor</span>}
         {!realStats?.botRunning && <span style={{color:'#ef4444', marginLeft:10}}>🔴 Durdu</span>}
@@ -72,7 +81,6 @@ function Dashboard() {
 
       {message && <div className="message">{message}</div>}
 
-      {/* BTC Durumu */}
       <div className="btc-status-bar">
         <div className="btc-item"><span className="label">₿ BTC Trend</span><span className="value up">{realStats?.btcTrend?.trend||'BELIRSIZ'}</span></div>
         <div className="btc-item"><span className="label">RSI</span><span className="value">{realStats?.btcTrend?.rsi?.toFixed(1)||'-'}</span></div>
@@ -81,7 +89,6 @@ function Dashboard() {
         <div className="btc-item"><span className="label">BTC Fiyat</span><span className="value">${realStats?.btcTrend?.fiyat?.toFixed(0)||'-'}</span></div>
       </div>
 
-      {/* Islem Durumu */}
       <h2>Islem Durumu</h2>
       <div className="card-grid">
         <div className="card"><div className="card-label">Gercek Alim</div><div className={'card-value '+(realTradingEnabled?'green':'red')}>{realTradingEnabled?'ACIK ✅':'KAPALI ❌'}</div></div>
@@ -90,7 +97,6 @@ function Dashboard() {
         <div className="card"><div className="card-label">Kapali Islem</div><div className="card-value">{closedPositions.length}</div></div>
       </div>
 
-      {/* GERCEK POZISYONLAR */}
       <h2>📌 Acik Pozisyonlar ({openPositions.length})</h2>
       {!realTradingEnabled && (
         <div style={{background:'#1e293b', border:'1px solid #f59e0b', borderRadius:10, padding:25, marginBottom:15, textAlign:'center'}}>
@@ -102,9 +108,7 @@ function Dashboard() {
       {realTradingEnabled && openPositions.length > 0 && (
         <div className="table-container">
           <table>
-            <thead>
-              <tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th><th>Islem</th></tr>
-            </thead>
+            <thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>Hedef</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
             <tbody>
               {openPositions.map(function(pos, i) {
                 return (
@@ -117,12 +121,7 @@ function Dashboard() {
                     <td>{pos.take_profit?pos.take_profit.toFixed(6):'-'}</td>
                     <td>%{((pos.machine_confidence||0)*100).toFixed(0)}</td>
                     <td style={{fontSize:11,color:'#94a3b8'}}>{formatTime(pos.opened_at)}</td>
-                    <td>
-                      <button onClick={function(){manualSell(pos.symbol);}} style={{
-                        padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6,
-                        color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'
-                      }}>SAT</button>
-                    </td>
+                    <td><button onClick={function(){manualSell(pos.symbol);}} style={{padding:'6px 14px',background:'#dc2626',border:'none',borderRadius:6,color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}}>SAT</button></td>
                   </tr>
                 );
               })}
@@ -139,7 +138,6 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Makine Zekasi */}
       <h2>Makine Zekasi</h2>
       <div className="card-grid">
         <div className="card ai-card"><div className="card-label">✅ Kabul Edilen</div><div className="card-value green">{aiAcceptedSignals.length}</div></div>
@@ -148,7 +146,6 @@ function Dashboard() {
         <div className="card ai-card"><div className="card-label">🔢 Son Tarama</div><div className="card-value purple">{signals.length} sinyal</div></div>
       </div>
 
-      {/* Kabul Edilen Sinyaller */}
       <h2>Makinenin Kabul Ettigi Sinyaller ({aiAcceptedSignals.length})</h2>
       <div className="table-container">
         <table>
@@ -160,7 +157,6 @@ function Dashboard() {
         </table>
       </div>
 
-      {/* Reddedilen Sinyaller */}
       <h2>Reddedilen ({aiRejectedSignals.length})</h2>
       <div className="table-container">
         <table>
