@@ -208,7 +208,7 @@ function initDatabase() {
     telegram_token: '',
     telegram_chat_id: '',
     real_trading: 'false',
-    github_sync_enabled: 'false'
+    github_sync_enabled: 'true'
   };
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
