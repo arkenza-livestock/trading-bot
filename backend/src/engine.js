@@ -329,10 +329,12 @@ class TradingEngine {
     await this.updateBTCTrend();
 
     const settings = this.getSettings();
-    const githubEnabled = settings.github_sync_enabled === 'true';
-    const githubToken = process.env.GITHUB_TOKEN;
 
-    console.log('[GITHUB] Debug: githubEnabled=' + githubEnabled + ', tokenVar=' + (githubToken ? 'Evet' : 'Hayir'));
+    // DEBUG: Tüm ayarları logla
+    console.log('[GITHUB] DEBUG TUM AYARLAR:', JSON.stringify(settings));
+    const githubEnabled = (settings.github_sync_enabled === 'true' || settings.github_sync_enabled === true || settings.github_sync_enabled === 1 || settings.github_sync_enabled === '1');
+    console.log('[GITHUB] DEBUG github_sync_enabled ham deger:', settings.github_sync_enabled, 'tip:', typeof settings.github_sync_enabled, 'sonuc:', githubEnabled);
+    const githubToken = process.env.GITHUB_TOKEN;
 
     if (githubEnabled && githubToken) {
       try {
@@ -357,7 +359,7 @@ class TradingEngine {
       if (githubEnabled && !githubToken) {
         console.log('[GITHUB] ⚠️ Sync ACIK ama GITHUB_TOKEN bulunamadi!');
       } else {
-        console.log('[GITHUB] ⏸️ Öğrenme sync kapali (ayar: ' + githubEnabled + ')');
+        console.log('[GITHUB] ⏸️ Öğrenme sync kapali (ayar: ' + settings.github_sync_enabled + ')');
       }
     }
 
