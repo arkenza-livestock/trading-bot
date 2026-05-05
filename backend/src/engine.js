@@ -136,13 +136,7 @@ class TradingEngine {
         const netPnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
         const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
         const pnlIsaret = netPnl >= 0 ? '+' : '';
-        const message = `${emoji} — ${pos.symbol}\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `💰 Giris: ${pos.entryPrice.toFixed(6)}\n` +
-          `💰 Cikis: ${currentPrice.toFixed(6)}\n` +
-          `${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${pnlIsaret}%${netPnlPct.toFixed(2)} (${pnlIsaret}${netPnl.toFixed(4)} USDT)\n` +
-          `🛑 Neden: ${reason}\n` +
-          `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
+        const message = `${emoji} — ${pos.symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${pos.entryPrice.toFixed(6)}\n💰 Cikis: ${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${pnlIsaret}%${netPnlPct.toFixed(2)} (${pnlIsaret}${netPnl.toFixed(4)} USDT)\n🛑 Neden: ${reason}\n🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
         telegram.sendMessage(message).catch(() => {});
       }
       delete this.realPositions[pos.symbol];
@@ -158,13 +152,7 @@ class TradingEngine {
         const netPnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
         const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
         const pnlIsaret = netPnl >= 0 ? '+' : '';
-        const message = `${emoji} — ${pos.symbol}\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `💰 Giris (Short): ${pos.entryPrice.toFixed(6)}\n` +
-          `💰 Cikis (Alis): ${currentPrice.toFixed(6)}\n` +
-          `${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${pnlIsaret}%${netPnlPct.toFixed(2)} (${pnlIsaret}${netPnl.toFixed(4)} USDT)\n` +
-          `🛑 Neden: ${reason}\n` +
-          `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
+        const message = `${emoji} — ${pos.symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris (Short): ${pos.entryPrice.toFixed(6)}\n💰 Cikis (Alis): ${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${pnlIsaret}%${netPnlPct.toFixed(2)} (${pnlIsaret}${netPnl.toFixed(4)} USDT)\n🛑 Neden: ${reason}\n🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
         telegram.sendMessage(message).catch(() => {});
       }
       delete this.realPositions[pos.symbol];
@@ -180,10 +168,16 @@ class TradingEngine {
     const maxCoin  = parseInt(settings.max_coins || 50);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
 
+    // T2: SHORT ayarları
+    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
+    const shortConfMin = parseFloat(settings.short_confidence_min || 0.85);
+    const btcDown = this.btcTrend.trend === 'ASAGI' || this.btcTrend.trend === 'HAFIF_ASAGI';
+
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
     console.log(`[BTC] ${this.btcTrend.trend} | RSI:${(this.btcTrend.rsi||50).toFixed(1)} | Guc:${(this.btcTrend.strength||0).toFixed(1)}`);
-    console.log(`[ISLEM] LONG & SHORT aktif${realTrading ? ' | GERCEK ✅' : ''}`);
+    console.log(`[ISLEM] LONG aktif${shortEnabled ? ' | SHORT aktif (esik:%'+Math.round(shortConfMin*100)+' btcDown:'+btcDown+')' : ' | SHORT kapali'}`);
+    console.log(`${realTrading ? ' | GERCEK ✅' : ''}`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -238,14 +232,20 @@ class TradingEngine {
 
         let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
+        // LONG sinyali
         if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70) {
           sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
-        } else if (machineAnalysis.action === 'SELL' && machineAnalysis.confidence >= 0.70) {
+        }
+        // SHORT sinyali (T2: eşik + BTC şartı)
+        else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) {
           sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
-        } else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
+        }
+        else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
           rejectReason = 'MAKINE_BEKLE_DEDI';
         } else if (machineAnalysis.confidence < 0.70) {
           rejectReason = 'DUSUK_GUVEN';
+        } else if (machineAnalysis.action === 'SELL' && (!shortEnabled || machineAnalysis.confidence < shortConfMin || !btcDown)) {
+          rejectReason = 'SHORT_KAPALI_VEYA_SART_SAGLANMADI';
         }
 
         if (machineOnay) {
@@ -268,7 +268,6 @@ class TradingEngine {
 
         if (machineOnay && side) {
           signalsFound.push(result.symbol);
-
           const emoji = side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
           console.log(`[✅ ${emoji}] ${result.symbol.padEnd(10)} | Puan:${String(finalScore).padStart(3)} | RSI:${result.rsi.toFixed(1)} | AI:%${(machineAnalysis.confidence*100).toFixed(0)} | Desen:${machineAnalysis.similarPatternsFound || 0} | ${result.trend}`);
 
@@ -291,13 +290,11 @@ class TradingEngine {
               if (buyResult) {
                 const executedQty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
                 this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'LONG',
-                  entryPrice: result.fiyat, quantity: executedQty,
+                  symbol: result.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: executedQty,
                   highestPrice: result.fiyat, lowestPrice: result.fiyat,
                   stopLoss: machineAnalysis.stopLoss || result.stop_loss || result.fiyat * 0.98,
                   takeProfit: machineAnalysis.takeProfit || result.hedef,
-                  entryTime: new Date().toISOString(),
-                  machineConfidence: machineAnalysis.confidence
+                  entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence
                 };
               }
             } else if (side === 'SHORT') {
@@ -305,27 +302,17 @@ class TradingEngine {
               if (sellResult) {
                 const executedQty = parseFloat(sellResult.executedQty) || (tradeAmount / result.fiyat);
                 this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'SHORT',
-                  entryPrice: result.fiyat, quantity: executedQty,
+                  symbol: result.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: executedQty,
                   highestPrice: result.fiyat, lowestPrice: result.fiyat,
-                  stopLoss: result.fiyat * 1.02,
-                  takeProfit: result.fiyat * 0.95,
-                  entryTime: new Date().toISOString(),
-                  machineConfidence: machineAnalysis.confidence
+                  stopLoss: result.fiyat * 1.02, takeProfit: result.fiyat * 0.95,
+                  entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence
                 };
               }
             }
           }
 
           if (telegram) {
-            const message = `${emoji} — ${result.symbol}\n` +
-              `━━━━━━━━━━━━━━━━━━\n` +
-              `💰 Giris: ${result.fiyat} USDT\n` +
-              `🧠 AI Guven: %${(machineAnalysis.confidence*100).toFixed(1)} | Puan: ${finalScore}\n` +
-              `📈 Trend: ${result.trend}\n` +
-              `🎯 Hedef: ${(machineAnalysis.takeProfit || result.hedef)?.toFixed(6)}\n` +
-              `🛑 Stop: ${(machineAnalysis.stopLoss || result.stop_loss)?.toFixed(6)}\n` +
-              `🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
+            const message = `${emoji} — ${result.symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${result.fiyat} USDT\n🧠 AI Guven: %${(machineAnalysis.confidence*100).toFixed(1)} | Puan: ${finalScore}\n📈 Trend: ${result.trend}\n🎯 Hedef: ${(machineAnalysis.takeProfit || result.hedef)?.toFixed(6)}\n🛑 Stop: ${(machineAnalysis.stopLoss || result.stop_loss)?.toFixed(6)}\n🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
             telegram.sendMessage(message).catch(() => {});
             await new Promise(r => setTimeout(r, 500));
           }
@@ -336,10 +323,7 @@ class TradingEngine {
       } catch(e) {
         errorCount++;
         console.error(ticker.symbol + ' hatasi:', e.message);
-        if (errorCount > 5) {
-          await new Promise(r => setTimeout(r, 30000));
-          errorCount = 0;
-        }
+        if (errorCount > 5) { await new Promise(r => setTimeout(r, 30000)); errorCount = 0; }
       }
     }
 
@@ -385,13 +369,12 @@ class TradingEngine {
 
     if (githubEnabled && githubToken) {
       try {
-        console.log('[GITHUB] Sync başlatiliyor...');
         const { IntegratedLearningManager } = require('./github_learning_sync');
         this.learningManager = new IntegratedLearningManager({
           repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data',
           token: githubToken, branch: 'main', autoSync: false, syncInterval: 30
         });
-        const initResult = await this.learningManager.initialize(this.machine, simulation);
+        await this.learningManager.initialize(this.machine, simulation);
         console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
       } catch(e) { console.error('[GITHUB] ❌ Sync hatasi:', e.message); }
     } else {
@@ -407,15 +390,14 @@ class TradingEngine {
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
     console.log(`[BOT] Her ${intervalMin} dakikada bir tarama`);
     console.log(`[BOT] Makine guven esigi: %${(this.machine.settings.confidenceRequired * 100).toFixed(0)}`);
-    console.log(`[BOT] LONG & SHORT aktif${settings.real_trading === 'true' ? ' | GERCEK ✅' : ''}`);
+    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
+    console.log(`[BOT] LONG aktif${shortEnabled ? ' | SHORT aktif (BTC düsüş sarti var)' : ' | SHORT kapali'}${settings.real_trading === 'true' ? ' | GERCEK ✅' : ''}`);
   }
 
   stop() {
     if (this.interval) clearInterval(this.interval);
     if (this.priceInterval) clearInterval(this.priceInterval);
-    this.running = false;
-    this.interval = null;
-    this.priceInterval = null;
+    this.running = false; this.interval = null; this.priceInterval = null;
     if (this.learningManager) { this.learningManager.stop(); }
     console.log('[BOT] Durduruldu.');
   }
