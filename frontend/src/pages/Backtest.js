@@ -1,230 +1,152 @@
-import React, { useState } from 'react';
+// backend/src/backtest.js
+const binance = require('./binance');
+const analysis = require('./analysis');
+const MachineDecisionEngine = require('./MachineDecisionEngine');
 
-function Backtest() {
-  const [params, setParams] = useState({
-    symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT',
-    interval: '1h',
-    days: 30,
-    stopLoss: 2.0,
-    trailingStop: 0.5,
-    minProfit: 1.5,
-    commission: 0.1,
-    slippage: 0.05,
-    minScore: 50,
-    rsiPeriod: 7,
-    rsiOversold: 40,
-    rsiOverbought: 70,
-    tradeAmount: 100,
-    maxPositions: 3
-  });
+class MachineBacktestEngine {
+  async run(params) {
+    const {
+      symbols = ['BTCUSDT'],
+      interval = '4h',
+      days = 30,
+      stopLoss = 2.0,
+      trailingStop = 0.5,
+      minProfit = 1.5,
+      commission = 0.1,
+      slippage = 0.05,
+      minScore = 50,
+      tradeAmount = 100,
+      maxPositions = 3,
+      epochs = 1,
+      machineConfidenceMin = 0.70
+    } = params;
 
-  const [results, setResults] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+    const totalCost = (commission + slippage) * 2 / 100;
+    const limit = Math.ceil(days * 6) + 200;
+    const allTrades = [];
 
-  const handleChange = function(e) {
-    setParams({ ...params, [e.target.name]: e.target.value });
-  };
+    console.log(`[BACKTEST] Başlıyor: ${symbols.length} coin, ${days} gün, ${interval}`);
 
-  const runBacktest = async function() {
-    setLoading(true);
-    setError('');
-    setResults(null);
-    try {
-      var symbolArray = params.symbols.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
-      var body = {
-        symbols: symbolArray,
-        interval: params.interval,
-        days: parseInt(params.days),
-        stopLoss: parseFloat(params.stopLoss),
-        trailingStop: parseFloat(params.trailingStop),
-        minProfit: parseFloat(params.minProfit),
-        commission: parseFloat(params.commission),
-        slippage: parseFloat(params.slippage),
-        minScore: parseInt(params.minScore),
-        tradeAmount: parseFloat(params.tradeAmount),
-        maxPositions: parseInt(params.maxPositions),
-        epochs: 1,
-        machineConfidenceMin: 0.70
-      };
-      var res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) throw new Error('Sunucu hatasi: ' + res.status);
-      var data = await res.json();
-      setResults(data);
-    } catch(e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+    for (const symbol of symbols) {
+      try {
+        const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
+        if (!candles || candles.length < 150) {
+          console.log(`[BACKTEST] ${symbol}: yetersiz veri (${candles?.length || 0})`);
+          continue;
+        }
+
+        const engine = new MachineDecisionEngine();
+        const trades = [];
+        const openPositions = [];
+        const startIdx = 100;
+
+        for (let i = startIdx; i < candles.length; i++) {
+          const slice = candles.slice(0, i + 1);
+          const currentPrice = parseFloat(candles[i][4]);
+          const currentTime = parseInt(candles[i][6]);
+
+          // Pozisyonları güncelle
+          for (let j = openPositions.length - 1; j >= 0; j--) {
+            const pos = openPositions[j];
+            let pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
+
+            if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+
+            const trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
+            const hardStopPrice = pos.entryPrice * (1 - stopLoss / 100);
+            let closeReason = null;
+
+            if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
+            else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) closeReason = 'TRAILING_STOP';
+
+            if (closeReason) {
+              const netPnl = tradeAmount * pnlPct / 100;
+              trades.push({
+                symbol, side: 'LONG',
+                entryPrice: pos.entryPrice, exitPrice: currentPrice,
+                entryTime: pos.entryTime, exitTime: currentTime,
+                reason: closeReason,
+                score: pos.score || 0,
+                machineConfidence: pos.machineConfidence || 0,
+                netPnl: parseFloat(netPnl.toFixed(4)),
+                netPnlPct: parseFloat(pnlPct.toFixed(2)),
+                phase: 'BACKTEST'
+              });
+              openPositions.splice(j, 1);
+            }
+          }
+
+          // Yeni sinyal ara
+          if (openPositions.length >= maxPositions) continue;
+          const analysisResult = analysis.analyze(slice, { symbol, priceChangePercent: 0, quoteVolume: 999999 });
+          if (!analysisResult) continue;
+
+          // Basit sinyal: puan bazlı giriş
+          if (analysisResult.puan < minScore) continue;
+
+          // Makine onayı kontrolü
+          const machineAnalysis = engine.analyze(slice, { symbol });
+          if (machineAnalysis.action !== 'BUY' || machineAnalysis.confidence < machineConfidenceMin) continue;
+
+          openPositions.push({
+            symbol,
+            side: 'LONG',
+            entryPrice: currentPrice,
+            highestPrice: currentPrice,
+            entryTime: currentTime,
+            score: analysisResult.puan,
+            machineConfidence: machineAnalysis.confidence
+          });
+        }
+
+        // Açık kalanları kapat
+        const lastPrice = parseFloat(candles[candles.length - 1][4]);
+        const lastTime = parseInt(candles[candles.length - 1][6]);
+        for (const pos of openPositions) {
+          let pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
+          const netPnl = tradeAmount * pnlPct / 100;
+          trades.push({
+            symbol, side: 'LONG',
+            entryPrice: pos.entryPrice, exitPrice: lastPrice,
+            entryTime: pos.entryTime, exitTime: lastTime,
+            reason: 'PERIOD_END',
+            score: pos.score || 0,
+            machineConfidence: pos.machineConfidence || 0,
+            netPnl: parseFloat(netPnl.toFixed(4)),
+            netPnlPct: parseFloat(pnlPct.toFixed(2)),
+            phase: 'BACKTEST'
+          });
+        }
+
+        allTrades.push(...trades);
+        console.log(`[BACKTEST] ${symbol}: ${trades.length} işlem`);
+      } catch (e) {
+        console.error(`[BACKTEST] ${symbol} hata:`, e.message);
+      }
     }
-  };
 
-  var Row = function(props) {
-    return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '13px 0',
-        borderBottom: '1px solid #111827'
-      }}>
-        <span style={{color: '#cbd5e1', fontSize: 14, fontWeight: 500}}>{props.label}</span>
-        <span style={{color: '#94a3b8', fontSize: 14}}>{props.children}</span>
-      </div>
-    );
-  };
+    // Özet hesapla
+    const wins = allTrades.filter(t => t.netPnl > 0);
+    const losses = allTrades.filter(t => t.netPnl <= 0);
+    const totalPnl = allTrades.reduce((s, t) => s + t.netPnl, 0);
+    const gW = wins.reduce((s, t) => s + t.netPnl, 0);
+    const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
 
-  return (
-    <div style={{maxWidth: 480, padding: '32px 20px', margin: '0 auto'}}>
-      
-      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 4, color: '#f1f5f9'}}>Backtest</h1>
-      <p style={{color: '#64748b', marginBottom: 30, fontSize: 13}}>
-        Tum coinler ayni zaman cizgisi icinde test edilir
-      </p>
+    const summary = {
+      totalTrades: allTrades.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: allTrades.length > 0 ? parseFloat((wins.length / allTrades.length * 100).toFixed(1)) : 0,
+      totalPnl: parseFloat(totalPnl.toFixed(2)),
+      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
+      avgWin: wins.length > 0 ? parseFloat((wins.reduce((s, t) => s + t.netPnlPct, 0) / wins.length).toFixed(2)) : 0,
+      avgLoss: losses.length > 0 ? parseFloat((losses.reduce((s, t) => s + t.netPnlPct, 0) / losses.length).toFixed(2)) : 0,
+      bestTrade: allTrades.length > 0 ? parseFloat(Math.max(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0,
+      worstTrade: allTrades.length > 0 ? parseFloat(Math.min(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0
+    };
 
-      <div style={{
-        background: '#0d1321',
-        border: '1px solid #1a2540',
-        borderRadius: 14,
-        padding: '20px 22px',
-        marginBottom: 16
-      }}>
-        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>Parametreler</h3>
-        <Row label="Coin"><span style={{color: '#64748b'}}>Tum Coinler</span></Row>
-        <Row label="Mum Araligi">
-          <select name="interval" value={params.interval} onChange={handleChange}
-            style={{background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 10px', fontSize: 13}}>
-            <option value="1h">1 Saat</option>
-            <option value="4h">4 Saat</option>
-            <option value="1d">1 Gun</option>
-          </select>
-        </Row>
-        <Row label="Test Suresi">
-          <span style={{display: 'flex', alignItems: 'center', gap: 6}}>
-            <input name="days" type="number" value={params.days} onChange={handleChange} 
-              style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-            <span style={{color: '#64748b', fontSize: 13}}>Gun</span>
-          </span>
-        </Row>
-      </div>
-
-      <div style={{
-        background: '#0d1321',
-        border: '1px solid #1a2540',
-        borderRadius: 14,
-        padding: '20px 22px',
-        marginBottom: 16
-      }}>
-        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>RISK</h3>
-        <Row label="Stop Loss (%)">
-          <input name="stopLoss" type="number" step="0.1" value={params.stopLoss} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="Trailing Stop (%)">
-          <input name="trailingStop" type="number" step="0.1" value={params.trailingStop} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="Min Kar (trailing icin %)">
-          <input name="minProfit" type="number" step="0.1" value={params.minProfit} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="Islem Miktari (USDT)">
-          <input name="tradeAmount" type="number" value={params.tradeAmount} onChange={handleChange} 
-            style={{width: 80, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="Max Acik Pozisyon">
-          <input name="maxPositions" type="number" value={params.maxPositions} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-      </div>
-
-      <div style={{
-        background: '#0d1321',
-        border: '1px solid #1a2540',
-        borderRadius: 14,
-        padding: '20px 22px',
-        marginBottom: 16
-      }}>
-        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>SINYAL</h3>
-        <Row label="Min Sinyal Skoru">
-          <input name="minScore" type="number" value={params.minScore} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="RSI Periyot">
-          <input name="rsiPeriod" type="number" value={params.rsiPeriod} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="RSI Asiri Satim">
-          <input name="rsiOversold" type="number" value={params.rsiOversold} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="RSI Asiri Alim">
-          <input name="rsiOverbought" type="number" value={params.rsiOverbought} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-      </div>
-
-      <div style={{
-        background: '#0d1321',
-        border: '1px solid #1a2540',
-        borderRadius: 14,
-        padding: '20px 22px',
-        marginBottom: 16
-      }}>
-        <h3 style={{fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1}}>MALIYET</h3>
-        <Row label="Komisyon (%)">
-          <input name="commission" type="number" step="0.01" value={params.commission} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-        <Row label="Slippage (%)">
-          <input name="slippage" type="number" step="0.01" value={params.slippage} onChange={handleChange} 
-            style={{width: 60, background: '#0a0e17', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', padding: '6px 8px', fontSize: 13, textAlign: 'center'}} />
-        </Row>
-      </div>
-
-      <button onClick={runBacktest} disabled={loading} style={{
-        marginTop: 8,
-        padding: '14px 0',
-        fontSize: 15,
-        fontWeight: 600,
-        width: '100%',
-        background: loading ? '#1a1a2e' : '#1e293b',
-        border: '1px solid #334155',
-        borderRadius: 10,
-        color: loading ? '#64748b' : '#e2e8f0',
-        cursor: loading ? 'not-allowed' : 'pointer'
-      }}>
-        {loading ? 'Calisiyor...' : 'Backtest Calistir'}
-      </button>
-
-      {error && (
-        <div style={{marginTop: 15, padding: 14, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, color: '#ef4444', fontSize: 13}}>
-          {error}
-        </div>
-      )}
-
-      {loading && (
-        <div style={{marginTop: 15, padding: 30, textAlign: 'center', color: '#fbbf24', background: '#0d1321', border: '1px solid #1a2540', borderRadius: 10}}>
-          Backtest calisiyor... 1-5 dakika surebilir.
-        </div>
-      )}
-
-      {results && (
-        <div style={{marginTop: 25}}>
-          <h2 style={{fontSize: 16, marginBottom: 15, color: '#94a3b8'}}>Sonuclar</h2>
-          <div className="card-grid" style={{gridTemplateColumns: 'repeat(2, 1fr)'}}>
-            <div className="card"><div className="card-label">Toplam Islem</div><div className="card-value" style={{fontSize: 24}}>{results.summary ? results.summary.totalTrades : 0}</div></div>
-            <div className="card"><div className="card-label">Basari Orani</div><div className="card-value green" style={{fontSize: 24}}>%{results.summary ? results.summary.winRate : 0}</div></div>
-            <div className="card"><div className="card-label">Toplam PnL</div><div className="card-value green" style={{fontSize: 24}}>${results.summary ? (results.summary.totalPnl || 0).toFixed(2) : '0.00'}</div></div>
-            <div className="card"><div className="card-label">Profit Factor</div><div className="card-value gold" style={{fontSize: 24}}>{results.summary ? results.summary.profitFactor : '-'}</div></div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    return { summary, trades: allTrades.slice(0, 200) };
+  }
 }
 
-export default Backtest;
+module.exports = new MachineBacktestEngine();
