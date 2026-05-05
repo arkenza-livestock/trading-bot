@@ -203,6 +203,10 @@ function initDatabase() {
     sim_balance: '1000',
     machine_confidence_min: '0.70',
     machine_learning_enabled: 'true',
+    binance_api_key: '',
+    binance_api_secret: '',
+    telegram_token: '',
+    telegram_chat_id: '',
     real_trading: 'false',
     github_sync_enabled: 'false'
   };
