@@ -11,22 +11,13 @@ function Positions() {
     try {
       var res = await fetch('/api/positions');
       var allPositions = await res.json();
-      
       var realPositions = allPositions.filter(function(p) { return p.is_real === 1; });
       setPositions(realPositions);
-
       var open = realPositions.filter(function(p) { return p.status === 'OPEN'; });
       var closed = realPositions.filter(function(p) { return p.status !== 'OPEN'; });
       var totalPnl = closed.reduce(function(s, p) { return s + (p.pnl || 0); }, 0);
       var wins = closed.filter(function(p) { return p.pnl > 0; }).length;
-      
-      setSummary({
-        openCount: open.length,
-        closedCount: closed.length,
-        totalPnl: totalPnl,
-        winRate: closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : 0,
-        totalTrades: closed.length
-      });
+      setSummary({ openCount: open.length, closedCount: closed.length, totalPnl: totalPnl, winRate: closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : 0, totalTrades: closed.length });
     } catch(e) { console.error(e); } finally { setLoading(false); }
   }, []);
 
@@ -40,11 +31,7 @@ function Positions() {
     if (!window.confirm(symbol + ' icin manuel kapatma yapilsin mi?')) return;
     setMessage('');
     try {
-      var res = await fetch('/api/positions/close', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: symbol, is_real: 1 })
-      });
+      var res = await fetch('/api/positions/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: symbol, is_real: 1 }) });
       var data = await res.json();
       setMessage(data.message || data.error);
       setTimeout(function() { setMessage(''); fetchPositions(); }, 2000);
@@ -69,46 +56,36 @@ function Positions() {
 
   return (
     <div className="positions">
-      <h1>📊 Pozisyonlar</h1>
-      <p style={{color:'#64748b', marginBottom:25, fontSize:14}}>
-        Gercek islem pozisyonlari | 🟢 LONG & 🔴 SHORT
-      </p>
-
+      <h1>Pozisyonlar</h1>
+      <p style={{color:'#64748b',marginBottom:25,fontSize:14}}>Gercek islem pozisyonlari | 🟢 LONG & 🔴 SHORT</p>
       {message && <div className="message">{message}</div>}
 
       <div className="card-grid">
-        <div className="card"><div className="card-label">📌 Acik Pozisyon</div><div className="card-value gold">{summary.openCount}</div></div>
-        <div className="card"><div className="card-label">💰 Toplam PnL</div><div className={'card-value '+(summary.totalPnl>=0?'green':'red')}>${summary.totalPnl.toFixed(2)}</div></div>
-        <div className="card"><div className="card-label">🏆 Kazanma Orani</div><div className="card-value green">%{summary.winRate}</div></div>
-        <div className="card"><div className="card-label">🔄 Toplam Islem</div><div className="card-value">{summary.totalTrades}</div></div>
+        <div className="card"><div className="card-label">Acik Pozisyon</div><div className="card-value gold">{summary.openCount}</div></div>
+        <div className="card"><div className="card-label">Toplam PnL</div><div className={'card-value '+(summary.totalPnl>=0?'green':'red')}>${summary.totalPnl.toFixed(2)}</div></div>
+        <div className="card"><div className="card-label">Kazanma Orani</div><div className="card-value green">%{summary.winRate}</div></div>
+        <div className="card"><div className="card-label">Toplam Islem</div><div className="card-value">{summary.totalTrades}</div></div>
       </div>
 
       <div className="filter-bar">
-        <button className={'filter-btn '+(filter==='OPEN'?'active':'')} onClick={function(){setFilter('OPEN');}}>📌 Acik ({summary.openCount})</button>
-        <button className={'filter-btn '+(filter==='CLOSED'?'active':'')} onClick={function(){setFilter('CLOSED');}}>✅ Kapali ({summary.closedCount})</button>
+        <button className={'filter-btn '+(filter==='OPEN'?'active':'')} onClick={function(){setFilter('OPEN');}}>Acik ({summary.openCount})</button>
+        <button className={'filter-btn '+(filter==='CLOSED'?'active':'')} onClick={function(){setFilter('CLOSED');}}>Kapali ({summary.closedCount})</button>
         <button className={'filter-btn '+(filter==='LONG'?'active':'')} onClick={function(){setFilter('LONG');}}>🟢 LONG</button>
         <button className={'filter-btn '+(filter==='SHORT'?'active':'')} onClick={function(){setFilter('SHORT');}}>🔴 SHORT</button>
-        <button className={'filter-btn '+(filter==='ALL'?'active':'')} onClick={function(){setFilter('ALL');}}>📋 Tumu ({positions.length})</button>
+        <button className={'filter-btn '+(filter==='ALL'?'active':'')} onClick={function(){setFilter('ALL');}}>Tumu ({positions.length})</button>
       </div>
 
       <div className="table-container">
         <table>
-          <thead>
-            <tr>
-              <th>Coin</th><th>Yon</th><th>Giris</th><th>Guncel</th><th>Cikis</th><th>Stop</th>
-              <th>PnL%</th><th>PnL USDT</th><th>Durum</th><th>Tarih</th><th>Islem</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Coin</th><th>Yon</th><th>Giris</th><th>Guncel</th><th>Cikis</th><th>Stop</th><th>PnL%</th><th>PnL USDT</th><th>Durum</th><th>Tarih</th><th>Islem</th></tr></thead>
           <tbody>
-            {filteredPositions.map(function(pos, i) {
-              var side = pos.side || 'LONG';
-              var isLong = side === 'LONG';
-              var pnlPct = pos.pnl_percent || 0;
-              var pnl = pos.pnl || 0;
+            {filteredPositions.map(function(pos,i){
+              var side = pos.side || 'LONG'; var isLong = side === 'LONG';
+              var pnlPct = pos.pnl_percent || 0; var pnl = pos.pnl || 0;
               return (
                 <tr key={i} className={pnl>=0?'row-profit':'row-loss'}>
                   <td><strong>{pos.symbol}</strong></td>
-                  <td><span className={'badge ' + (isLong?'badge-buy':'badge-sell')}>{side}</span></td>
+                  <td><span className={'badge '+(isLong?'badge-buy':'badge-sell')}>{side}</span></td>
                   <td>{pos.entry_price?pos.entry_price.toFixed(6):'-'}</td>
                   <td>{pos.current_price?pos.current_price.toFixed(6):'-'}</td>
                   <td>{pos.exit_price?pos.exit_price.toFixed(6):'-'}</td>
@@ -117,22 +94,11 @@ function Positions() {
                   <td style={{color:pnl>=0?'#22c55e':'#ef4444',fontWeight:600}}>{pnl.toFixed(4)}</td>
                   <td><span className={'badge '+(pos.status==='OPEN'?'badge-buy':pnl>=0?'badge-buy':'badge-sell')}>{pos.status==='OPEN'?'ACIK':pos.close_reason||'KAPALI'}</span></td>
                   <td style={{fontSize:11,color:'#94a3b8'}}>{formatTime(pos.opened_at||pos.closed_at)}</td>
-                  <td>
-                    {pos.status === 'OPEN' && (
-                      <button onClick={function(){manualSell(pos.symbol);}} style={{
-                        padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6,
-                        color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'
-                      }}>KAPAT</button>
-                    )}
-                  </td>
+                  <td>{pos.status==='OPEN' && <button onClick={function(){manualSell(pos.symbol);}} style={{padding:'6px 14px',background:'#dc2626',border:'none',borderRadius:6,color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}}>KAPAT</button>}</td>
                 </tr>
               );
             })}
-            {filteredPositions.length === 0 && (
-              <tr><td colSpan="11" style={{textAlign:'center',color:'#64748b',padding:40}}>
-                {filter==='OPEN'?'📌 Acik gercek pozisyon yok':filter==='CLOSED'?'✅ Kapali gercek pozisyon yok':filter==='LONG'?'🟢 LONG pozisyon yok':filter==='SHORT'?'🔴 SHORT pozisyon yok':'📋 Henuz gercek pozisyon yok'}
-              </td></tr>
-            )}
+            {filteredPositions.length===0 && <tr><td colSpan="11" style={{textAlign:'center',color:'#64748b',padding:40}}>{filter==='OPEN'?'Acik pozisyon yok':filter==='CLOSED'?'Kapali pozisyon yok':'Henuz pozisyon yok'}</td></tr>}
           </tbody>
         </table>
       </div>
