@@ -331,9 +331,8 @@ class TradingEngine {
     const settings = this.getSettings();
 
     // DEBUG: Tüm ayarları logla
-    console.log('[GITHUB] DEBUG TUM AYARLAR:', JSON.stringify(settings));
-    const githubEnabled = (settings.github_sync_enabled === 'true' || settings.github_sync_enabled === true || settings.github_sync_enabled === 1 || settings.github_sync_enabled === '1');
-    console.log('[GITHUB] DEBUG github_sync_enabled ham deger:', settings.github_sync_enabled, 'tip:', typeof settings.github_sync_enabled, 'sonuc:', githubEnabled);
+    const githubEnabled = true; // ZORLA AÇIK - DEBUG
+console.log('[GITHUB] ZORLA AÇIK MODU');
     const githubToken = process.env.GITHUB_TOKEN;
 
     if (githubEnabled && githubToken) {
