@@ -36,8 +36,7 @@ function Dashboard() {
     setMessage('');
     try {
       var res = await fetch('/api/positions/close', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: symbol, is_real: 1 })
       });
       var data = await res.json();
@@ -86,7 +85,6 @@ function Dashboard() {
         <div className="btc-item"><span className="label">BTC Fiyat</span><span className="value">${realStats?.btcTrend?.fiyat?.toFixed(0)||'-'}</span></div>
       </div>
 
-      {/* GERCEK CUZDAN */}
       <h2>🏦 Gercek Cuzdan (Binance)</h2>
       <div className="card-grid" style={{gridTemplateColumns: 'repeat(2, 1fr)'}}>
         <div className="card" style={{borderLeft: '4px solid #f59e0b'}}>
@@ -107,6 +105,12 @@ function Dashboard() {
         <div className="card"><div className="card-label">Tarama</div><div className="card-value">#{realStats?.scanCount||0}</div></div>
       </div>
 
+      <h2>📊 Performans Metrikleri</h2>
+      <div className="card-grid">
+        <div className="card"><div className="card-label">📈 Sharpe Orani</div><div className="card-value gold">{realStats?.stats?.sharpeRatio || '-'}</div></div>
+        <div className="card"><div className="card-label">📉 Max Drawdown</div><div className="card-value red">%{realStats?.stats?.maxDrawdown || '0.0'}</div></div>
+      </div>
+
       <h2>📌 Acik Pozisyonlar ({openPositions.length})</h2>
       {!realTradingEnabled && (
         <div style={{background:'#1e293b', border:'1px solid #f59e0b', borderRadius:10, padding:25, marginBottom:15, textAlign:'center'}}>
@@ -121,8 +125,7 @@ function Dashboard() {
             <thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
             <tbody>
               {openPositions.map(function(pos, i) {
-                var side = pos.side || 'LONG';
-                var isLong = side === 'LONG';
+                var side = pos.side || 'LONG'; var isLong = side === 'LONG';
                 var pnlColor = (pos.pnl_percent||0) >= 0 ? '#22c55e' : '#ef4444';
                 return (
                   <tr key={i} className={(pos.pnl_percent||0)>=0?'row-profit':'row-loss'}>
