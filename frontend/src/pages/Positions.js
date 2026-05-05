@@ -1,165 +1,136 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 function Positions() {
-  const [positions, setPositions] = useState([]);
-  const [filter, setFilter] = useState('OPEN');
-  const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState({ totalPnl: 0, winRate: 0, totalTrades: 0 });
+  var [positions, setPositions] = useState([]);
+  var [filter, setFilter] = useState('OPEN');
+  var [loading, setLoading] = useState(true);
+  var [summary, setSummary] = useState({ openCount:0, closedCount:0, totalPnl:0, winRate:0, totalTrades:0 });
+  var [message, setMessage] = useState('');
 
-  const fetchPositions = useCallback(async () => {
+  var fetchPositions = useCallback(async function() {
     try {
-      const [posRes, statusRes] = await Promise.all([
-        fetch('/api/positions'),
-        fetch('/api/status')
-      ]);
-      const posData = await posRes.json();
-      const statusData = await statusRes.json();
+      var res = await fetch('/api/positions');
+      var allPositions = await res.json();
       
-      setPositions(posData || []);
-      
-      // Sadece gerçek pozisyonları göster
-      const realPositions = (posData || []).filter(p => p.status !== 'OPEN' || p.close_reason);
-      const allClosed = (posData || []).filter(p => p.status !== 'OPEN');
-      
-      // Özet (gerçek işlem olunca dolacak)
-      const totalPnl = allClosed.reduce((s, p) => s + (p.pnl || 0), 0);
-      const wins = allClosed.filter(p => p.pnl > 0).length;
+      var realPositions = allPositions.filter(function(p) { return p.is_real === 1; });
+      setPositions(realPositions);
+
+      var open = realPositions.filter(function(p) { return p.status === 'OPEN'; });
+      var closed = realPositions.filter(function(p) { return p.status !== 'OPEN'; });
+      var totalPnl = closed.reduce(function(s, p) { return s + (p.pnl || 0); }, 0);
+      var wins = closed.filter(function(p) { return p.pnl > 0; }).length;
       
       setSummary({
-        openCount: (posData || []).filter(p => p.status === 'OPEN').length,
-        closedCount: allClosed.length,
+        openCount: open.length,
+        closedCount: closed.length,
         totalPnl: totalPnl,
-        winRate: allClosed.length > 0 ? ((wins / allClosed.length) * 100).toFixed(1) : 0,
-        totalTrades: allClosed.length
+        winRate: closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : 0,
+        totalTrades: closed.length
       });
-    } catch(e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    } catch(e) { console.error(e); } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => {
+  useEffect(function() {
     fetchPositions();
-    const interval = setInterval(fetchPositions, 20000);
-    return () => clearInterval(interval);
+    var interval = setInterval(fetchPositions, 20000);
+    return function() { clearInterval(interval); };
   }, [fetchPositions]);
 
-  if (loading) return <div className="loading">⏳ Yükleniyor...</div>;
+  var manualSell = async function(symbol) {
+    if (!window.confirm(symbol + ' icin manuel kapatma yapilsin mi?')) return;
+    setMessage('');
+    try {
+      var res = await fetch('/api/positions/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: symbol, is_real: 1 })
+      });
+      var data = await res.json();
+      setMessage(data.message || data.error);
+      setTimeout(function() { setMessage(''); fetchPositions(); }, 2000);
+    } catch(e) { setMessage('Hata: ' + e.message); }
+  };
 
-  const filteredPositions = positions.filter(p => {
+  if (loading) return <div className="loading">Yukleniyor...</div>;
+
+  var filteredPositions = positions.filter(function(p) {
     if (filter === 'OPEN') return p.status === 'OPEN';
     if (filter === 'CLOSED') return p.status !== 'OPEN';
+    if (filter === 'LONG') return p.side === 'LONG';
+    if (filter === 'SHORT') return p.side === 'SHORT';
     return true;
   });
 
-  const formatTime = (timeStr) => {
+  var formatTime = function(timeStr) {
     if (!timeStr) return '-';
-    try {
-      const d = new Date(timeStr + 'Z');
-      return d.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
-    } catch(e) {
-      return timeStr;
-    }
+    try { return new Date(timeStr + 'Z').toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }); }
+    catch(e) { return timeStr; }
   };
 
   return (
     <div className="positions">
       <h1>📊 Pozisyonlar</h1>
-      <p style={{color: '#64748b', marginBottom: 25, fontSize: 14}}>
-        Gerçek işlem pozisyonları
+      <p style={{color:'#64748b', marginBottom:25, fontSize:14}}>
+        Gercek islem pozisyonlari | 🟢 LONG & 🔴 SHORT
       </p>
 
-      {/* Özet Kartları */}
+      {message && <div className="message">{message}</div>}
+
       <div className="card-grid">
-        <div className="card">
-          <div className="card-label">📌 Açık Pozisyon</div>
-          <div className="card-value gold">{summary.openCount}</div>
-        </div>
-        <div className="card">
-          <div className="card-label">💰 Toplam PnL</div>
-          <div className={`card-value ${summary.totalPnl >= 0 ? 'green' : 'red'}`}>
-            ${summary.totalPnl.toFixed(2)}
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-label">🏆 Kazanma Oranı</div>
-          <div className="card-value green">%{summary.winRate}</div>
-        </div>
-        <div className="card">
-          <div className="card-label">🔄 Toplam İşlem</div>
-          <div className="card-value">{summary.totalTrades}</div>
-        </div>
+        <div className="card"><div className="card-label">📌 Acik Pozisyon</div><div className="card-value gold">{summary.openCount}</div></div>
+        <div className="card"><div className="card-label">💰 Toplam PnL</div><div className={'card-value '+(summary.totalPnl>=0?'green':'red')}>${summary.totalPnl.toFixed(2)}</div></div>
+        <div className="card"><div className="card-label">🏆 Kazanma Orani</div><div className="card-value green">%{summary.winRate}</div></div>
+        <div className="card"><div className="card-label">🔄 Toplam Islem</div><div className="card-value">{summary.totalTrades}</div></div>
       </div>
 
-      {/* Filtreler */}
       <div className="filter-bar">
-        <button className={`filter-btn ${filter === 'OPEN' ? 'active' : ''}`} onClick={() => setFilter('OPEN')}>
-          📌 Açık ({summary.openCount})
-        </button>
-        <button className={`filter-btn ${filter === 'CLOSED' ? 'active' : ''}`} onClick={() => setFilter('CLOSED')}>
-          ✅ Kapalı ({summary.closedCount})
-        </button>
-        <button className={`filter-btn ${filter === 'ALL' ? 'active' : ''}`} onClick={() => setFilter('ALL')}>
-          📋 Tümü ({positions.length})
-        </button>
+        <button className={'filter-btn '+(filter==='OPEN'?'active':'')} onClick={function(){setFilter('OPEN');}}>📌 Acik ({summary.openCount})</button>
+        <button className={'filter-btn '+(filter==='CLOSED'?'active':'')} onClick={function(){setFilter('CLOSED');}}>✅ Kapali ({summary.closedCount})</button>
+        <button className={'filter-btn '+(filter==='LONG'?'active':'')} onClick={function(){setFilter('LONG');}}>🟢 LONG</button>
+        <button className={'filter-btn '+(filter==='SHORT'?'active':'')} onClick={function(){setFilter('SHORT');}}>🔴 SHORT</button>
+        <button className={'filter-btn '+(filter==='ALL'?'active':'')} onClick={function(){setFilter('ALL');}}>📋 Tumu ({positions.length})</button>
       </div>
 
-      {/* Pozisyon Tablosu */}
       <div className="table-container">
         <table>
           <thead>
             <tr>
-              <th>Coin</th>
-              <th>Yön</th>
-              <th>Giriş</th>
-              <th>Güncel</th>
-              <th>Çıkış</th>
-              <th>Stop</th>
-              <th>PnL%</th>
-              <th>PnL USDT</th>
-              <th>Durum</th>
-              <th>Tarih</th>
+              <th>Coin</th><th>Yon</th><th>Giris</th><th>Guncel</th><th>Cikis</th><th>Stop</th>
+              <th>PnL%</th><th>PnL USDT</th><th>Durum</th><th>Tarih</th><th>Islem</th>
             </tr>
           </thead>
           <tbody>
-            {filteredPositions.map((pos, i) => {
-              const pnlPct = pos.pnl_percent || 0;
-              const pnl = pos.pnl || 0;
+            {filteredPositions.map(function(pos, i) {
+              var side = pos.side || 'LONG';
+              var isLong = side === 'LONG';
+              var pnlPct = pos.pnl_percent || 0;
+              var pnl = pos.pnl || 0;
               return (
-                <tr key={i} className={pnl >= 0 ? 'row-profit' : 'row-loss'}>
+                <tr key={i} className={pnl>=0?'row-profit':'row-loss'}>
                   <td><strong>{pos.symbol}</strong></td>
+                  <td><span className={'badge ' + (isLong?'badge-buy':'badge-sell')}>{side}</span></td>
+                  <td>{pos.entry_price?pos.entry_price.toFixed(6):'-'}</td>
+                  <td>{pos.current_price?pos.current_price.toFixed(6):'-'}</td>
+                  <td>{pos.exit_price?pos.exit_price.toFixed(6):'-'}</td>
+                  <td>{pos.stop_loss?pos.stop_loss.toFixed(6):'-'}</td>
+                  <td style={{color:pnlPct>=0?'#22c55e':'#ef4444',fontWeight:600}}>%{pnlPct.toFixed(2)}</td>
+                  <td style={{color:pnl>=0?'#22c55e':'#ef4444',fontWeight:600}}>{pnl.toFixed(4)}</td>
+                  <td><span className={'badge '+(pos.status==='OPEN'?'badge-buy':pnl>=0?'badge-buy':'badge-sell')}>{pos.status==='OPEN'?'ACIK':pos.close_reason||'KAPALI'}</span></td>
+                  <td style={{fontSize:11,color:'#94a3b8'}}>{formatTime(pos.opened_at||pos.closed_at)}</td>
                   <td>
-                    <span className={`badge ${pos.side === 'LONG' ? 'badge-buy' : 'badge-sell'}`}>
-                      {pos.side || 'LONG'}
-                    </span>
-                  </td>
-                  <td>{pos.entry_price?.toFixed(6)}</td>
-                  <td>{pos.current_price?.toFixed(6)}</td>
-                  <td>{pos.exit_price?.toFixed(6) || '-'}</td>
-                  <td>{pos.stop_loss?.toFixed(6)}</td>
-                  <td style={{color: pnlPct >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
-                    %{pnlPct.toFixed(2)}
-                  </td>
-                  <td style={{color: pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600}}>
-                    {pnl.toFixed(4)}
-                  </td>
-                  <td>
-                    <span className={`badge ${pos.status === 'OPEN' ? 'badge-buy' : pos.pnl >= 0 ? 'badge-buy' : 'badge-sell'}`}>
-                      {pos.status === 'OPEN' ? 'AÇIK' : pos.close_reason || 'KAPALI'}
-                    </span>
-                  </td>
-                  <td style={{fontSize: 11, color: '#94a3b8'}}>
-                    {formatTime(pos.opened_at || pos.closed_at)}
+                    {pos.status === 'OPEN' && (
+                      <button onClick={function(){manualSell(pos.symbol);}} style={{
+                        padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6,
+                        color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'
+                      }}>KAPAT</button>
+                    )}
                   </td>
                 </tr>
               );
             })}
             {filteredPositions.length === 0 && (
-              <tr><td colSpan="10" style={{textAlign: 'center', color: '#64748b', padding: 40}}>
-                {filter === 'OPEN' ? '📌 Açık pozisyon yok (Gerçek alım aktif değil)' : 
-                 filter === 'CLOSED' ? '✅ Kapalı pozisyon yok' : 
-                 '📋 Henüz pozisyon yok'}
+              <tr><td colSpan="11" style={{textAlign:'center',color:'#64748b',padding:40}}>
+                {filter==='OPEN'?'📌 Acik gercek pozisyon yok':filter==='CLOSED'?'✅ Kapali gercek pozisyon yok':filter==='LONG'?'🟢 LONG pozisyon yok':filter==='SHORT'?'🔴 SHORT pozisyon yok':'📋 Henuz gercek pozisyon yok'}
               </td></tr>
             )}
           </tbody>
