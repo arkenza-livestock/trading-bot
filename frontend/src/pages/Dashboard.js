@@ -67,10 +67,7 @@ function Dashboard() {
         <h1 style={{margin:0}}>Dashboard</h1>
         <div style={{display:'flex', alignItems:'center', gap:15}}>
           <span style={{color:'#64748b', fontSize:12}}>Son guncelleme: {lastUpdate}</span>
-          <button onClick={fetchData} style={{
-            padding:'6px 14px', background:'#1e293b', border:'1px solid #334155',
-            borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'
-          }}>🔄 Yenile</button>
+          <button onClick={fetchData} style={{padding:'6px 14px', background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'}}>🔄 Yenile</button>
         </div>
       </div>
       <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
@@ -89,12 +86,25 @@ function Dashboard() {
         <div className="btc-item"><span className="label">BTC Fiyat</span><span className="value">${realStats?.btcTrend?.fiyat?.toFixed(0)||'-'}</span></div>
       </div>
 
+      {/* GERCEK CUZDAN */}
+      <h2>🏦 Gercek Cuzdan (Binance)</h2>
+      <div className="card-grid" style={{gridTemplateColumns: 'repeat(2, 1fr)'}}>
+        <div className="card" style={{borderLeft: '4px solid #f59e0b'}}>
+          <div className="card-label">USDT Bakiyesi</div>
+          <div className="card-value gold">${realStats?.realBalance ? realStats.realBalance.toFixed(2) : '0.00'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Gercek Alim</div>
+          <div className={'card-value '+(realTradingEnabled?'green':'red')}>{realTradingEnabled?'ACIK ✅':'KAPALI ❌'}</div>
+        </div>
+      </div>
+
       <h2>Islem Durumu</h2>
       <div className="card-grid">
-        <div className="card"><div className="card-label">Gercek Alim</div><div className={'card-value '+(realTradingEnabled?'green':'red')}>{realTradingEnabled?'ACIK ✅':'KAPALI ❌'}</div></div>
         <div className="card"><div className="card-label">Bot</div><div className={'card-value '+(realStats?.botRunning?'green':'red')}>{realStats?.botRunning?'AKTIF':'DURDU'}</div></div>
         <div className="card"><div className="card-label">Acik Pozisyon</div><div className="card-value gold">{openPositions.length}</div></div>
         <div className="card"><div className="card-label">Kapali Islem</div><div className="card-value">{closedPositions.length}</div></div>
+        <div className="card"><div className="card-label">Tarama</div><div className="card-value">#{realStats?.scanCount||0}</div></div>
       </div>
 
       <h2>📌 Acik Pozisyonlar ({openPositions.length})</h2>
@@ -108,9 +118,7 @@ function Dashboard() {
       {realTradingEnabled && openPositions.length > 0 && (
         <div className="table-container">
           <table>
-            <thead>
-              <tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr>
-            </thead>
+            <thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
             <tbody>
               {openPositions.map(function(pos, i) {
                 var side = pos.side || 'LONG';
@@ -126,12 +134,7 @@ function Dashboard() {
                     <td>{pos.stop_loss?pos.stop_loss.toFixed(6):'-'}</td>
                     <td>%{((pos.machine_confidence||0)*100).toFixed(0)}</td>
                     <td style={{fontSize:11,color:'#94a3b8'}}>{formatTime(pos.opened_at)}</td>
-                    <td>
-                      <button onClick={function(){manualSell(pos.symbol);}} style={{
-                        padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6,
-                        color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'
-                      }}>SAT</button>
-                    </td>
+                    <td><button onClick={function(){manualSell(pos.symbol);}} style={{padding:'6px 14px', background:'#dc2626', border:'none', borderRadius:6, color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'}}>SAT</button></td>
                   </tr>
                 );
               })}
@@ -141,10 +144,8 @@ function Dashboard() {
       )}
       {realTradingEnabled && openPositions.length === 0 && (
         <div className="table-container">
-          <table>
-            <thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
-            <tbody><tr><td colSpan="9" style={{textAlign:'center',color:'#64748b',padding:30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr></tbody>
-          </table>
+          <table><thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
+          <tbody><tr><td colSpan="9" style={{textAlign:'center',color:'#64748b',padding:30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr></tbody></table>
         </div>
       )}
 
