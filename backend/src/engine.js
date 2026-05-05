@@ -181,13 +181,7 @@ class TradingEngine {
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
 
     let tickers;
-    try {
-      tickers = await binance.getAllTickers();
-    } catch(e) {
-      console.error('[TARAMA] Ticker hatasi:', e.message);
-      return;
-    }
-
+    try { tickers = await binance.getAllTickers(); } catch(e) { console.error('[TARAMA] Ticker hatasi:', e.message); return; }
     for (const t of tickers) { this.prices[t.symbol] = parseFloat(t.lastPrice); }
 
     const tumFiltreli = [];
@@ -226,15 +220,11 @@ class TradingEngine {
 
         let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
-        // LONG sinyali
         if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70 && longEnabled) {
           sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
-        }
-        // SHORT sinyali
-        else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) {
+        } else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) {
           sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
-        }
-        else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
+        } else if (machineAnalysis.action === 'WAIT' && result.puan >= (parseInt(settings.min_score) || 40)) {
           rejectReason = 'MAKINE_BEKLE_DEDI';
         } else if (!longEnabled && machineAnalysis.action === 'BUY') {
           rejectReason = 'LONG_KAPALI';
@@ -246,14 +236,8 @@ class TradingEngine {
           rejectReason = 'SHORT_SART_SAGLANMADI';
         }
 
-        if (machineOnay) {
-          machineAccepted++;
-          if (side === 'LONG') longCount++;
-          else shortCount++;
-        } else if (rejectReason) {
-          machineRejected++;
-          rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1;
-        }
+        if (machineOnay) { machineAccepted++; if (side === 'LONG') longCount++; else shortCount++; }
+        else if (rejectReason) { machineRejected++; rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1; }
 
         const risk = machineOnay ? (machineAnalysis.confidence >= 0.85 ? 'DUSUK' : machineAnalysis.confidence >= 0.75 ? 'ORTA' : 'YUKSEK') : 'YUKSEK';
 
@@ -271,8 +255,7 @@ class TradingEngine {
 
           simulation.openPosition({
             symbol: result.symbol, side: side, signal_type: side === 'LONG' ? 'ALIM' : 'SATIS',
-            price: result.fiyat, fiyat: result.fiyat,
-            score: finalScore, trend: result.trend,
+            price: result.fiyat, fiyat: result.fiyat, score: finalScore, trend: result.trend,
             stop_loss: machineAnalysis.stopLoss || result.stop_loss,
             stopLoss: machineAnalysis.stopLoss || result.stop_loss,
             target: machineAnalysis.takeProfit || result.hedef,
@@ -287,24 +270,13 @@ class TradingEngine {
               const buyResult = await binance.realBuy(result.symbol, tradeAmount, result.fiyat);
               if (buyResult) {
                 const qty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
-                this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: qty,
-                  highestPrice: result.fiyat, lowestPrice: result.fiyat,
-                  stopLoss: machineAnalysis.stopLoss || result.stop_loss || result.fiyat * 0.98,
-                  takeProfit: machineAnalysis.takeProfit || result.hedef,
-                  entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence
-                };
+                this.realPositions[result.symbol] = { symbol: result.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: qty, highestPrice: result.fiyat, lowestPrice: result.fiyat, stopLoss: machineAnalysis.stopLoss || result.stop_loss || result.fiyat * 0.98, takeProfit: machineAnalysis.takeProfit || result.hedef, entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence };
               }
             } else if (side === 'SHORT') {
               const sellResult = await binance.realSell(result.symbol, tradeAmount / result.fiyat);
               if (sellResult) {
                 const qty = parseFloat(sellResult.executedQty) || (tradeAmount / result.fiyat);
-                this.realPositions[result.symbol] = {
-                  symbol: result.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: qty,
-                  highestPrice: result.fiyat, lowestPrice: result.fiyat,
-                  stopLoss: result.fiyat * 1.02, takeProfit: result.fiyat * 0.95,
-                  entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence
-                };
+                this.realPositions[result.symbol] = { symbol: result.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: qty, highestPrice: result.fiyat, lowestPrice: result.fiyat, stopLoss: result.fiyat * 1.02, takeProfit: result.fiyat * 0.95, entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence };
               }
             }
           }
@@ -315,7 +287,6 @@ class TradingEngine {
             await new Promise(r => setTimeout(r, 500));
           }
         }
-
         await new Promise(r => setTimeout(r, 150));
         errorCount = 0;
       } catch(e) {
@@ -343,6 +314,12 @@ class TradingEngine {
 
     db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)').run(filtreli.length, signalsFound.length, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected);
 
+    // ═══════════════════════════════════════════
+    // K2: Makineyi veritabanına kaydet (her taramada)
+    // ═══════════════════════════════════════════
+    this.machine.saveToDB();
+
+    // Git sync (3 taramada bir)
     if (this.learningManager && this.scanCount % 3 === 0) {
       try { await this.learningManager.saveAndSync('Tarama #' + this.scanCount); } catch(e) {}
     }
@@ -356,18 +333,36 @@ class TradingEngine {
     console.log('╚══════════════════════════════════════╝');
     await this.updateBTCTrend();
 
+    // ═══════════════════════════════════════════
+    // K2: Veritabanından makineyi yükle (KALICI ÖĞRENME)
+    // ═══════════════════════════════════════════
+    console.log('[BELLEK] Veritabanindan ogrenmeler yukleniyor...');
+    const loaded = this.machine.loadFromDB();
+    if (loaded) {
+      console.log('[BELLEK] ✅ Makine kaldigi yerden devam ediyor');
+    } else {
+      console.log('[BELLEK] 📝 Sifirdan basliyor');
+    }
+
     const settings = this.getSettings();
+
+    // GitHub sync (yedek)
     const githubEnabled = (settings.github_sync_enabled === 'true' || settings.github_sync_enabled === true || settings.github_sync_enabled === 1 || settings.github_sync_enabled === '1');
     const githubToken = process.env.GITHUB_TOKEN;
 
     if (githubEnabled && githubToken) {
       try {
         const { IntegratedLearningManager } = require('./github_learning_sync');
-        this.learningManager = new IntegratedLearningManager({ repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data', token: githubToken, branch: 'main', autoSync: false, syncInterval: 30 });
+        this.learningManager = new IntegratedLearningManager({
+          repoUrl: process.env.GITHUB_LEARNING_REPO || 'https://github.com/arkenza-livestock/machine-learning-data',
+          token: githubToken, branch: 'main', autoSync: false, syncInterval: 30
+        });
         await this.learningManager.initialize(this.machine, simulation);
-        console.log('[GITHUB] ✅ Öğrenme sync AKTIF');
-      } catch(e) { console.error('[GITHUB] ❌ Sync hatasi:', e.message); }
-    } else { console.log('[GITHUB] ⏸️ Öğrenme sync kapali'); }
+        console.log('[GITHUB] ✅ Yedek sync AKTIF');
+      } catch(e) { console.error('[GITHUB] ❌ Yedek sync hatasi:', e.message); }
+    } else {
+      console.log('[GITHUB] ⏸️ Yedek sync kapali (veritabani aktif)');
+    }
 
     const self = this;
     this.priceInterval = setInterval(async () => { await self.checkPositionsQuick(); }, 30000);
@@ -376,10 +371,12 @@ class TradingEngine {
     await this.scan();
     const intervalMin = parseInt(settings.scan_interval || 20);
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
+    
     const longEnabled = settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined;
     const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
     console.log(`[BOT] Her ${intervalMin} dakikada bir tarama`);
     console.log(`[BOT] Makine guven esigi: %${(this.machine.settings.confidenceRequired * 100).toFixed(0)}`);
+    console.log(`[BOT] 🧠 Kalici bellek: ${loaded ? '✅ AKTIF' : '📝 Yeni'}`);
     console.log(`[BOT] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled?'✅':'❌'}${settings.real_trading==='true'?' | GERCEK ✅':''}`);
   }
 
