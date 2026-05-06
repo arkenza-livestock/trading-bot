@@ -1,4 +1,3 @@
-// backend/src/backtest.js
 const binance = require('./binance');
 const analysis = require('./analysis');
 const MachineDecisionEngine = require('./MachineDecisionEngine');
@@ -29,8 +28,9 @@ class MachineBacktestEngine {
         const engine = new MachineDecisionEngine();
         const trades = []; const openPositions = []; const startIdx = 100;
 
+        // BTC verisini çek (SHORT için trend kontrolü)
         let btcCandles = null;
-        if (shortEnabled && symbol !== 'BTCUSDT') {
+        if (shortEnabled) {
           try { btcCandles = await binance.getKlines('BTCUSDT', interval, Math.min(limit, 1000)); } catch(e) {}
         }
 
@@ -39,16 +39,19 @@ class MachineBacktestEngine {
           const currentPrice = parseFloat(candles[i][4]);
           const currentTime = parseInt(candles[i][6]);
 
-          let btcDown = true;
+          // BTC trend kontrolü (SHORT için)
+          let btcDown = false;
           if (shortEnabled && btcCandles && i < (btcCandles.length - 50)) {
             const btcSlice = btcCandles.slice(0, i + 1);
             const btcCloses = btcSlice.map(c => parseFloat(c[4]));
             const btcEma21 = analysis.hesaplaEMA(btcCloses, 21);
             const btcEma50 = analysis.hesaplaEMA(btcCloses, 50);
             const btcPrice = btcCloses[btcCloses.length - 1];
+            // BTC düşüş şartı: fiyat EMA21'in altında VE EMA21 EMA50'nin altında
             btcDown = btcPrice < btcEma21 && btcEma21 < btcEma50;
           }
 
+          // Açık pozisyonları güncelle (LONG & SHORT)
           for (let j = openPositions.length - 1; j >= 0; j--) {
             var pos = openPositions[j], side = pos.side || 'LONG', pnlPct, closeReason = null;
             if (side === 'SHORT') {
@@ -83,7 +86,9 @@ class MachineBacktestEngine {
           var side = null;
           const confidenceOk = machineAnalysis.confidence >= machineConfidenceMin;
 
+          // LONG sinyali (her zaman)
           if (machineAnalysis.action === 'BUY' && confidenceOk && longEnabled) side = 'LONG';
+          // SHORT sinyali (sadece BTC düşüşte)
           else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) side = 'SHORT';
 
           if (side && analysisResult.puan >= minScore) {
@@ -91,6 +96,7 @@ class MachineBacktestEngine {
           }
         }
 
+        // Açık kalanları kapat
         const lastPrice = parseFloat(candles[candles.length - 1][4]);
         const lastTime = parseInt(candles[candles.length - 1][6]);
         for (const pos of openPositions) {
