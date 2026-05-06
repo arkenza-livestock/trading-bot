@@ -45,6 +45,17 @@ function Dashboard() {
     } catch(e) { setMessage('Hata: ' + e.message); }
   };
 
+  var manualScan = async function() {
+    setMessage('🔄 Tarama başlatıldı...');
+    try {
+      var res = await fetch('/api/bot/scan', { method: 'POST' });
+      var data = await res.json();
+      setMessage(data.message || '✅ Tarama tamamlandı');
+      fetchData();
+      setTimeout(function() { setMessage(''); }, 3000);
+    } catch(e) { setMessage('Hata: ' + e.message); }
+  };
+
   if (loading) return <div className="loading">Yukleniyor...</div>;
 
   var aiAcceptedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('✅') !== -1; });
@@ -64,9 +75,10 @@ function Dashboard() {
     <div className="dashboard">
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10}}>
         <h1 style={{margin:0}}>Dashboard</h1>
-        <div style={{display:'flex', alignItems:'center', gap:15}}>
+        <div style={{display:'flex', alignItems:'center', gap:8}}>
           <span style={{color:'#64748b', fontSize:12}}>Son guncelleme: {lastUpdate}</span>
-          <button onClick={fetchData} style={{padding:'6px 14px', background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'}}>🔄 Yenile</button>
+          <button onClick={fetchData} style={{padding:'6px 12px', background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'}}>🔄</button>
+          <button onClick={manualScan} style={{padding:'6px 14px', background:'#7c3aed', border:'none', borderRadius:6, color:'#fff', fontSize:12, fontWeight:600, cursor:'pointer'}}>⚡ TARA</button>
         </div>
       </div>
       <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
