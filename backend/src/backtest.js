@@ -18,50 +18,15 @@ class MachineBacktestEngine {
     const limit = Math.ceil(days * 6) + 200;
     const allTrades = [];
 
-    // Eğer sembol listesinde BTC, ETH, SOL gibi büyük coinler yoksa TÜM COINLERI TARA (ilk 100)
-    let finalSymbols = symbols;
-    const knownSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT'];
-    const isKnown = symbols.some(s => knownSymbols.includes(s));
-    
-    if (!isKnown) {
-        try {
-            const allTickers = await binance.getAllTickers();
-            if (allTickers && allTickers.length > 0) {
-                const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
-                const filtered = [];
-                for (const t of allTickers) {
-                    if (!t.symbol.endsWith('USDT')) continue;
-                    if (STABLES.has(t.symbol)) continue;
-                    const hacim = parseFloat(t.quoteVolume) || 0;
-                    const fiyat = parseFloat(t.lastPrice) || 0;
-                    if (fiyat <= 0 || hacim < 5000000) continue; // 5M USDT minimum hacim
-                    filtered.push({ symbol: t.symbol, quoteVolume: parseFloat(t.quoteVolume) });
-                }
-                filtered.sort((a, b) => b.quoteVolume - a.quoteVolume);
-                finalSymbols = filtered.slice(0, 100).map(t => t.symbol); // İLK 100 COIN
-                console.log(`[BACKTEST] Tüm coinlerden ${finalSymbols.length} coin secildi (ilk 100, min 5M USDT)`);
-            }
-        } catch(e) {
-            console.error('[BACKTEST] Ticker hatası:', e.message);
-        }
-    }
-
-    if (!finalSymbols || finalSymbols.length === 0) {
-        console.log('[BACKTEST] Taranacak coin bulunamadı');
-        return { summary: {}, trades: [] };
-    }
-
-    console.log(`[BACKTEST] ${finalSymbols.length} coin, ${days}g, ${interval}`);
+    console.log(`[BACKTEST] ${symbols.length} coin, ${days}g, ${interval}`);
     console.log(`[BACKTEST] LONG:${longEnabled} SHORT:${shortEnabled}(esik:%${Math.round(shortConfMin*100)})`);
 
-    // Tek bir makine oluştur (tüm semboller için ortak öğrenme)
-    const engine = new MachineDecisionEngine();
-
-    for (const symbol of finalSymbols) {
+    for (const symbol of symbols) {
       try {
         const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
         if (!candles || candles.length < 150) continue;
 
+        const engine = new MachineDecisionEngine();
         const trades = []; const openPositions = []; const startIdx = 100;
 
         // BTC verisini çek (SHORT için trend kontrolü)
@@ -83,6 +48,7 @@ class MachineBacktestEngine {
             const btcEma21 = analysis.hesaplaEMA(btcCloses, 21);
             const btcEma50 = analysis.hesaplaEMA(btcCloses, 50);
             const btcPrice = btcCloses[btcCloses.length - 1];
+            // BTC düşüş şartı: fiyat EMA21'in altında VE EMA21 EMA50'nin altında
             btcDown = btcPrice < btcEma21 && btcEma21 < btcEma50;
           }
 
@@ -107,12 +73,6 @@ class MachineBacktestEngine {
             if (closeReason) {
               const netPnl = tradeAmount * pnlPct / 100;
               trades.push({ symbol, side, entryPrice: pos.entryPrice, exitPrice: currentPrice, entryTime: pos.entryTime, exitTime: currentTime, reason: closeReason, score: pos.score || 0, machineConfidence: pos.machineConfidence || 0, netPnl: parseFloat(netPnl.toFixed(4)), netPnlPct: parseFloat(pnlPct.toFixed(2)), phase: 'BACKTEST' });
-
-              // Makineye geri bildirim (öğrenme)
-              const maxFavorable = side === 'LONG' ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
-              const maxAdverse = side === 'LONG' ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-              engine.feedbackSignalResult(currentTime, pnlPct, maxFavorable, maxAdverse);
-
               openPositions.splice(j, 1);
             }
           }
@@ -146,19 +106,11 @@ class MachineBacktestEngine {
           else pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
           const netPnl = tradeAmount * pnlPct / 100;
           trades.push({ symbol, side, entryPrice: pos.entryPrice, exitPrice: lastPrice, entryTime: pos.entryTime, exitTime: lastTime, reason: 'PERIOD_END', score: pos.score || 0, machineConfidence: pos.machineConfidence || 0, netPnl: parseFloat(netPnl.toFixed(4)), netPnlPct: parseFloat(pnlPct.toFixed(2)), phase: 'BACKTEST' });
-
-          // Makineye geri bildirim
-          const maxFavorable = side === 'LONG' ? ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 : ((pos.entryPrice - lastPrice) / pos.entryPrice) * 100;
-          const maxAdverse = side === 'LONG' ? ((pos.entryPrice - lastPrice) / pos.entryPrice) * 100 : ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100;
-          engine.feedbackSignalResult(lastTime, pnlPct, maxFavorable, maxAdverse);
         }
         allTrades.push(...trades);
         console.log(`[BACKTEST] ${symbol}: ${trades.length} islem`);
       } catch (e) { console.error(`[BACKTEST] ${symbol}:`, e.message); }
     }
-
-    // Öğrenilenleri veritabanına kaydet
-    try { engine.saveToDB(); console.log('[BACKTEST] Makine ogrenimi veritabanina kaydedildi'); } catch(e) {}
 
     // Özet hesaplamalar (Sharpe, MaxDD vb.)
     const wins = allTrades.filter(t => t.netPnl > 0);
