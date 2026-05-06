@@ -5,7 +5,7 @@ const MachineDecisionEngine = require('./MachineDecisionEngine');
 class MachineBacktestEngine {
   async run(params) {
     const {
-      symbols = ['TUMU'], interval = '4h', days = 30,
+      symbols = ['BTCUSDT'], interval = '4h', days = 30,
       stopLoss = 2.0, trailingStop = 0.5, minProfit = 1.5,
       commission = 0.1, slippage = 0.05, minScore = 50,
       tradeAmount = 100, maxPositions = 3, epochs = 1,
@@ -17,10 +17,12 @@ class MachineBacktestEngine {
     const limit = Math.ceil(days * 6) + 200;
     const allTrades = [];
 
-    // Eğer sembol listesi boşsa, "TUMU" veya "Tum Coinler" ise Binance'den tüm coinleri çek
+    // Eğer sembol listesinde BTC, ETH, SOL gibi büyük coinler yoksa TÜM COINLERI TARA (ilk 100)
     let finalSymbols = symbols;
-    if (!symbols || symbols.length === 0 || 
-        (symbols.length === 1 && (symbols[0] === 'TUMU' || symbols[0] === 'Tum Coinler' || symbols[0] === 'TumCoinler'))) {
+    const knownSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT'];
+    const isKnown = symbols.some(s => knownSymbols.includes(s));
+    
+    if (!isKnown) {
         try {
             const allTickers = await binance.getAllTickers();
             if (allTickers && allTickers.length > 0) {
@@ -31,12 +33,12 @@ class MachineBacktestEngine {
                     if (STABLES.has(t.symbol)) continue;
                     const hacim = parseFloat(t.quoteVolume) || 0;
                     const fiyat = parseFloat(t.lastPrice) || 0;
-                    if (fiyat <= 0 || hacim < 10000000) continue;
+                    if (fiyat <= 0 || hacim < 5000000) continue; // 5M USDT minimum hacim
                     filtered.push({ symbol: t.symbol, quoteVolume: parseFloat(t.quoteVolume) });
                 }
                 filtered.sort((a, b) => b.quoteVolume - a.quoteVolume);
-                finalSymbols = filtered.slice(0, 50).map(t => t.symbol);
-                console.log(`[BACKTEST] Tüm coinlerden ${finalSymbols.length} coin secildi`);
+                finalSymbols = filtered.slice(0, 100).map(t => t.symbol); // İLK 100 COIN
+                console.log(`[BACKTEST] Tüm coinlerden ${finalSymbols.length} coin secildi (ilk 100, min 5M USDT)`);
             }
         } catch(e) {
             console.error('[BACKTEST] Ticker hatası:', e.message);
