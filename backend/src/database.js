@@ -22,6 +22,22 @@ function initDatabase() {
   db.exec(`CREATE TABLE IF NOT EXISTS scan_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, coin_count INTEGER DEFAULT 0, signal_count INTEGER DEFAULT 0, duration_ms INTEGER DEFAULT 0, signals_found TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   db.exec(`CREATE TABLE IF NOT EXISTS sim_wallet (id INTEGER PRIMARY KEY AUTOINCREMENT, balance REAL DEFAULT 1000, total_pnl REAL DEFAULT 0, total_trades INTEGER DEFAULT 0, winning_trades INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   db.exec(`CREATE TABLE IF NOT EXISTS sim_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, side TEXT DEFAULT 'LONG', quantity REAL, entry_price REAL, current_price REAL, exit_price REAL, stop_loss REAL, take_profit REAL, highest_price REAL, lowest_price REAL, pnl REAL DEFAULT 0, pnl_percent REAL DEFAULT 0, status TEXT DEFAULT 'OPEN', signal_guc TEXT DEFAULT 'NORMAL', trend4H TEXT, trend1D TEXT, score INTEGER DEFAULT 0, machine_confidence REAL DEFAULT 0, close_reason TEXT, opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP)`);
+
+  // ═══ GERÇEK POZİSYONLAR (K3) ═══
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS real_positions (
+      symbol TEXT PRIMARY KEY,
+      side TEXT DEFAULT 'LONG',
+      quantity REAL,
+      entry_price REAL,
+      highest_price REAL,
+      lowest_price REAL,
+      stop_loss REAL,
+      entry_time TEXT,
+      machine_confidence REAL DEFAULT 0
+    )
+  `);
+
   db.exec(`CREATE TABLE IF NOT EXISTS machine_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, pattern_data TEXT, outcome TEXT, return_pct REAL, similarity REAL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   db.exec(`CREATE TABLE IF NOT EXISTS machine_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, action TEXT, confidence REAL, reasoning TEXT, expected_return REAL, stop_loss REAL, take_profit REAL, similar_patterns INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
   db.exec(`CREATE TABLE IF NOT EXISTS machine_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, signal_timestamp INTEGER, actual_return REAL, max_favorable REAL, max_adverse REAL, profitable INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
@@ -53,14 +69,10 @@ function initDatabase() {
   };
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-  for (const [key, value] of Object.entries(defaultSettings)) {
-    insertSetting.run(key, value);
-  }
+  for (const [key, value] of Object.entries(defaultSettings)) insertSetting.run(key, value);
 
   const walletExists = db.prepare('SELECT COUNT(*) as count FROM sim_wallet').get();
-  if (walletExists.count === 0) {
-    db.prepare('INSERT INTO sim_wallet (balance) VALUES (1000)').run();
-  }
+  if (walletExists.count === 0) db.prepare('INSERT INTO sim_wallet (balance) VALUES (1000)').run();
 
   console.log('[DB] ✅ Veritabani hazir:', dbPath);
 }
