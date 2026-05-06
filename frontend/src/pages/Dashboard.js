@@ -27,7 +27,7 @@ function Dashboard() {
 
   useEffect(function() {
     fetchData();
-    var interval = setInterval(fetchData, 30000);
+    var interval = setInterval(fetchData, 3000);
     return function() { clearInterval(interval); };
   }, [fetchData]);
 
