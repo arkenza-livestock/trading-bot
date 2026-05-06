@@ -17,10 +17,40 @@ class MachineBacktestEngine {
     const limit = Math.ceil(days * 6) + 200;
     const allTrades = [];
 
-    console.log(`[BACKTEST] ${symbols.length} coin, ${days}g, ${interval}`);
+    // Eğer sembol listesi boşsa veya "TUMU" ise Binance'den tüm coinleri çek
+    let finalSymbols = symbols;
+    if (!symbols || symbols.length === 0 || (symbols.length === 1 && symbols[0] === 'TUMU')) {
+        try {
+            const allTickers = await binance.getAllTickers();
+            if (allTickers && allTickers.length > 0) {
+                const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
+                const filtered = [];
+                for (const t of allTickers) {
+                    if (!t.symbol.endsWith('USDT')) continue;
+                    if (STABLES.has(t.symbol)) continue;
+                    const hacim = parseFloat(t.quoteVolume) || 0;
+                    const fiyat = parseFloat(t.lastPrice) || 0;
+                    if (fiyat <= 0 || hacim < 10000000) continue;
+                    filtered.push({ symbol: t.symbol, quoteVolume: parseFloat(t.quoteVolume) });
+                }
+                filtered.sort((a, b) => b.quoteVolume - a.quoteVolume);
+                finalSymbols = filtered.slice(0, 50).map(t => t.symbol);
+                console.log(`[BACKTEST] Tüm coinlerden ${finalSymbols.length} coin secildi`);
+            }
+        } catch(e) {
+            console.error('[BACKTEST] Ticker hatası:', e.message);
+        }
+    }
+
+    if (!finalSymbols || finalSymbols.length === 0) {
+        console.log('[BACKTEST] Taranacak coin bulunamadı');
+        return { summary: {}, trades: [] };
+    }
+
+    console.log(`[BACKTEST] ${finalSymbols.length} coin, ${days}g, ${interval}`);
     console.log(`[BACKTEST] LONG:${longEnabled} SHORT:${shortEnabled}(esik:%${Math.round(shortConfMin*100)})`);
 
-    for (const symbol of symbols) {
+    for (const symbol of finalSymbols) {
       try {
         const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
         if (!candles || candles.length < 150) continue;
@@ -47,7 +77,6 @@ class MachineBacktestEngine {
             const btcEma21 = analysis.hesaplaEMA(btcCloses, 21);
             const btcEma50 = analysis.hesaplaEMA(btcCloses, 50);
             const btcPrice = btcCloses[btcCloses.length - 1];
-            // BTC düşüş şartı: fiyat EMA21'in altında VE EMA21 EMA50'nin altında
             btcDown = btcPrice < btcEma21 && btcEma21 < btcEma50;
           }
 
