@@ -46,6 +46,7 @@ class TradingEngine {
           machineConfidence: row.machine_confidence || 0
         };
       }
+      if (rows.length > 0) console.log(`[GERCEK] ✅ ${rows.length} pozisyon yuklendi`);
     } catch(e) {}
   }
 
@@ -171,6 +172,7 @@ class TradingEngine {
     const settings  = this.getSettings();
     this.scanCount++;
 
+    // 🔥 DENGELİ MOD: Ne çok sıkı ne çok gevşek
     const minHacim = parseFloat(settings.min_volume || 8000000);
     const maxCoin  = parseInt(settings.max_coins || 75);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
