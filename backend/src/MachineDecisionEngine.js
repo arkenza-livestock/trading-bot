@@ -1,6 +1,16 @@
+/**
+ * ═══════════════════════════════════════════════════════════
+ *   MAKİNE ÖĞRENMESİ TABANLI ADAPTİF KARAR SİSTEMİ (AGRESİF)
+ *   - Benzerlik eşiği esnetildi (%60)
+ *   - Minimum desen sayısı düşürüldü (2)
+ *   - Hiç desen yoksa piyasa trendine göre fallback karar
+ * ═══════════════════════════════════════════════════════════
+ */
+
 class MachineDecisionEngine {
 
   constructor() {
+    // ═══ BELLEK ═══
     this.memory = {
       signals: [],
       outcomes: [],
@@ -9,21 +19,24 @@ class MachineDecisionEngine {
       indicatorReliability: {}
     };
 
+    // ═══ PARAMETRELER ═══
     this.settings = {
       minHistoricalBars: 200,
       lookbackWindow: 100,
-      minSimilarPatterns: 5,
-      confidenceRequired: 0.70,
+      minSimilarPatterns: 2,      // <--- AGRESİF: 5'ten 2'ye düşürüldü
+      confidenceRequired: 0.50,   // <--- AGRESİF: 0.70'ten 0.50'ye düşürüldü
       maxDrawdownAllowed: 0.05,
       learningRate: 0.01,
       outcomeHorizon: 20
     };
 
+    // ═══ GÖSTERGE AĞIRLIKLARI ═══
     this.indicatorWeights = {
-      rsi: 0.12, macd: 0.12, emaTrend: 0.12, bollinger: 0.10,
-      volume: 0.10, supportResist: 0.12, divergence: 0.12, mfi: 0.10, adx: 0.10
+      rsi: 0.15, macd: 0.15, emaTrend: 0.15, bollinger: 0.10,
+      volume: 0.15, supportResist: 0.10, divergence: 0.10, mfi: 0.05, adx: 0.05
     };
 
+    // ═══ DURUM ═══
     this.state = {
       mode: 'OBSERVING', consecutiveLosses: 0, totalSignals: 0,
       successfulSignals: 0, currentDrawdown: 0, peakBalance: 1, currentBalance: 1
@@ -36,68 +49,37 @@ class MachineDecisionEngine {
   saveToDB() {
     try {
       const db = require('./database');
-
-      // Son 200 deseni kaydet
       const recentPatterns = this.memory.patternLibrary.slice(-200);
       if (recentPatterns.length > 0) {
         const stmt = db.prepare('INSERT OR REPLACE INTO machine_patterns (id, symbol, pattern_data, outcome, return_pct, similarity) VALUES (?,?,?,?,?,?)');
-        const deleteOld = db.prepare('DELETE FROM machine_patterns');
-        deleteOld.run();
-
+        db.prepare('DELETE FROM machine_patterns').run();
         const tx = db.transaction(() => {
-          recentPatterns.forEach((p, i) => {
-            stmt.run(i + 1, 'ALL', JSON.stringify(p.state), p.outcome, p.return || 0, 1.0);
-          });
+          recentPatterns.forEach((p, i) => { stmt.run(i + 1, 'ALL', JSON.stringify(p.state), p.outcome, p.return || 0, 1.0); });
         });
         tx();
       }
-
-      // Gösterge ağırlıklarını kaydet
       const wStmt = db.prepare('INSERT INTO machine_weights (weights_data, threshold) VALUES (?,?)');
       wStmt.run(JSON.stringify(this.indicatorWeights), this.settings.confidenceRequired);
-
       return true;
-    } catch(e) {
-      console.error('[MAKINE] DB kayit hatasi:', e.message);
-      return false;
-    }
+    } catch(e) { console.error('[MAKINE] DB kayit hatasi:', e.message); return false; }
   }
 
-  // ═══════════════════════════════════════════
-  // VERİTABANINDAN YÜKLE (KALICI)
-  // ═══════════════════════════════════════════
   loadFromDB() {
     try {
       const db = require('./database');
-
-      // Desenleri yükle
       const patterns = db.prepare('SELECT * FROM machine_patterns ORDER BY id').all();
       if (patterns && patterns.length > 0) {
-        this.memory.patternLibrary = patterns.map(p => ({
-          state: JSON.parse(p.pattern_data || '{}'),
-          outcome: p.outcome,
-          return: p.return_pct || 0
-        }));
+        this.memory.patternLibrary = patterns.map(p => ({ state: JSON.parse(p.pattern_data || '{}'), outcome: p.outcome, return: p.return_pct || 0 }));
       }
-
-      // Ağırlıkları yükle (son kaydedilen)
       const weights = db.prepare('SELECT * FROM machine_weights ORDER BY id DESC LIMIT 1').get();
       if (weights) {
         this.indicatorWeights = JSON.parse(weights.weights_data || '{}');
-        this.settings.confidenceRequired = weights.threshold || 0.70;
+        this.settings.confidenceRequired = weights.threshold || 0.50;
       }
-
-      console.log(`[MAKINE] ✅ Veritabanindan yuklendi: ${this.memory.patternLibrary.length} desen, esik:%${Math.round(this.settings.confidenceRequired*100)}`);
+      console.log(`[MAKINE] ✅ DB yuklendi: ${this.memory.patternLibrary.length} desen, esik:%${Math.round(this.settings.confidenceRequired*100)}`);
       return true;
-    } catch(e) {
-      console.error('[MAKINE] DB yukleme hatasi:', e.message);
-      return false;
-    }
+    } catch(e) { console.error('[MAKINE] DB yukleme hatasi:', e.message); return false; }
   }
-
-  // ═══════════════════════════════════════════
-  // ANALİZ FONKSİYONLARI (AYNI KALDI)
-  // ═══════════════════════════════════════════
 
   analyze(candles, ticker) {
     if (!candles || candles.length < this.settings.minHistoricalBars) {
@@ -107,8 +89,9 @@ class MachineDecisionEngine {
     const currentState = this.extractMarketState(candles);
     const similarPatterns = this.findSimilarHistoricalPatterns(candles, currentState, this.settings.lookbackWindow);
 
+    // AGRESİF FALLBACK: Hiç benzer desen bulunamazsa piyasa verisine göre karar ver
     if (similarPatterns.length < this.settings.minSimilarPatterns) {
-      return this.createNullResponse('YETERSIZ_BENZER_DESEN');
+      return this.agresifFallback(candles, currentState);
     }
 
     const patternAnalysis = this.analyzePatternOutcomes(similarPatterns, currentState);
@@ -135,6 +118,48 @@ class MachineDecisionEngine {
     };
   }
 
+  // ═══════════════════════════════════════════
+  // AGRESİF FALLBACK: Hiç desen yoksa piyasa verisine göre karar
+  // ═══════════════════════════════════════════
+  agresifFallback(candles, currentState) {
+    const closes = candles.map(c => parseFloat(c[4]));
+    const price = closes[closes.length - 1];
+    const sma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const ema21 = this.calculateEMA(closes, 21);
+    const rsi = this.calculateRSI(closes, 14);
+
+    let action = 'WAIT';
+    let confidence = 0.40; // Düşük güven
+    let reasoning = 'FALLBACK: Desen bulunamadi, piyasa analizi';
+
+    if (price > ema21) {
+      action = 'BUY';
+      reasoning += ' | Fiyat EMA21 ustunde';
+      confidence = 0.55;
+      if (rsi < 40) { confidence = 0.60; reasoning += ' | RSI uygun'; }
+    } else if (rsi < 30) {
+      action = 'BUY';
+      confidence = 0.55;
+      reasoning += ' | Asiri satim bolgesi';
+    }
+
+    return {
+      symbol: 'FALLBACK',
+      action: action,
+      confidence: confidence,
+      stopLoss: price * 0.985,
+      takeProfit: price * 1.03,
+      reasoning: reasoning,
+      similarPatternsFound: 0,
+      patternSuccessRate: 0,
+      machineConfidence: confidence,
+      timestamp: Date.now()
+    };
+  }
+
+  // ═══════════════════════════════════════════
+  // PİYASA PARMAK İZİ
+  // ═══════════════════════════════════════════
   extractMarketState(candles) {
     const closes  = candles.map(c => parseFloat(c[4]));
     const highs   = candles.map(c => parseFloat(c[2]));
@@ -161,7 +186,7 @@ class MachineDecisionEngine {
       const historicalSlice = candles.slice(i - windowSize, i);
       const historicalState = this.extractMarketState(historicalSlice);
       const similarity = this.calculateCosineSimilarity(currentState, historicalState);
-      if (similarity > 0.80) {
+      if (similarity > 0.60) { // <--- AGRESİF: 0.80'den 0.60'a düşürüldü
         const futureCandles = candles.slice(i, i + this.settings.outcomeHorizon);
         const outcome = this.evaluateOutcome(historicalSlice, futureCandles);
         patterns.push({ index: i, similarity, outcome, state: historicalState });
@@ -197,13 +222,11 @@ class MachineDecisionEngine {
   analyzePatternOutcomes(similarPatterns, currentState) {
     const total = similarPatterns.length;
     const profitable = similarPatterns.filter(p => p.outcome.profitable).length;
-    const upPatterns = similarPatterns.filter(p => p.outcome.direction === 'UP');
-    const downPatterns = similarPatterns.filter(p => p.outcome.direction === 'DOWN');
     const avgReturn = similarPatterns.reduce((s, p) => s + p.outcome.returnPct, 0) / total;
     const avgMaxGain = similarPatterns.reduce((s, p) => s + p.outcome.maxGain, 0) / total;
     const avgMaxLoss = similarPatterns.reduce((s, p) => s + p.outcome.maxLoss, 0) / total;
     const weightedSuccess = similarPatterns.reduce((s, p) => s + (p.outcome.profitable ? p.similarity : 0), 0) / similarPatterns.reduce((s, p) => s + p.similarity, 0);
-    return { totalPatterns: total, successRate: profitable / total, weightedSuccessRate: weightedSuccess, upProbability: upPatterns.length / total, downProbability: downPatterns.length / total, avgReturn, avgMaxGain, avgMaxLoss, riskRewardRatio: avgMaxLoss > 0 ? avgMaxGain / avgMaxLoss : 0, confidence: weightedSuccess, topMatches: similarPatterns.slice(0,3).map(p => ({similarity:p.similarity,outcome:p.outcome})) };
+    return { totalPatterns: total, successRate: profitable / total, weightedSuccessRate: weightedSuccess, upProbability: total > 0 ? profitable / total : 0, downProbability: total > 0 ? (total - profitable) / total : 0, avgReturn, avgMaxGain, avgMaxLoss, riskRewardRatio: avgMaxLoss > 0 ? avgMaxGain / avgMaxLoss : 0, confidence: weightedSuccess, topMatches: similarPatterns.slice(0,3).map(p => ({similarity:p.similarity,outcome:p.outcome})) };
   }
 
   calculateRiskProfile(patternAnalysis, currentState, candles) {
@@ -219,39 +242,22 @@ class MachineDecisionEngine {
       kellyFraction = (winRate * b - (1 - winRate)) / b;
       kellyFraction = Math.max(0, Math.min(0.25, kellyFraction));
     }
-    return { kellyFraction, atr14, suggestedStopLoss: price - (atr14 * 1.5), suggestedTakeProfit: price + (atr14 * avgWin / Math.max(avgLoss, 0.1)), riskPerTrade: kellyFraction * 100, acceptable: kellyFraction > 0.02 && patternAnalysis.riskRewardRatio > 1.5 };
+    return { kellyFraction, atr14, suggestedStopLoss: price - (atr14 * 1.5), suggestedTakeProfit: price + (atr14 * avgWin / Math.max(avgLoss, 0.1)), riskPerTrade: kellyFraction * 100, acceptable: winRate > 0.3 }; // <--- AGRESİF: risk acceptable kriteri düşürüldü
   }
 
   evaluateSelfPerformance() {
-    const recentSignals = this.memory.signals.slice(-30);
-    if (recentSignals.length < 10) return { confidence: 1.0, shouldTrade: true, reason: 'YETERLI_GECMIS_YOK' };
-    const recentOutcomes = this.memory.outcomes.slice(-30);
-    const winRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
-    let consecutiveLosses = 0;
-    for (let i = recentOutcomes.length - 1; i >= 0; i--) { if (!recentOutcomes[i].profitable) consecutiveLosses++; else break; }
-    const currentDrawdown = this.state.currentDrawdown;
-    const shouldTrade = consecutiveLosses < 3 && currentDrawdown < this.settings.maxDrawdownAllowed && winRate > 0.4;
-    return { confidence: winRate, consecutiveLosses, currentDrawdown, shouldTrade, reason: !shouldTrade ? (consecutiveLosses >= 3 ? 'PES_PESE_KAYIP' : currentDrawdown >= this.settings.maxDrawdownAllowed ? 'YUKSEK_DRAWDOWN' : 'DUSUK_BASARI_ORANI') : 'OK' };
+    return { confidence: 0.80, shouldTrade: true, reason: 'AGRESIF_MOD' }; // <--- AGRESİF: Her zaman trade'e izin ver
   }
 
   makeDecision(patternAnalysis, riskProfile, selfAssessment, currentState) {
-    if (!selfAssessment.shouldTrade) return { action: 'WAIT', confidence: 0, reasoning: `MAKINE_BEKLEMEDE: ${selfAssessment.reason}`, expectedReturn: 0, stopLoss: null, takeProfit: null };
     if (!riskProfile.acceptable) return { action: 'WAIT', confidence: 0, reasoning: 'RISK_PROFILI_UYGUN_DEGIL', expectedReturn: 0, stopLoss: null, takeProfit: null };
     const adjustedThreshold = this.getDynamicConfidenceThreshold();
     if (patternAnalysis.confidence < adjustedThreshold) return { action: 'WAIT', confidence: patternAnalysis.confidence, reasoning: `GUVEN_ESIGI_ALTINDA`, expectedReturn: patternAnalysis.avgReturn, stopLoss: null, takeProfit: null };
-    const direction = patternAnalysis.upProbability > patternAnalysis.downProbability ? 'BUY' : 'SELL';
-    return { action: direction, confidence: patternAnalysis.confidence, reasoning: `${patternAnalysis.totalPatterns} benzer desen, basari:%${(patternAnalysis.successRate*100).toFixed(1)}`, expectedReturn: patternAnalysis.avgReturn, stopLoss: riskProfile.suggestedStopLoss, takeProfit: riskProfile.suggestedTakeProfit };
+    const direction = patternAnalysis.upProbability > 0.40 ? 'BUY' : (patternAnalysis.downProbability > 0.60 ? 'SELL' : 'BUY'); // <--- AGRESİF: Hafif üstünlükte bile yön ver
+    return { action: direction, confidence: patternAnalysis.confidence, reasoning: `${patternAnalysis.totalPatterns} desen, basari:%${(patternAnalysis.successRate*100).toFixed(1)}`, expectedReturn: patternAnalysis.avgReturn, stopLoss: riskProfile.suggestedStopLoss, takeProfit: riskProfile.suggestedTakeProfit };
   }
 
-  getDynamicConfidenceThreshold() {
-    const recentOutcomes = this.memory.outcomes.slice(-20);
-    if (recentOutcomes.length < 10) return this.settings.confidenceRequired;
-    const winRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
-    if (winRate < 0.5) return 0.85;
-    if (winRate < 0.6) return 0.80;
-    if (winRate < 0.7) return 0.75;
-    return 0.65;
-  }
+  getDynamicConfidenceThreshold() { return 0.10; } // <--- AGRESİF: Neredeyse her zaman geç
 
   recordDecision(decision, marketState) {
     this.memory.signals.push({ ...decision, marketState, timestamp: Date.now() });
@@ -273,8 +279,8 @@ class MachineDecisionEngine {
     const recentOutcomes = this.memory.outcomes.slice(-50);
     if (recentOutcomes.length < 20) return;
     const successRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
-    if (successRate > 0.75) { this.settings.confidenceRequired = Math.max(0.60, this.settings.confidenceRequired - 0.01); }
-    else if (successRate < 0.55) { this.settings.confidenceRequired = Math.min(0.85, this.settings.confidenceRequired + 0.02); }
+    if (successRate > 0.60) { this.settings.confidenceRequired = Math.max(0.30, this.settings.confidenceRequired - 0.02); }
+    else if (successRate < 0.40) { this.settings.confidenceRequired = Math.min(0.70, this.settings.confidenceRequired + 0.03); }
   }
 
   calculateRSI(data, period = 14) {
@@ -303,6 +309,14 @@ class MachineDecisionEngine {
     }
     if (trValues.length < period) return trValues.reduce((a, b) => a + b, 0) / trValues.length;
     return trValues.slice(-period).reduce((a, b) => a + b, 0) / period;
+  }
+
+  calculateEMA(data, period) {
+    if (data.length < period) return data[data.length - 1];
+    const k = 2 / (period + 1);
+    let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < data.length; i++) ema = data[i] * k + ema * (1 - k);
+    return ema;
   }
 
   analyzeVolumeProfile(volumes, closes) {
