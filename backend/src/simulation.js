@@ -26,9 +26,12 @@ class SimulationEngine {
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
-      // BU SATIR ÇOK ÖNEMLİ: side değerini signal.side'dan al, yoksa varsayılan LONG
-      var side = signal.side || 'LONG';
-      console.log('[SIM DEBUG] Gelen side degeri:', side, 'Sembol:', signal.symbol);
+      // GARANTİLİ SİDE TESPİTİ
+      var side = 'LONG';
+      if (signal.side === 'SHORT' || signal.signal_type === 'SATIS' || signal.sinyal === 'SATIS') {
+        side = 'SHORT';
+      }
+      console.log('[SIM DEBUG] Gelen side:', signal.side, 'signal_type:', signal.signal_type, '→ KARAR:', side, 'Sembol:', signal.symbol);
 
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
@@ -37,9 +40,6 @@ class SimulationEngine {
         : (signal.stop_loss || signal.stopLoss || price * 0.98);
       var guc = (signal.machineConfidence || 0) >= 0.80 ? 'AI_GUCLU' 
                 : (signal.machineConfidence || 0) >= 0.65 ? 'AI_NORMAL' : 'AI_ZAYIF';
-
-      var passedRules = signal.passedCount || 0;
-      var totalRules = signal.totalRules || 0;
 
       var result = db.prepare(
         'INSERT INTO sim_positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,highest_price,lowest_price,signal_guc,trend4H,trend1D,score,machine_confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
@@ -57,7 +57,7 @@ class SimulationEngine {
         timestamp: Date.now() 
       });
 
-      console.log(`[SIM] ACILDI: ${signal.symbol} (${side}) @ ${price} | ${baseAmt} USDT | Kurallar:${passedRules}/${totalRules} | AI:%${((signal.machineConfidence||0)*100).toFixed(0)}`);
+      console.log(`[SIM] ACILDI: ${signal.symbol} (${side}) @ ${price} | ${baseAmt} USDT`);
       return result.lastInsertRowid;
     } catch(e) { console.error('[SIM] Acma hatasi:', e.message); return null; }
   }
