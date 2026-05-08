@@ -1,322 +1,295 @@
 /**
  * ═══════════════════════════════════════════════════════════
- *   HİBRİT ANALİZ MOTORU - 6 KURAL + MAKİNE OPTİMİZASYONU
- *   - 6 klasik teknik analiz kuralı
- *   - En az 4/6 kural → AL sinyali
- *   - Makine geri bildirimle kural ağırlıklarını optimize eder
+ *   ADAPTİF ÇOK FAKTÖRLÜ ANALİZ MOTORU – LONG (A1)
+ *   - 12 teknik kural
+ *   - Piyasa rejimine göre otomatik kural seçimi
+ *   - Geri bildirimle ağırlık güncelleme
+ *   - Volatilite / haber filtresi
  * ═══════════════════════════════════════════════════════════
  */
 
-class HybridAnalysis {
+class AdaptiveHybridAnalysis {
   
   constructor() {
+    // 12 KURAL TANIMI
+    this.allRules = [
+      { key: 'supportNear',       name: 'Destek Yakınlığı' },
+      { key: 'rsiOversold',       name: 'RSI Aşırı Satım' },
+      { key: 'ichimokuBelow',     name: 'Ichimoku Bulutu Altı' },
+      { key: 'rsiDivergence',     name: 'RSI Bullish Diverjans' },
+      { key: 'volumeBuying',      name: 'Hacim Artışı (Alım)' },
+      { key: 'macdCross',         name: 'MACD Al Sinyali' },
+      { key: 'goldenCross',       name: 'Golden Cross (EMA)' },
+      { key: 'adxTrendUp',        name: 'ADX Yükseliş Gücü' },
+      { key: 'bollingerBounce',   name: 'Bollinger Alt Bant Sıçraması' },
+      { key: 'priceAboveEMA21',   name: 'Fiyat EMA21 Üstü' },
+      { key: 'cmfPositive',       name: 'CMF Pozitif' },
+      { key: 'stochRsiOversold',  name: 'StochRSI Aşırı Satım' }
+    ];
+
     // Kural ağırlıkları (geri bildirimle güncellenir)
-    this.ruleWeights = {
-      supportTrend: 1.0,    // Kural 1: Destek/Trend Yakınlığı
-      rsiOversold: 1.0,     // Kural 2: RSI Aşırı Satım
-      ichimokuCloud: 1.0,   // Kural 3: Bulut Altında Olma
-      rsiDivergence: 1.0,   // Kural 4: RSI Bullish Uyumsuzluğu
-      volumeSpike: 1.0,     // Kural 5: Hacim Artışı
-      macdCrossover: 1.0    // Kural 6: MACD Alım Sinyali
-    };
-    
+    this.weights = {};
+    this.allRules.forEach(r => this.weights[r.key] = 1.0);
+
     // Kural başarı takibi
-    this.rulePerformance = {
-      supportTrend: { wins: 0, losses: 0 },
-      rsiOversold: { wins: 0, losses: 0 },
-      ichimokuCloud: { wins: 0, losses: 0 },
-      rsiDivergence: { wins: 0, losses: 0 },
-      volumeSpike: { wins: 0, losses: 0 },
-      macdCrossover: { wins: 0, losses: 0 }
+    this.perf = {};
+    this.allRules.forEach(r => this.perf[r.key] = { wins: 0, losses: 0 });
+
+    // Rejim – Kural eşleştirmesi ve minimum geçiş sayısı
+    this.regimeRules = {
+      RALLY: {
+        active: ['goldenCross','adxTrendUp','priceAboveEMA21','macdCross','volumeBuying','cmfPositive'],
+        minPass: 3
+      },
+      RANGING: {
+        active: ['supportNear','rsiOversold','bollingerBounce','rsiDivergence','stochRsiOversold','ichimokuBelow'],
+        minPass: 3
+      },
+      DOWNTREND: {
+        active: ['rsiOversold','supportNear','rsiDivergence','stochRsiOversold','bollingerBounce','volumeBuying'],
+        minPass: 4
+      },
+      VOLATILE: {
+        active: [],            // volatil modda pozisyon açma
+        minPass: 99
+      }
     };
-    
-    // Minimum kural sayısı (en az 4/6)
-    this.minRulesRequired = 4;
-    
-    // Veritabanından ağırlıkları yükle
-    this.loadWeightsFromDB();
+
+    this.loadFromDB();
   }
-  
-  // ═══════════════════════════════════════════
-  // VERİTABANINDAN AĞIRLIKLARI YÜKLE
-  // ═══════════════════════════════════════════
-  loadWeightsFromDB() {
+
+  // ──────────────── VERİTABANI ────────────────
+  loadFromDB() {
     try {
       const db = require('./database');
-      const row = db.prepare("SELECT value FROM settings WHERE key='hybrid_weights'").get();
+      const row = db.prepare("SELECT value FROM settings WHERE key='adapt_weights'").get();
       if (row && row.value) {
         const saved = JSON.parse(row.value);
-        if (saved.weights) this.ruleWeights = saved.weights;
-        if (saved.performance) this.rulePerformance = saved.performance;
-        console.log('[HYBRID] ✅ Ağırlıklar yüklendi');
+        if (saved.weights) Object.assign(this.weights, saved.weights);
+        if (saved.perf)   Object.assign(this.perf, saved.perf);
       }
     } catch(e) {}
   }
-  
-  // ═══════════════════════════════════════════
-  // AĞIRLIKLARI VERİTABANINA KAYDET
-  // ═══════════════════════════════════════════
-  saveWeightsToDB() {
+
+  saveToDB() {
     try {
       const db = require('./database');
-      const data = JSON.stringify({
-        weights: this.ruleWeights,
-        performance: this.rulePerformance,
-        updatedAt: new Date().toISOString()
-      });
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('hybrid_weights', ?)").run(data);
+      db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('adapt_weights',?)")
+        .run(JSON.stringify({ weights: this.weights, perf: this.perf }));
     } catch(e) {}
   }
-  
-  // ═══════════════════════════════════════════
-  // GERİ BİLDİRİM - KURAL AĞIRLIKLARINI GÜNCELLE
-  // ═══════════════════════════════════════════
-  feedback(ruleResults, wasProfitable) {
-    for (const [ruleName, passed] of Object.entries(ruleResults)) {
-      if (passed && this.rulePerformance[ruleName]) {
-        if (wasProfitable) {
-          this.rulePerformance[ruleName].wins++;
-        } else {
-          this.rulePerformance[ruleName].losses++;
-        }
-        
-        // Ağırlığı güncelle (başarı oranına göre)
-        const total = this.rulePerformance[ruleName].wins + this.rulePerformance[ruleName].losses;
+
+  // Geri bildirim
+  feedback(passedRules, wasProfitable) {
+    passedRules.forEach(key => {
+      if (this.perf[key]) {
+        if (wasProfitable) this.perf[key].wins++;
+        else this.perf[key].losses++;
+        const total = this.perf[key].wins + this.perf[key].losses;
         if (total > 5) {
-          const winRate = this.rulePerformance[ruleName].wins / total;
-          this.ruleWeights[ruleName] = 0.5 + winRate; // 0.5 - 1.5 arası
+          const wr = this.perf[key].wins / total;
+          this.weights[key] = Math.max(0.3, Math.min(2.0, 0.5 + wr));
         }
       }
-    }
-    this.saveWeightsToDB();
+    });
+    this.saveToDB();
   }
-  
-  // ═══════════════════════════════════════════
-  // ANA ANALİZ FONKSİYONU
-  // ═══════════════════════════════════════════
-  analyze(candles, ticker) {
+
+  // ──────────────── ANA ANALİZ ────────────────
+  analyze(candles, ticker, options = {}) {
     if (!candles || candles.length < 100) return null;
-    
+
     const closes  = candles.map(c => parseFloat(c[4]));
     const highs   = candles.map(c => parseFloat(c[2]));
     const lows    = candles.map(c => parseFloat(c[3]));
     const volumes = candles.map(c => parseFloat(c[5]));
     const opens   = candles.map(c => parseFloat(c[1]));
     const fiyat   = closes[closes.length - 1];
-    
-    // ═══ 6 KURAL KONTROLÜ ═══
-    const ruleResults = {
-      supportTrend: this.checkSupportTrend(closes, highs, lows),
-      rsiOversold: this.checkRSIOversold(closes),
-      ichimokuCloud: this.checkIchimokuCloud(highs, lows, closes),
-      rsiDivergence: this.checkRSIDivergence(closes),
-      volumeSpike: this.checkVolumeSpike(volumes),
-      macdCrossover: this.checkMACDCrossover(closes)
-    };
-    
-    // Kaç kural sağlandı?
-    const passedCount = Object.values(ruleResults).filter(v => v === true).length;
-    
-    // Ağırlıklı puan hesapla
-    let weightedScore = 0;
-    let totalWeight = 0;
-    for (const [ruleName, passed] of Object.entries(ruleResults)) {
-      if (passed) {
-        weightedScore += this.ruleWeights[ruleName] || 1.0;
-      }
-      totalWeight += (this.ruleWeights[ruleName] || 1.0);
+
+    // rejim (engine.js'ten gelir, yoksa RANGING varsay)
+    const regime = options.btcRegime || 'RANGING';
+    const regimeCfg = this.regimeRules[regime] || this.regimeRules['RANGING'];
+
+    // tüm kuralları çalıştır
+    const results = {};
+    for (const rule of this.allRules) {
+      results[rule.key] = this['check_' + rule.key](closes, highs, lows, volumes, opens);
     }
-    
-    // Normalize edilmiş puan (0-100)
-    const finalScore = totalWeight > 0 ? (weightedScore / totalWeight) * 100 : 0;
-    
-    // Sinyal kararı: en az 4/6 kural
-    const signal = passedCount >= this.minRulesRequired ? 'ALIM' : 'BEKLE';
-    
-    // Risk seviyesi
-    const risk = passedCount >= 5 ? 'DUSUK' : passedCount >= 4 ? 'ORTA' : 'YUKSEK';
-    
-    // Kuralların açıklamaları
-    const ruleDescriptions = {
-      supportTrend: 'Destek/Trend Yakınlığı',
-      rsiOversold: 'RSI Aşırı Satım',
-      ichimokuCloud: 'Ichimoku Bulutu Altı',
-      rsiDivergence: 'RSI Bullish Uyumsuzluğu',
-      volumeSpike: 'Hacim Artışı',
-      macdCrossover: 'MACD Alım Sinyali'
-    };
-    
-    const positiveRules = [];
-    const negativeRules = [];
-    for (const [ruleName, passed] of Object.entries(ruleResults)) {
+
+    // aktif kuralları puanla
+    let totalWeight = 0, earnedWeight = 0, passedCount = 0;
+    const details = [];
+    for (const key of regimeCfg.active) {
+      const passed = results[key];
+      const w = this.weights[key] || 1.0;
+      totalWeight += w;
       if (passed) {
-        positiveRules.push(ruleDescriptions[ruleName]);
+        earnedWeight += w;
+        passedCount++;
+        details.push('✅' + key);
       } else {
-        negativeRules.push(ruleDescriptions[ruleName]);
+        details.push('❌' + key);
       }
     }
-    
-    // Stop-loss ve hedef (ATR tabanlı)
-    const atr14 = this.calculateATR(highs, lows, closes, 14);
+
+    const score = totalWeight > 0 ? Math.round((earnedWeight / totalWeight) * 100) : 0;
+    const signal = passedCount >= regimeCfg.minPass ? 'ALIM' : 'BEKLE';
+    const risk   = passedCount >= regimeCfg.minPass + 1 ? 'DUSUK' : 'ORTA';
+
+    // stop / hedef (ATR tabanlı)
+    const atr14 = this.calcATR(highs, lows, closes, 14);
     const stopLoss = fiyat - atr14 * 1.5;
-    const target = fiyat + atr14 * 3;
-    
+    const target   = fiyat + atr14 * 3;
+
     return {
       symbol: ticker.symbol,
       fiyat: parseFloat(fiyat.toFixed(8)),
-      puan: Math.round(finalScore),
+      puan: score,
       risk,
       sinyal: signal,
       signal_type: signal,
-      ruleResults,
+      regime,
       passedCount,
-      totalRules: 6,
-      rsi: this.calculateRSI(closes, 14),
-      trend: fiyat > this.calculateEMA(closes, 21) ? 'YUKARI' : 'ASAGI',
-      pozitif: positiveRules,
-      negatif: negativeRules,
+      totalRules: regimeCfg.active.length,
+      ruleDetails: details.join(' '),
+      rsi: this.calcRSI(closes, 14),
+      trend: fiyat > this.calcEMA(closes, 21) ? 'YUKARI' : 'ASAGI',
+      pozitif: details.filter(d => d.startsWith('✅')),
+      negatif: details.filter(d => d.startsWith('❌')),
       atr14: parseFloat(atr14.toFixed(8)),
       atrOran: parseFloat((atr14 / fiyat * 100).toFixed(2)),
       stop_loss: parseFloat(stopLoss.toFixed(8)),
       hedef: parseFloat(target.toFixed(8)),
-      macdBullish: ruleResults.macdCrossover ? 1 : 0,
-      macdLine: 0,
-      signalLine: 0,
-      macdHist: 0,
-      bPct: 0,
+      macdBullish: results.macdCross ? 1 : 0,
+      macdLine: 0, signalLine: 0, macdHist: 0, bPct: 0,
       degisim24h: parseFloat(ticker.priceChangePercent || 0),
       hacim24h: parseFloat(ticker.quoteVolume || 0)
     };
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 1: Destek/Trend Çizgisi Yakınlığı
-  // Fiyat son 50 mumun en düşüğüne %2 yakın
-  // ═══════════════════════════════════════════
-  checkSupportTrend(closes, highs, lows) {
-    const son50Low = Math.min(...lows.slice(-50));
-    const fiyat = closes[closes.length - 1];
-    const distancePercent = ((fiyat - son50Low) / fiyat) * 100;
-    return distancePercent < 2.0; // %2'den az uzaklık
+
+  // ═══════════════════════════════════════════════════════════
+  // 12 KURAL FONKSİYONU
+  // ═══════════════════════════════════════════════════════════
+
+  check_supportNear(c) {
+    const low50 = Math.min(...c.slice(-50));
+    return ((c[c.length-1] - low50) / c[c.length-1]) * 100 < 2;
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 2: RSI Aşırı Satım (25-35 arası)
-  // ═══════════════════════════════════════════
-  checkRSIOversold(closes) {
-    const rsi = this.calculateRSI(closes, 14);
-    return rsi > 25 && rsi < 35;
+  check_rsiOversold(c) {
+    const r = this.calcRSI(c, 14);
+    return r > 25 && r < 35;
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 3: Ichimoku Bulutu Altında Olma
-  // Fiyat < Senkou Span B (basitleştirilmiş)
-  // ═══════════════════════════════════════════
-  checkIchimokuCloud(highs, lows, closes) {
-    // Basitleştirilmiş Ichimoku: Son 52 mumun en yüksek + en düşük / 2'si
-    const period = 52;
-    if (highs.length < period) return false;
-    
-    const highest52 = Math.max(...highs.slice(-period));
-    const lowest52 = Math.min(...lows.slice(-period));
-    const senkouSpanB = (highest52 + lowest52) / 2;
-    const fiyat = closes[closes.length - 1];
-    
-    return fiyat < senkouSpanB;
+  check_ichimokuBelow(c, h, l) {
+    const h52 = Math.max(...h.slice(-52));
+    const l52 = Math.min(...l.slice(-52));
+    const senkouB = (h52 + l52) / 2;
+    return c[c.length-1] < senkouB;
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 4: RSI Bullish Divergence
-  // Fiyat düşük dip, RSI yüksek dip
-  // ═══════════════════════════════════════════
-  checkRSIDivergence(closes) {
-    if (closes.length < 20) return false;
-    
-    // Son 10 ve önceki 10 mum
-    const recentHalf = closes.slice(-10);
-    const prevHalf = closes.slice(-20, -10);
-    
-    const recentLow = Math.min(...recentHalf);
-    const prevLow = Math.min(...prevHalf);
-    
-    // Fiyat daha düşük dip yapmış mı?
-    if (recentLow >= prevLow) return false;
-    
-    // RSI karşılaştırması
-    const recentRSI = this.calculateRSI(recentHalf, 14);
-    const prevRSI = this.calculateRSI(prevHalf, 14);
-    
-    // RSI daha yüksek dip yapmış mı? (Bullish Divergence)
-    return recentRSI > prevRSI;
+  check_rsiDivergence(c) {
+    if (c.length < 20) return false;
+    const recent = c.slice(-10), prev = c.slice(-20, -10);
+    const rLow = Math.min(...recent), pLow = Math.min(...prev);
+    if (rLow >= pLow) return false;
+    return this.calcRSI(recent, 14) > this.calcRSI(prev, 14);
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 5: Hacim Artışı
-  // Güncel hacim > 20 ortalamanın 1.5 katı
-  // ═══════════════════════════════════════════
-  checkVolumeSpike(volumes) {
-    if (volumes.length < 21) return false;
-    
-    const sonVol = volumes[volumes.length - 1];
-    const ortVol = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
-    
-    return sonVol > ortVol * 1.5;
+  check_volumeBuying(c, h, l, v, o) {
+    if (v.length < 21) return false;
+    const curV = v[v.length-1];
+    const avgV = v.slice(-21, -1).reduce((a,b) => a+b, 0) / 20;
+    const curC = c[c.length-1], curO = o[o.length-1];
+    return curV > avgV * 1.5 && curC > curO;   // yeşil mum
   }
-  
-  // ═══════════════════════════════════════════
-  // KURAL 6: MACD Alım Sinyali
-  // MACD çizgisi sinyal çizgisini yukarı kesti
-  // ═══════════════════════════════════════════
-  checkMACDCrossover(closes) {
-    if (closes.length < 35) return false;
-    
-    const ema12 = this.calculateEMA(closes, 12);
-    const ema26 = this.calculateEMA(closes, 26);
-    const macdLine = ema12 - ema26;
-    
-    // Sinyal çizgisi için son 9 MACD değeri
-    const macdValues = [];
-    for (let i = closes.length - 9; i < closes.length; i++) {
-      const slice12 = closes.slice(0, i + 1);
-      const slice26 = closes.slice(0, i + 1);
-      const ema12Val = this.calculateEMA(slice12, 12);
-      const ema26Val = this.calculateEMA(slice26, 26);
-      macdValues.push(ema12Val - ema26Val);
+  check_macdCross(c) {
+    if (c.length < 35) return false;
+    const ema12 = this.calcEMA(c, 12);
+    const ema26 = this.calcEMA(c, 26);
+    const macd = ema12 - ema26;
+    // sinyal çizgisi (son 9 MACD değeri)
+    const vals = [];
+    for (let i = c.length - 9; i < c.length; i++) {
+      const s12 = c.slice(0, i+1), s26 = c.slice(0, i+1);
+      vals.push(this.calcEMA(s12, 12) - this.calcEMA(s26, 26));
     }
-    const signalLine = macdValues.reduce((a, b) => a + b, 0) / 9;
-    
-    return macdLine > signalLine;
+    const signal = vals.reduce((a,b) => a + b, 0) / 9;
+    return macd > signal;
   }
-  
-  // ═══════════════════════════════════════════
-  // TEKNİK GÖSTERGE YARDIMCILARI
-  // ═══════════════════════════════════════════
-  
-  calculateRSI(closes, period = 14) {
-    if (closes.length < period + 1) return 50;
+  check_goldenCross(c) {
+    if (c.length < 51) return false;
+    const ema21 = this.calcEMA(c, 21);
+    const ema50 = this.calcEMA(c, 50);
+    const prev21 = this.calcEMA(c.slice(0, -1), 21);
+    const prev50 = this.calcEMA(c.slice(0, -1), 50);
+    return prev21 <= prev50 && ema21 > ema50;
+  }
+  check_adxTrendUp(c, h, l) {
+    const adx = this.calcADX(h, l, c, 14);
+    return adx.adx > 25 && adx.diPlus > adx.diMinus;
+  }
+  check_bollingerBounce(c) {
+    if (c.length < 20) return false;
+    const slice = c.slice(-20);
+    const mean = slice.reduce((a,b) => a + b, 0) / 20;
+    const std = Math.sqrt(slice.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / 20);
+    const lower = mean - 2 * std;
+    const price = c[c.length - 1];
+    return price <= lower * 1.005;
+  }
+  check_priceAboveEMA21(c) {
+    return c[c.length - 1] > this.calcEMA(c, 21);
+  }
+  check_cmfPositive(c, h, l, v) {
+    const period = 20;
+    if (c.length < period) return false;
+    let mfv = 0, volSum = 0;
+    for (let i = c.length - period; i < c.length; i++) {
+      const hi = h[i], lo = l[i], cl = c[i], vo = v[i];
+      if (hi === lo) continue;
+      mfv += ((cl - lo) - (hi - cl)) / (hi - lo) * vo;
+      volSum += vo;
+    }
+    return volSum > 0 && (mfv / volSum) > 0.1;
+  }
+  check_stochRsiOversold(c) {
+    const rsiVals = [];
+    for (let i = 14; i <= c.length; i++) {
+      rsiVals.push(this.calcRSI(c.slice(0, i), 14));
+    }
+    if (rsiVals.length < 14) return false;
+    const stochK = [];
+    for (let i = 13; i < rsiVals.length; i++) {
+      const win = rsiVals.slice(i - 13, i + 1);
+      const max = Math.max(...win), min = Math.min(...win);
+      stochK.push(max === min ? 50 : ((rsiVals[i] - min) / (max - min)) * 100);
+    }
+    const k = stochK[stochK.length - 1];
+    return k < 20;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // YARDIMCI TEKNİK GÖSTERGELER
+  // ═══════════════════════════════════════════════════════════
+
+  calcRSI(data, period = 14) {
+    if (data.length < period + 1) return 50;
     let gains = 0, losses = 0;
-    for (let i = closes.length - period; i < closes.length; i++) {
-      const diff = closes[i] - closes[i - 1];
-      if (diff > 0) gains += diff;
-      else losses -= diff;
+    for (let i = data.length - period; i < data.length; i++) {
+      const diff = data[i] - data[i - 1];
+      if (diff > 0) gains += diff; else losses -= diff;
     }
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
+    const avgGain = gains / period, avgLoss = losses / period;
     if (avgLoss === 0) return 100;
     return 100 - (100 / (1 + avgGain / avgLoss));
   }
-  
-  calculateEMA(closes, period) {
-    if (closes.length < period) return closes[closes.length - 1];
+
+  calcEMA(data, period) {
+    if (data.length < period) return data[data.length - 1];
     const k = 2 / (period + 1);
-    let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    for (let i = period; i < closes.length; i++) {
-      ema = closes[i] * k + ema * (1 - k);
-    }
+    let ema = data.slice(0, period).reduce((a,b) => a + b, 0) / period;
+    for (let i = period; i < data.length; i++) ema = data[i] * k + ema * (1 - k);
     return ema;
   }
-  
-  calculateATR(highs, lows, closes, period = 14) {
+
+  calcATR(highs, lows, closes, period = 14) {
     const tr = [];
     for (let i = 1; i < closes.length; i++) {
       tr.push(Math.max(
@@ -325,26 +298,11 @@ class HybridAnalysis {
         Math.abs(lows[i] - closes[i - 1])
       ));
     }
-    if (tr.length < period) return tr.reduce((a, b) => a + b, 0) / tr.length;
-    return tr.slice(-period).reduce((a, b) => a + b, 0) / period;
+    if (tr.length < period) return tr.reduce((a,b) => a + b, 0) / tr.length;
+    return tr.slice(-period).reduce((a,b) => a + b, 0) / period;
   }
-}
 
-// ═══════════════════════════════════════════
-// ProfessionalAnalysis Sınıfı (Geriye dönük uyumluluk için)
-// ═══════════════════════════════════════════
-class ProfessionalAnalysis extends HybridAnalysis {
-  constructor() {
-    super();
-  }
-  
-  // Eski metotları koru (backtest uyumluluğu için)
-  hesaplaRSI(data, period = 14) { return this.calculateRSI(data, period); }
-  hesaplaEMA(data, period) { return this.calculateEMA(data, period); }
-  hesaplaATR(highs, lows, closes, period) { return this.calculateATR(highs, lows, closes, period); }
-  
-  // ADX (basitleştirilmiş)
-  hesaplaADX(highs, lows, closes, period = 14) {
+  calcADX(highs, lows, closes, period = 14) {
     if (highs.length < period + 1) return { adx: 0, diPlus: 0, diMinus: 0 };
     const tr = [], dp = [], dm = [];
     for (let i = 1; i < highs.length; i++) {
@@ -353,12 +311,21 @@ class ProfessionalAnalysis extends HybridAnalysis {
       dp.push(h - ph > pl - l && h - ph > 0 ? h - ph : 0);
       dm.push(pl - l > h - ph && pl - l > 0 ? pl - l : 0);
     }
-    const atr = tr.slice(-period).reduce((a, b) => a + b, 0) / period;
-    const diP = (dp.slice(-period).reduce((a, b) => a + b, 0) / period) / atr * 100;
-    const diM = (dm.slice(-period).reduce((a, b) => a + b, 0) / period) / atr * 100;
+    const atr = tr.slice(-period).reduce((a,b) => a + b, 0) / period;
+    const diP = (dp.slice(-period).reduce((a,b) => a + b, 0) / period) / atr * 100;
+    const diM = (dm.slice(-period).reduce((a,b) => a + b, 0) / period) / atr * 100;
     const dx = Math.abs(diP - diM) / (diP + diM) * 100;
     return { adx: dx, diPlus: diP, diMinus: diM };
   }
+}
+
+// Geriye dönük uyumluluk (eski metot adları)
+class ProfessionalAnalysis extends AdaptiveHybridAnalysis {
+  constructor() { super(); }
+  hesaplaRSI(d,p) { return this.calcRSI(d,p); }
+  hesaplaEMA(d,p) { return this.calcEMA(d,p); }
+  hesaplaATR(h,l,c,p) { return this.calcATR(h,l,c,p); }
+  hesaplaADX(h,l,c,p) { return this.calcADX(h,l,c,p); }
 }
 
 module.exports = new ProfessionalAnalysis();
