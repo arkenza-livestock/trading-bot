@@ -172,18 +172,16 @@ class TradingEngine {
     const settings  = this.getSettings();
     this.scanCount++;
 
-    // 🔥 DENGELİ MOD: Ne çok sıkı ne çok gevşek
     const minHacim = parseFloat(settings.min_volume || 8000000);
     const maxCoin  = parseInt(settings.max_coins || 75);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
     const longEnabled = settings.long_enabled !== 'false';
     const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
-    const btcDown = this.btcTrend.trend === 'ASAGI' || this.btcTrend.trend === 'HAFIF_ASAGI';
 
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
     console.log(`[BTC] ${this.btcTrend.trend} | RSI:${(this.btcTrend.rsi||50).toFixed(1)}`);
-    console.log(`[ISLEM] LONG ✅ | SHORT ${shortEnabled&&btcDown?'✅':'❌'} | DENGELI MOD`);
+    console.log(`[ISLEM] LONG ✅ | SHORT ${shortEnabled && this.btcTrend.trend !== 'YUKARI' ? '✅' : '❌'} | DENGELI MOD`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -220,12 +218,19 @@ class TradingEngine {
 
         let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
-        // DENGELİ MOD: Güven 60, Puan 30
+        // LONG sinyali (BTC tam ASAGI değilse aç)
         if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.60 && longEnabled && finalScore >= 30) {
-          sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
-        } else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= 0.65 && btcDown && finalScore >= 30) {
+          if (this.btcTrend.trend === 'ASAGI') {
+            rejectReason = 'BTC_TAM_DUSUS_LONG_KORUMA';
+          } else {
+            sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
+          }
+        }
+        // SHORT sinyali (BTC YUKARI değilse aç)
+        else if (machineAnalysis.action === 'SELL' && shortEnabled && this.btcTrend.trend !== 'YUKARI' && finalScore >= 30) {
           sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
-        } else if (machineAnalysis.confidence < 0.55) {
+        }
+        else if (machineAnalysis.confidence < 0.55) {
           rejectReason = 'DUSUK_GUVEN';
         } else if (finalScore < 30) {
           rejectReason = 'DUSUK_PUAN';
@@ -233,8 +238,8 @@ class TradingEngine {
           rejectReason = 'LONG_KAPALI';
         } else if (machineAnalysis.action === 'SELL' && !shortEnabled) {
           rejectReason = 'SHORT_KAPALI';
-        } else if (machineAnalysis.action === 'SELL' && !btcDown) {
-          rejectReason = 'BTC_YUKARIDA_SHORT_YOK';
+        } else if (machineAnalysis.action === 'SELL' && this.btcTrend.trend === 'YUKARI') {
+          rejectReason = 'BTC_YUKARI_SHORT_KORUMA';
         } else {
           rejectReason = 'MAKINE_BEKLE_DEDI';
         }
@@ -254,6 +259,7 @@ class TradingEngine {
           const emoji = side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
           console.log(`[✅ ${emoji}] ${ticker.symbol.padEnd(10)} | Puan:${String(finalScore).padStart(3)} | RSI:${result.rsi.toFixed(1)} | AI:%${(machineAnalysis.confidence*100).toFixed(0)}`);
 
+          // Simülasyona gönder
           simulation.openPosition({
             symbol: ticker.symbol, side, signal_type: sinyalTipi,
             price: result.fiyat, fiyat: result.fiyat, score: finalScore, trend: result.trend,
@@ -262,6 +268,7 @@ class TradingEngine {
             machineConfidence: machineAnalysis.confidence, machineReasoning: machineAnalysis.reasoning
           }, settings, this.btcTrend, this.candlesData);
 
+          // Gerçek alım
           if (realTrading && !this.realPositions[ticker.symbol]) {
             const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
             if (side === 'LONG') {
@@ -327,7 +334,7 @@ class TradingEngine {
     const intervalMin = parseInt(this.getSettings().scan_interval || 20);
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
 
-    console.log(`[BOT] Her ${intervalMin}dk tarama | Esik:%60 | Puan:30 | SHORT sadece BTC düşüşte`);
+    console.log(`[BOT] Her ${intervalMin}dk tarama | Esik:%60 | Puan:30 | SHORT: BTC YUKARI değilse`);
   }
 
   stop() {
