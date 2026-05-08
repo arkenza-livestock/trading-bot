@@ -1,18 +1,18 @@
-const binance    = require('./binance');
-const analysis   = require('./analysis');
+const binance = require('./binance');
+const analysis = require('./analysis');
 const shortAnalysis = require('./shortAnalysis');
-const db         = require('./database');
+const db = require('./database');
 const simulation = require('./simulation');
 const TelegramService = require('./telegram');
 
 class TradingEngine {
   constructor() {
-    this.running   = false;
-    this.interval  = null;
+    this.running = false;
+    this.interval = null;
     this.priceInterval = null;
-    this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0, regime:'RANGING' };
+    this.btcTrend = { trend: 'BELIRSIZ', rsi: 50, lastUpdate: 0, regime: 'RANGING' };
     this.scanCount = 0;
-    this.prices    = {};
+    this.prices = {};
     this.candlesData = {};
     this.learningManager = null;
     this.performance = { scans: [], signalsGenerated: 0, signalsAccepted: 0, signalsRejected: 0, rejectionReasons: {} };
@@ -46,18 +46,18 @@ class TradingEngine {
         };
       }
       if (rows.length > 0) console.log(`[GERCEK] ✅ ${rows.length} pozisyon yuklendi`);
-    } catch(e) {}
+    } catch (e) { }
   }
 
   saveRealPositionToDB(symbol, pos) {
     try {
       db.prepare(`INSERT OR REPLACE INTO real_positions (symbol, side, quantity, entry_price, highest_price, lowest_price, stop_loss, entry_time, machine_confidence) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run(symbol, pos.side, pos.quantity, pos.entryPrice, pos.highestPrice, pos.lowestPrice, pos.stopLoss, pos.entryTime, pos.machineConfidence || 0);
-    } catch(e) {}
+    } catch (e) { }
   }
 
   deleteRealPositionFromDB(symbol) {
-    try { db.prepare('DELETE FROM real_positions WHERE symbol=?').run(symbol); } catch(e) {}
+    try { db.prepare('DELETE FROM real_positions WHERE symbol=?').run(symbol); } catch (e) { }
   }
 
   async fetchPricesForOpenPositions() {
@@ -72,7 +72,7 @@ class TradingEngine {
       for (const t of tickers) {
         if (symbolsToCheck.has(t.symbol)) this.prices[t.symbol] = parseFloat(t.lastPrice);
       }
-    } catch(e) {}
+    } catch (e) { }
   }
 
   async checkPositionsQuick() {
@@ -92,12 +92,12 @@ class TradingEngine {
       if (!candles || candles.length < 100) return;
       this.candlesData['BTCUSDT'] = candles;
       const closes = candles.map(c => parseFloat(c[4]));
-      const highs  = candles.map(c => parseFloat(c[2]));
-      const lows   = candles.map(c => parseFloat(c[3]));
+      const highs = candles.map(c => parseFloat(c[2]));
+      const lows = candles.map(c => parseFloat(c[3]));
       const volumes = candles.map(c => parseFloat(c[5]));
       const fiyat = closes[closes.length - 1];
 
-      const rsi   = analysis.calcRSI ? analysis.calcRSI(closes, 14) : 50;
+      const rsi = analysis.calcRSI ? analysis.calcRSI(closes, 14) : 50;
       const ema21 = analysis.calcEMA ? analysis.calcEMA(closes, 21) : fiyat;
       const ema50 = analysis.calcEMA ? analysis.calcEMA(closes, 50) : fiyat;
       const adx = analysis.calcADX ? analysis.calcADX(highs, lows, closes, 14) : { adx: 0, diPlus: 0, diMinus: 0 };
@@ -119,7 +119,7 @@ class TradingEngine {
       }
 
       const volumeSpike = volumes.length >= 20
-        ? volumes[volumes.length-1] > (volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20) * 3
+        ? volumes[volumes.length - 1] > (volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20) * 3
         : false;
       if (atr14 > this.getATRAverage(highs, lows, closes, 14) * 2 || volumeSpike) {
         regime = 'VOLATILE';
@@ -127,16 +127,16 @@ class TradingEngine {
 
       this.btcTrend = { trend, rsi, fiyat, strength: adx.adx, regime, lastUpdate: Date.now() };
       console.log(`[BTC] ${trend} | RSI:${rsi.toFixed(1)} | ADX:${adx.adx.toFixed(1)} | Rejim:${regime} | $${fiyat.toFixed(0)}`);
-    } catch(e) { console.error('[BTC] Trend hatasi:', e.message); }
+    } catch (e) { console.error('[BTC] Trend hatasi:', e.message); }
   }
 
   getATRAverage(highs, lows, closes, period) {
     const trValues = [];
     for (let i = 1; i < closes.length; i++) {
-      trValues.push(Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])));
+      trValues.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
     }
     if (trValues.length < period) return 0;
-    return trValues.slice(-period).reduce((a,b) => a+b, 0) / period;
+    return trValues.slice(-period).reduce((a, b) => a + b, 0) / period;
   }
 
   async updateRealPositions() {
@@ -180,11 +180,11 @@ class TradingEngine {
         const netPnl = (currentPrice - pos.entryPrice) * pos.quantity;
         const netPnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
         const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
-        telegram.sendMessage(`${emoji} — ${pos.symbol}\n💰 G:${pos.entryPrice.toFixed(6)} C:${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '+' : ''}${netPnlPct.toFixed(2)}% | ${reason}`).catch(() => {});
+        telegram.sendMessage(`${emoji} — ${pos.symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${pos.entryPrice.toFixed(6)}\n💰 Cikis: ${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${netPnl >= 0 ? '+' : ''}%${netPnlPct.toFixed(2)} (${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(4)} USDT)\n🛑 Neden: ${reason}\n🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`).catch(() => { });
       }
       this.deleteRealPositionFromDB(pos.symbol);
       delete this.realPositions[pos.symbol];
-    } catch(e) {}
+    } catch (e) { }
   }
 
   async executeRealBuyToClose(pos, currentPrice, reason, telegram) {
@@ -194,15 +194,15 @@ class TradingEngine {
         const netPnl = (pos.entryPrice - currentPrice) * pos.quantity;
         const netPnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
         const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
-        telegram.sendMessage(`${emoji} — ${pos.symbol}\n💰 G:${pos.entryPrice.toFixed(6)} C:${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '+' : ''}${netPnlPct.toFixed(2)}% | ${reason}`).catch(() => {});
+        telegram.sendMessage(`${emoji} — ${pos.symbol}\n━━━━━━━━━━━━━━━━━━\n💰 Giris: ${pos.entryPrice.toFixed(6)}\n💰 Cikis: ${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '📈 Kar' : '📉 Zarar'}: ${netPnl >= 0 ? '+' : ''}%${netPnlPct.toFixed(2)} (${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(4)} USDT)\n🛑 Neden: ${reason}\n🕐 ${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}`).catch(() => { });
       }
       this.deleteRealPositionFromDB(pos.symbol);
       delete this.realPositions[pos.symbol];
-    } catch(e) {}
+    } catch (e) { }
   }
 
   // ═══════════════════════════════════════════
-  // ANA TARAMA (DİNAMİK ZAMAN DİLİMİ)
+  // ANA TARAMA (DİNAMİK ZAMAN DİLİMİ + ADAPTİF)
   // ═══════════════════════════════════════════
   async scan() {
     const baslangic = Date.now();
@@ -220,13 +220,13 @@ class TradingEngine {
 
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
-    console.log(`[BTC] Rejim:${btcRegime} | RSI:${(this.btcTrend.rsi||50).toFixed(1)} | TF:${tf}`);
-    console.log(`[ISLEM] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled?'✅':'❌'} | ADAPTIF`);
+    console.log(`[BTC] Rejim:${btcRegime} | RSI:${(this.btcTrend.rsi || 50).toFixed(1)} | TF:${tf}`);
+    console.log(`[ISLEM] LONG ${longEnabled ? '✅' : '❌'} | SHORT ${shortEnabled ? '✅' : '❌'} | ADAPTIF`);
     console.log('='.repeat(50));
 
-    const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
+    const STABLES = new Set(['BUSDUSDT', 'USDCUSDT', 'TUSDUSDT', 'USDTUSDT', 'FDUSDUSDT', 'DAIUSDT', 'USDPUSDT', 'EURUSDT', 'AEURUSDT', 'USTCUSDT']);
     let tickers;
-    try { tickers = await binance.getAllTickers(); } catch(e) { return; }
+    try { tickers = await binance.getAllTickers(); } catch (e) { return; }
     for (const t of tickers) { this.prices[t.symbol] = parseFloat(t.lastPrice); }
 
     const tumFiltreli = [];
@@ -243,7 +243,6 @@ class TradingEngine {
 
     db.prepare("DELETE FROM signals").run();
 
-    // ── TÜM SİNYALLERİ TOPLA ──────────────────────
     const allSignals = [];
 
     for (const ticker of filtreli) {
@@ -271,11 +270,8 @@ class TradingEngine {
         }
 
         if (shortSignal && shortSignal.sinyal === 'SATIS') {
-  allSignals.push({
-    symbol: ticker.symbol,
-    side: 'SHORT',  // ← DOĞRU
-    signal_type: 'SATIS',
-    ...
+          allSignals.push({
+            symbol: ticker.symbol, side: 'SHORT', signal_type: 'SATIS',
             price: shortSignal.fiyat, fiyat: shortSignal.fiyat,
             score: shortSignal.puan, trend: shortSignal.trend, rsi: shortSignal.rsi,
             stop_loss: shortSignal.stop_loss, hedef: shortSignal.hedef || 0,
@@ -289,14 +285,25 @@ class TradingEngine {
         }
 
         await new Promise(r => setTimeout(r, 150));
-      } catch(e) {}
+      } catch (e) { }
     }
 
     // ── PUANA GÖRE SIRALA ──────────────────────────
     allSignals.sort((a, b) => b.score - a.score);
 
     // ── EN İYİLERİ SEÇ (maxPos kadar) ──────────────
-    const selectedSignals = allSignals.slice(0, maxPos);
+    const selectedSignals = [];
+    const usedSymbols = new Set();
+    
+    for (const sig of allSignals) {
+      if (selectedSignals.length >= maxPos) break;
+      // Aynı sembolden hem LONG hem SHORT varsa, puanı yüksek olanı seç
+      if (usedSymbols.has(sig.symbol)) continue;
+      
+      selectedSignals.push(sig);
+      usedSymbols.add(sig.symbol);
+    }
+    
     let longCount = 0, shortCount = 0;
 
     // ── TÜM SİNYALLERİ DB'YE KAYDET ────────────────
@@ -342,7 +349,7 @@ class TradingEngine {
       }
 
       if (telegram) {
-        telegram.sendMessage(`${emoji} — ${sig.symbol}\n💰 G:${sig.fiyat}\n📊 ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`).catch(() => {});
+        telegram.sendMessage(`${emoji} — ${sig.symbol}\n💰 G:${sig.fiyat}\n📊 ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`).catch(() => { });
       }
     }
 
