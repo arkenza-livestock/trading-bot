@@ -174,7 +174,8 @@ class TradingEngine {
     this.scanCount++;
 
     const minHacim = parseFloat(settings.min_volume || 5000000);
-    const maxCoin  = parseInt(settings.max_coins || 100);
+    // DAHA FAZLA COIN TARA
+    const maxCoin  = parseInt(settings.max_coins || 120);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
     const longEnabled = settings.long_enabled !== 'false';
     const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
@@ -182,7 +183,7 @@ class TradingEngine {
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
     console.log(`[BTC] ${this.btcTrend.trend} | RSI:${(this.btcTrend.rsi||50).toFixed(1)}`);
-    console.log(`[ISLEM] LONG ✅ | SHORT ${shortEnabled && this.btcTrend.trend !== 'YUKARI' ? '✅' : '❌'} | 1H VUR-KAC`);
+    console.log(`[ISLEM] LONG ✅ | SHORT ${shortEnabled && this.btcTrend.trend !== 'YUKARI' ? '✅' : '❌'} | 1H VUR-KAC SINYAL ODAKLI`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -220,20 +221,20 @@ class TradingEngine {
 
         let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
 
-        // VUR-KAÇ SIKI KRİTERLER: Güven 70, Puan 40
-        if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.70 && longEnabled && finalScore >= 40) {
+        // VUR-KAÇ SİNYAL ODAKLI: Güven 60, Puan 25
+        if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.60 && longEnabled && finalScore >= 25) {
           if (this.btcTrend.trend === 'ASAGI') {
             rejectReason = 'BTC_TAM_DUSUS_LONG_KORUMA';
           } else {
             sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
           }
         }
-        else if (machineAnalysis.action === 'SELL' && shortEnabled && this.btcTrend.trend !== 'YUKARI' && finalScore >= 40) {
+        else if (machineAnalysis.action === 'SELL' && shortEnabled && this.btcTrend.trend !== 'YUKARI' && finalScore >= 25) {
           sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
         }
-        else if (machineAnalysis.confidence < 0.65) {
+        else if (machineAnalysis.confidence < 0.55) {
           rejectReason = 'DUSUK_GUVEN';
-        } else if (finalScore < 40) {
+        } else if (finalScore < 25) {
           rejectReason = 'DUSUK_PUAN';
         } else if (machineAnalysis.action === 'BUY' && !longEnabled) {
           rejectReason = 'LONG_KAPALI';
@@ -248,7 +249,7 @@ class TradingEngine {
         if (machineOnay) { machineAccepted++; if (side === 'LONG') longCount++; else shortCount++; }
         else if (rejectReason) { machineRejected++; rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1; }
 
-        const risk = machineOnay ? (machineAnalysis.confidence >= 0.85 ? 'DUSUK' : 'ORTA') : 'YUKSEK';
+        const risk = machineOnay ? (machineAnalysis.confidence >= 0.75 ? 'DUSUK' : 'ORTA') : 'YUKSEK';
 
         db.prepare('INSERT INTO signals (symbol,signal_type,score,risk,price,fiyat,rsi,macd,trend,positive_signals,negative_signals,ai_comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(ticker.symbol, sinyalTipi, finalScore, risk, result.fiyat, result.fiyat, result.rsi, result.macdBullish ? 1 : 0, result.trend,
@@ -321,7 +322,7 @@ class TradingEngine {
     if (this.running) return;
     this.running = true;
     console.log('╔══════════════════════════════════════╗');
-    console.log('║   TRADING BOT v21 - 1H VUR-KAC      ║');
+    console.log('║ TRADING BOT v21 - 1H VUR-KAC SİNYAL ║');
     console.log('╚══════════════════════════════════════╝');
     await this.updateBTCTrend();
     this.loadRealPositionsFromDB();
@@ -333,7 +334,7 @@ class TradingEngine {
     const intervalMin = parseInt(this.getSettings().scan_interval || 20);
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
 
-    console.log(`[BOT] Her ${intervalMin}dk tarama | 1H Vur-Kac | Esik:%70 | Puan:40`);
+    console.log(`[BOT] Her ${intervalMin}dk tarama | 1H Vur-Kac | Guven:%60 | Puan:25`);
   }
 
   stop() {
