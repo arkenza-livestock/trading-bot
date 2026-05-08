@@ -30,6 +30,8 @@ function Settings() {
   };
 
   var realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+  var longEnabled = settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined;
+  var shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
   var githubSync = settings.github_sync_enabled === 'true' || settings.github_sync_enabled === '1';
 
   var Row = function(props) {
@@ -44,7 +46,7 @@ function Settings() {
   return (
     <div style={{maxWidth:500,padding:'32px 20px',margin:'0 auto'}}>
       <h1 style={{fontSize:22,fontWeight:700,marginBottom:4,color:'#f1f5f9'}}>Ayarlar</h1>
-      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>6 Kural Stratejisi | Sadece LONG</p>
+      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>Adaptif Cift Motor | LONG & SHORT</p>
       {message && <div style={{marginBottom:20,padding:14,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)',borderRadius:10,color:'#22c55e',fontSize:13}}>{message}</div>}
 
       {/* GERCEK ALIM */}
@@ -53,6 +55,27 @@ function Settings() {
           <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>GERCEK ALIM</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{realTrading?'ACIK - Sinyaller gercek isleme donusur':'KAPALI - Sadece sinyal uretilir'}</p></div>
           <label className="toggle-switch"><input type="checkbox" checked={realTrading} onChange={function(e){handleChange('real_trading',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
         </div>
+      </div>
+
+      {/* LONG AYARLARI */}
+      <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:longEnabled?'4px solid #22c55e':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🟢 LONG Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{longEnabled?'ACIK - Adaptif 12 kural ile LONG sinyaller':'KAPALI - LONG sinyaller pas gecilir'}</p></div>
+          <label className="toggle-switch"><input type="checkbox" checked={longEnabled} onChange={function(e){handleChange('long_enabled',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      {/* SHORT AYARLARI */}
+      <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:shortEnabled?'4px solid #ef4444':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🔴 SHORT Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{shortEnabled?'ACIK - Adaptif 8 kural ile SHORT sinyaller':'KAPALI - SHORT sinyaller pas gecilir'}</p></div>
+          <label className="toggle-switch"><input type="checkbox" checked={shortEnabled} onChange={function(e){handleChange('short_enabled',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
+        </div>
+        {shortEnabled && (
+          <div style={{marginTop:10,padding:10,background:'rgba(239,68,68,0.08)',borderRadius:8,fontSize:11,color:'#fca5a5'}}>
+            🔴 SHORT sinyalleri bagimsiz motor ile uretilir. Piyasa rejimine gore kural seti otomatik degisir.
+          </div>
+        )}
       </div>
 
       {/* GITHUB SYNC */}
