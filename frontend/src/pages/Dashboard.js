@@ -58,8 +58,8 @@ function Dashboard() {
 
   if (loading) return <div className="loading">Yukleniyor...</div>;
 
-  var aiAcceptedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('✅') !== -1; });
-  var aiRejectedSignals = signals.filter(function(s) { return (s.ai_comment || '').indexOf('❌') !== -1; });
+  var aiAcceptedSignals = signals.filter(function(s) { return s.signal_type === 'ALIM'; });
+  var aiRejectedSignals = signals.filter(function(s) { return s.signal_type !== 'ALIM'; });
   var realTradingEnabled = settings.real_trading === 'true' || settings.real_trading === '1';
   var realPositions = positions.filter(function(p) { return p.is_real === 1; });
   var openPositions = realPositions.filter(function(p) { return p.status === 'OPEN'; });
@@ -82,7 +82,7 @@ function Dashboard() {
         </div>
       </div>
       <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
-        Canli durum ve performans ozeti | 🟢 LONG & 🔴 SHORT
+        📊 6 Kural Stratejisi | Sadece LONG
         {realStats?.botRunning && <span style={{color:'#22c55e', marginLeft:10}}>🟢 Calisiyor</span>}
         {!realStats?.botRunning && <span style={{color:'#ef4444', marginLeft:10}}>🔴 Durdu</span>}
       </p>
@@ -134,15 +134,13 @@ function Dashboard() {
       {realTradingEnabled && openPositions.length > 0 && (
         <div className="table-container">
           <table>
-            <thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
+            <thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
             <tbody>
               {openPositions.map(function(pos, i) {
-                var side = pos.side || 'LONG'; var isLong = side === 'LONG';
                 var pnlColor = (pos.pnl_percent||0) >= 0 ? '#22c55e' : '#ef4444';
                 return (
                   <tr key={i} className={(pos.pnl_percent||0)>=0?'row-profit':'row-loss'}>
-                    <td><strong>{pos.symbol}</strong> <span className="badge" style={{fontSize:9, background: isLong?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)', color: isLong?'#22c55e':'#ef4444'}}>GERCEK</span></td>
-                    <td><span className={'badge ' + (isLong?'badge-buy':'badge-sell')}>{side}</span></td>
+                    <td><strong>{pos.symbol}</strong></td>
                     <td>{pos.entry_price?pos.entry_price.toFixed(6):'-'}</td>
                     <td>{pos.current_price?pos.current_price.toFixed(6):'-'}</td>
                     <td style={{color:pnlColor,fontWeight:600}}>%{(pos.pnl_percent||0).toFixed(2)}</td>
@@ -159,26 +157,37 @@ function Dashboard() {
       )}
       {realTradingEnabled && openPositions.length === 0 && (
         <div className="table-container">
-          <table><thead><tr><th>Sembol</th><th>Yön</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
-          <tbody><tr><td colSpan="9" style={{textAlign:'center',color:'#64748b',padding:30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr></tbody></table>
+          <table><thead><tr><th>Sembol</th><th>Giris</th><th>Anlik</th><th>PnL%</th><th>Stop</th><th>AI</th><th>Acilis</th><th>Islem</th></tr></thead>
+          <tbody><tr><td colSpan="8" style={{textAlign:'center',color:'#64748b',padding:30}}>Gercek alim aktif - Henuz acik pozisyon yok</td></tr></tbody></table>
         </div>
       )}
 
-      <h2>Makine Zekasi</h2>
+      <h2>6 Kural Performansi</h2>
       <div className="card-grid">
-        <div className="card ai-card"><div className="card-label">✅ Kabul Edilen</div><div className="card-value green">{aiAcceptedSignals.length}</div></div>
+        <div className="card ai-card"><div className="card-label">✅ ALIM Sinyali</div><div className="card-value green">{aiAcceptedSignals.length}</div></div>
         <div className="card ai-card"><div className="card-label">❌ Reddedilen</div><div className="card-value red">{aiRejectedSignals.length}</div></div>
-        <div className="card ai-card"><div className="card-label">📋 Kabul Orani</div><div className="card-value gold">%{signals.length>0?(aiAcceptedSignals.length/Math.max(1,aiAcceptedSignals.length+aiRejectedSignals.length)*100).toFixed(0):0}</div></div>
+        <div className="card ai-card"><div className="card-label">📋 Sinyal Orani</div><div className="card-value gold">%{signals.length>0?(aiAcceptedSignals.length/signals.length*100).toFixed(0):0}</div></div>
         <div className="card ai-card"><div className="card-label">🔢 Son Tarama</div><div className="card-value purple">{signals.length} sinyal</div></div>
       </div>
 
-      <h2>Makinenin Kabul Ettigi Sinyaller ({aiAcceptedSignals.length})</h2>
+      <h2>ALIM Sinyalleri ({aiAcceptedSignals.length})</h2>
       <div className="table-container">
         <table>
-          <thead><tr><th>Sembol</th><th>Fiyat</th><th>Puan</th><th>RSI</th><th>Trend</th><th>AI Yorum</th></tr></thead>
+          <thead><tr><th>Sembol</th><th>Fiyat</th><th>Puan</th><th>RSI</th><th>Trend</th><th>6 Kural Durumu</th></tr></thead>
           <tbody>
-            {aiAcceptedSignals.slice(0,15).map(function(s,i){return (<tr key={i} className="row-buy"><td><strong>{s.symbol}</strong></td><td>{s.fiyat?s.fiyat.toFixed(6):'-'}</td><td>{s.score||'-'}</td><td>{s.rsi?s.rsi.toFixed(1):'-'}</td><td><span className="badge badge-buy">{s.trend||'-'}</span></td><td style={{fontSize:12,color:'#22c55e',maxWidth:200}}>{s.ai_comment||'-'}</td></tr>);})}
-            {aiAcceptedSignals.length===0&&<tr><td colSpan="6" style={{textAlign:'center',color:'#64748b',padding:30}}>Kabul edilen sinyal yok</td></tr>}
+            {aiAcceptedSignals.slice(0,15).map(function(s,i){
+              return (
+                <tr key={i} className="row-buy">
+                  <td><strong>{s.symbol}</strong></td>
+                  <td>{s.fiyat?s.fiyat.toFixed(6):'-'}</td>
+                  <td>{s.score||'-'}</td>
+                  <td>{s.rsi?s.rsi.toFixed(1):'-'}</td>
+                  <td><span className="badge badge-buy">{s.trend||'-'}</span></td>
+                  <td style={{fontSize:12,color:'#22c55e',maxWidth:300}}>{s.ai_comment||'-'}</td>
+                </tr>
+              );
+            })}
+            {aiAcceptedSignals.length===0&&<tr><td colSpan="6" style={{textAlign:'center',color:'#64748b',padding:30}}>ALIM sinyali yok</td></tr>}
           </tbody>
         </table>
       </div>
