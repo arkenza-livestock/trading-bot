@@ -26,38 +26,43 @@ class SimulationEngine {
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
-      // GARANTİLİ SİDE TESPİTİ
+      // YENİ DEBUG LOGU
+      console.log('[SIM ALINAN] side:', signal.side, 'signal_type:', signal.signal_type, 'sinyal:', signal.sinyal);
+
+      // KESİN ÇÖZÜM: Gelen sinyalin TÜM side bilgilerini kontrol et ve zorla ata
       var side = 'LONG';
-      if (signal.side === 'SHORT' || signal.signal_type === 'SATIS' || signal.sinyal === 'SATIS') {
+      
+      // Tüm olası side/signal_type varyasyonlarını kontrol et
+      if (signal.side === 'SHORT' || 
+          signal.side === 'SATIS' || 
+          signal.signal_type === 'SATIS' || 
+          signal.signal_type === 'SELL' ||
+          signal.sinyal === 'SATIS' ||
+          signal.sinyal === 'SELL') {
         side = 'SHORT';
       }
-      console.log('[SIM DEBUG] Gelen side:', signal.side, 'signal_type:', signal.signal_type, '→ KARAR:', side, 'Sembol:', signal.symbol);
+      
+      // DEBUG: Karar
+      console.log('[SIM KARAR] SONUC SIDE:', side, 'Sembol:', signal.symbol);
 
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
       var stopLoss = side === 'SHORT' 
         ? (signal.stop_loss || signal.stopLoss || price * 1.02)
         : (signal.stop_loss || signal.stopLoss || price * 0.98);
-      var guc = (signal.machineConfidence || 0) >= 0.80 ? 'AI_GUCLU' 
-                : (signal.machineConfidence || 0) >= 0.65 ? 'AI_NORMAL' : 'AI_ZAYIF';
 
       var result = db.prepare(
         'INSERT INTO sim_positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,highest_price,lowest_price,signal_guc,trend4H,trend1D,score,machine_confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
-      ).run(signal.symbol, side, quantity, price, price, stopLoss, 0, price, price, guc, signal.trend || '-', signal.trend || '-', signal.score || signal.puan || 0, signal.machineConfidence || 0);
+      ).run(signal.symbol, side, quantity, price, price, stopLoss, 0, price, price, 'DEBUG', signal.trend || '-', signal.trend || '-', 99, 99);
 
       db.prepare('UPDATE sim_wallet SET balance=balance-?, updated_at=CURRENT_TIMESTAMP').run(baseAmt);
 
       this.trailingStops[signal.symbol] = { 
         highestPrice: price, lowestPrice: price, side: side, 
-        entryTime: Date.now(), machineConfidence: signal.machineConfidence || 0 
+        entryTime: Date.now(), machineConfidence: 99 
       };
-      this.performance.signals.push({ 
-        symbol: signal.symbol, side: side, entryPrice: price, 
-        stopLoss: stopLoss, machineConfidence: signal.machineConfidence || 0, 
-        timestamp: Date.now() 
-      });
 
-      console.log(`[SIM] ACILDI: ${signal.symbol} (${side}) @ ${price} | ${baseAmt} USDT`);
+      console.log(`[SIM] ✅ AÇILDI: ${signal.symbol} → ${side} @ ${price}`);
       return result.lastInsertRowid;
     } catch(e) { console.error('[SIM] Acma hatasi:', e.message); return null; }
   }
