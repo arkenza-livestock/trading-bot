@@ -1,230 +1,422 @@
+const binance = require('./binance');
+const analysis = require('./analysis');
+const shortAnalysis = require('./shortAnalysis');
 const db = require('./database');
+const simulation = require('./simulation');
+const TelegramService = require('./telegram');
 
-class SimulationEngine {
-
+class TradingEngine {
   constructor() {
-    this.trailingStops = {};
-    this.performance = { signals: [], feedbackLoop: [], adaptiveThreshold: 0.70, consecutiveLosses: 0, dailyPnL: [] };
+    this.running = false;
+    this.interval = null;
+    this.priceInterval = null;
+    this.btcTrend = { trend: 'BELIRSIZ', rsi: 50, lastUpdate: 0, regime: 'RANGING' };
+    this.scanCount = 0;
+    this.prices = {};
+    this.candlesData = {};
+    this.learningManager = null;
+    this.performance = { scans: [], signalsGenerated: 0, signalsAccepted: 0, signalsRejected: 0, rejectionReasons: {} };
+    this.realPositions = {};
   }
 
-  getWallet() {
-    return db.prepare('SELECT * FROM sim_wallet ORDER BY id DESC LIMIT 1').get();
+  getSettings() {
+    const rows = db.prepare('SELECT key, value FROM settings').all();
+    const settings = {};
+    rows.forEach(r => { settings[r.key] = r.value; });
+    return settings;
   }
 
-  getOpenPositions() {
-    return db.prepare("SELECT * FROM sim_positions WHERE status='OPEN'").all();
+  getTelegram() {
+    const s = this.getSettings();
+    if (!s.telegram_token || !s.telegram_chat_id) return null;
+    return new TelegramService(s.telegram_token, s.telegram_chat_id);
   }
 
-  openPosition(signal, settings, btcTrend, candlesData) {
+  loadRealPositionsFromDB() {
     try {
-      var wallet = this.getWallet();
-      var openPos = this.getOpenPositions();
-      var maxPos = parseInt(settings.max_open_positions || 3);
-      var baseAmt = parseFloat(settings.trade_amount_usdt || 100);
-      
-      if (openPos.length >= maxPos) { console.log('[SIM] Max pozisyon doldu'); return null; }
-      if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
-      if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
-
-      // YENİ DEBUG LOGU
-      console.log('[SIM ALINAN] side:', signal.side, 'signal_type:', signal.signal_type, 'sinyal:', signal.sinyal);
-
-      // KESİN ÇÖZÜM: Gelen sinyalin TÜM side bilgilerini kontrol et ve zorla ata
-      var side = 'LONG';
-      
-      // Tüm olası side/signal_type varyasyonlarını kontrol et
-      if (signal.side === 'SHORT' || 
-          signal.side === 'SATIS' || 
-          signal.signal_type === 'SATIS' || 
-          signal.signal_type === 'SELL' ||
-          signal.sinyal === 'SATIS' ||
-          signal.sinyal === 'SELL') {
-        side = 'SHORT';
-      }
-      
-      // DEBUG: Karar
-      console.log('[SIM KARAR] SONUC SIDE:', side, 'Sembol:', signal.symbol);
-
-      var price = signal.price || signal.fiyat;
-      var quantity = baseAmt / price;
-      var stopLoss = side === 'SHORT' 
-        ? (signal.stop_loss || signal.stopLoss || price * 1.02)
-        : (signal.stop_loss || signal.stopLoss || price * 0.98);
-
-      var result = db.prepare(
-        'INSERT INTO sim_positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,highest_price,lowest_price,signal_guc,trend4H,trend1D,score,machine_confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
-      ).run(signal.symbol, side, quantity, price, price, stopLoss, 0, price, price, 'DEBUG', signal.trend || '-', signal.trend || '-', 99, 99);
-
-      db.prepare('UPDATE sim_wallet SET balance=balance-?, updated_at=CURRENT_TIMESTAMP').run(baseAmt);
-
-      this.trailingStops[signal.symbol] = { 
-        highestPrice: price, lowestPrice: price, side: side, 
-        entryTime: Date.now(), machineConfidence: 99 
-      };
-
-      console.log(`[SIM] ✅ AÇILDI: ${signal.symbol} → ${side} @ ${price}`);
-      return result.lastInsertRowid;
-    } catch(e) { console.error('[SIM] Acma hatasi:', e.message); return null; }
-  }
-
-  closePosition(pos, exitPrice, reason) {
-    try {
-      var totalCost = 0.003, side = pos.side || 'LONG';
-      var brutoPnlPct = side === 'SHORT' 
-        ? ((pos.entry_price - exitPrice) / pos.entry_price) * 100 
-        : ((exitPrice - pos.entry_price) / pos.entry_price) * 100;
-      var netPnlPct = brutoPnlPct - (totalCost * 100);
-      var netPnl = (side === 'SHORT' 
-        ? (pos.entry_price - exitPrice) 
-        : (exitPrice - pos.entry_price)) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
-      var exitAmount = side === 'SHORT' 
-        ? (pos.entry_price * pos.quantity + netPnl) 
-        : (exitPrice * pos.quantity);
-
-      db.prepare('UPDATE sim_positions SET status=?,exit_price=?,current_price=?,pnl=?,pnl_percent=?,close_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?')
-        .run(reason, exitPrice, exitPrice, netPnl, netPnlPct, reason, pos.id);
-      db.prepare('UPDATE sim_wallet SET balance=balance+?,total_pnl=total_pnl+?,total_trades=total_trades+?,winning_trades=winning_trades+?,updated_at=CURRENT_TIMESTAMP')
-        .run(exitAmount, netPnl, 1, netPnl > 0 ? 1 : 0);
-
-      var signalRecord = this.performance.signals.find(function(s) { 
-        return s.symbol === pos.symbol && Math.abs(s.entryPrice - pos.entry_price) < pos.entry_price * 0.01; 
-      });
-      if (signalRecord) {
-        var maxFavorable = side === 'SHORT'
-          ? (pos.lowest_price ? ((pos.entry_price - pos.lowest_price) / pos.entry_price) * 100 : brutoPnlPct)
-          : (pos.highest_price ? ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
-        var maxAdverse = side === 'SHORT'
-          ? (pos.highest_price ? ((pos.entry_price - pos.highest_price) / pos.entry_price) * 100 : brutoPnlPct)
-          : (pos.lowest_price ? ((pos.lowest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
-        this.performance.feedbackLoop.push({ 
-          symbol: pos.symbol, return: netPnlPct, maxFavorable: maxFavorable, 
-          maxAdverse: maxAdverse, reason: reason, timestamp: Date.now() 
-        });
-        this.performance.consecutiveLosses = netPnlPct <= 0 ? this.performance.consecutiveLosses + 1 : 0;
-        this.updateAdaptiveThreshold();
-      }
-      delete this.trailingStops[pos.symbol];
-      console.log(`[SIM] ${netPnl >= 0 ? 'KAR' : 'ZARAR'} ${reason}: ${pos.symbol} (${side}) | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT | PesPese:${this.performance.consecutiveLosses}`);
-      return { netPnl, netPnlPct };
-    } catch(e) { console.error('[SIM] Kapatma hatasi:', e.message); return null; }
-  }
-
-  updatePositions(prices, settings, candlesData) {
-    var trailingPct = parseFloat(settings.trailing_stop_percent || 0.5) / 100;
-    var minProfitPct = parseFloat(settings.min_profit_percent || 1.5) / 100;
-    var hardStopPct = parseFloat(settings.stop_loss_percent || 2.0) / 100;
-    var totalCost = 0.003;
-    var openPos = this.getOpenPositions();
-
-    for (var i = 0; i < openPos.length; i++) {
-      var pos = openPos[i];
-      var currentPrice = prices[pos.symbol];
-      if (!currentPrice) continue;
-      var side = pos.side || 'LONG';
-
-      var brutoPnlPct = side === 'SHORT' 
-        ? ((pos.entry_price - currentPrice) / pos.entry_price) * 100 
-        : ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
-      var netPnlPct = brutoPnlPct - (totalCost * 100);
-      var netPnl = (side === 'SHORT' 
-        ? (pos.entry_price - currentPrice) 
-        : (currentPrice - pos.entry_price)) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
-
-      if (!this.trailingStops[pos.symbol]) {
-        this.trailingStops[pos.symbol] = { 
-          highestPrice: pos.highest_price || pos.entry_price, 
-          lowestPrice: pos.lowest_price || pos.entry_price, 
-          side: side, entryTime: Date.now() 
+      const rows = db.prepare('SELECT * FROM real_positions').all();
+      for (const row of rows) {
+        this.realPositions[row.symbol] = {
+          symbol: row.symbol, side: row.side || 'LONG',
+          entryPrice: row.entry_price, quantity: row.quantity,
+          highestPrice: row.highest_price || row.entry_price,
+          lowestPrice: row.lowest_price || row.entry_price,
+          stopLoss: row.stop_loss, entryTime: row.entry_time,
+          machineConfidence: row.machine_confidence || 0
         };
       }
+      if (rows.length > 0) console.log(`[GERCEK] ✅ ${rows.length} pozisyon yuklendi`);
+    } catch (e) { }
+  }
 
-      var trailing = this.trailingStops[pos.symbol];
-      var newHighest = pos.highest_price || pos.entry_price;
-      var newLowest = pos.lowest_price || pos.entry_price;
-      var stopPrice = pos.stop_loss;
-      var closeReason = null;
+  saveRealPositionToDB(symbol, pos) {
+    try {
+      db.prepare(`INSERT OR REPLACE INTO real_positions (symbol, side, quantity, entry_price, highest_price, lowest_price, stop_loss, entry_time, machine_confidence) VALUES (?,?,?,?,?,?,?,?,?)`)
+        .run(symbol, pos.side, pos.quantity, pos.entryPrice, pos.highestPrice, pos.lowestPrice, pos.stopLoss, pos.entryTime, pos.machineConfidence || 0);
+    } catch (e) { }
+  }
 
-      if (side === 'SHORT') {
-        if (currentPrice < trailing.lowestPrice) { trailing.lowestPrice = currentPrice; newLowest = currentPrice; }
-        if (currentPrice > trailing.highestPrice) { newHighest = currentPrice; }
-        var hardStop = pos.entry_price * (1 + hardStopPct);
-        var trailingStop = trailing.lowestPrice * (1 + trailingPct);
-        stopPrice = Math.min(trailingStop, hardStop);
-        if (currentPrice >= hardStop) closeReason = 'STOP_LOSS';
-        else if (brutoPnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) closeReason = 'TRAILING_STOP';
-      } else {
-        if (currentPrice > trailing.highestPrice) { trailing.highestPrice = currentPrice; newHighest = currentPrice; }
-        if (currentPrice < trailing.lowestPrice) { newLowest = currentPrice; }
-        var hardStop = pos.entry_price * (1 - hardStopPct);
-        var trailingStop = trailing.highestPrice * (1 - trailingPct);
-        stopPrice = Math.max(trailingStop, hardStop);
-        if (currentPrice <= hardStop) closeReason = 'STOP_LOSS';
-        else if (brutoPnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) closeReason = 'TRAILING_STOP';
+  deleteRealPositionFromDB(symbol) {
+    try { db.prepare('DELETE FROM real_positions WHERE symbol=?').run(symbol); } catch (e) { }
+  }
+
+  async fetchPricesForOpenPositions() {
+    const symbolsToCheck = new Set();
+    const simOpen = db.prepare("SELECT DISTINCT symbol FROM sim_positions WHERE status='OPEN'").all();
+    simOpen.forEach(p => symbolsToCheck.add(p.symbol));
+    Object.keys(this.realPositions).forEach(s => symbolsToCheck.add(s));
+    if (symbolsToCheck.size === 0) return;
+    try {
+      const tickers = await binance.getAllTickers();
+      if (!tickers) return;
+      for (const t of tickers) {
+        if (symbolsToCheck.has(t.symbol)) this.prices[t.symbol] = parseFloat(t.lastPrice);
+      }
+    } catch (e) { }
+  }
+
+  async checkPositionsQuick() {
+    await this.fetchPricesForOpenPositions();
+    simulation.updatePositions(this.prices, this.getSettings(), this.candlesData);
+    if (Object.keys(this.realPositions).length > 0) await this.updateRealPositions();
+  }
+
+  async updateBTCTrend() {
+    try {
+      const settings = this.getSettings();
+      const tf = settings.analysis_timeframe || '4h';
+      const candles = await binance.getKlines('BTCUSDT', tf, 200);
+      if (!candles || candles.length < 100) return;
+      this.candlesData['BTCUSDT'] = candles;
+      const closes = candles.map(c => parseFloat(c[4]));
+      const highs = candles.map(c => parseFloat(c[2]));
+      const lows = candles.map(c => parseFloat(c[3]));
+      const volumes = candles.map(c => parseFloat(c[5]));
+      const fiyat = closes[closes.length - 1];
+
+      const rsi = analysis.calcRSI ? analysis.calcRSI(closes, 14) : 50;
+      const ema21 = analysis.calcEMA ? analysis.calcEMA(closes, 21) : fiyat;
+      const ema50 = analysis.calcEMA ? analysis.calcEMA(closes, 50) : fiyat;
+      const adx = analysis.calcADX ? analysis.calcADX(highs, lows, closes, 14) : { adx: 0, diPlus: 0, diMinus: 0 };
+      const atr14 = analysis.calcATR ? analysis.calcATR(highs, lows, closes, 14) : 0;
+
+      let trend = 'NOTR';
+      if (fiyat > ema21 && ema21 > ema50) trend = 'YUKARI';
+      else if (fiyat > ema21) trend = 'HAFIF_YUKARI';
+      else if (fiyat < ema21 && ema21 < ema50) trend = 'ASAGI';
+      else if (fiyat < ema21) trend = 'HAFIF_ASAGI';
+
+      let regime = 'RANGING';
+      if (trend === 'YUKARI' && adx.adx > 25 && adx.diPlus > adx.diMinus && fiyat > ema50) {
+        regime = 'RALLY';
+      } else if ((trend === 'ASAGI' || trend === 'HAFIF_ASAGI') && adx.adx > 25 && adx.diMinus > adx.diPlus && fiyat < ema50) {
+        regime = 'DOWNTREND';
+      } else if (adx.adx < 20) {
+        regime = 'RANGING';
       }
 
-      if (closeReason) this.closePosition(pos, currentPrice, closeReason);
-      else db.prepare('UPDATE sim_positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=?,highest_price=?,lowest_price=? WHERE id=?')
-        .run(currentPrice, netPnl, netPnlPct, stopPrice, newHighest, newLowest, pos.id);
+      const volumeSpike = volumes.length >= 20
+        ? volumes[volumes.length - 1] > (volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20) * 3
+        : false;
+      if (atr14 > this.getATRAverage(highs, lows, closes, 14) * 2 || volumeSpike) {
+        regime = 'VOLATILE';
+      }
+
+      this.btcTrend = { trend, rsi, fiyat, strength: adx.adx, regime, lastUpdate: Date.now() };
+      console.log(`[BTC] ${trend} | RSI:${rsi.toFixed(1)} | ADX:${adx.adx.toFixed(1)} | Rejim:${regime} | $${fiyat.toFixed(0)}`);
+    } catch (e) { console.error('[BTC] Trend hatasi:', e.message); }
+  }
+
+  getATRAverage(highs, lows, closes, period) {
+    const trValues = [];
+    for (let i = 1; i < closes.length; i++) {
+      trValues.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+    }
+    if (trValues.length < period) return 0;
+    return trValues.slice(-period).reduce((a, b) => a + b, 0) / period;
+  }
+
+  async updateRealPositions() {
+    const settings = this.getSettings();
+    const trailingPct = parseFloat(settings.trailing_stop_percent || 0.5) / 100;
+    const minProfitPct = parseFloat(settings.min_profit_percent || 1.5) / 100;
+    const hardStopPct = parseFloat(settings.stop_loss_percent || 2.0) / 100;
+    const telegram = this.getTelegram();
+
+    for (const symbol of Object.keys(this.realPositions)) {
+      const pos = this.realPositions[symbol];
+      const currentPrice = this.prices[symbol];
+      if (!currentPrice) continue;
+
+      if (pos.side === 'LONG') {
+        if (currentPrice > pos.highestPrice) { pos.highestPrice = currentPrice; this.saveRealPositionToDB(symbol, pos); }
+        const pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        const hardStop = pos.entryPrice * (1 - hardStopPct);
+        const trailingStop = pos.highestPrice * (1 - trailingPct);
+        let sellReason = null;
+        if (currentPrice <= hardStop) sellReason = 'STOP_LOSS';
+        else if (pnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) sellReason = 'TRAILING_STOP';
+        if (sellReason) await this.executeRealSell(pos, currentPrice, sellReason, telegram);
+      } else if (pos.side === 'SHORT') {
+        if (currentPrice < pos.lowestPrice) { pos.lowestPrice = currentPrice; this.saveRealPositionToDB(symbol, pos); }
+        const pnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+        const hardStop = pos.entryPrice * (1 + hardStopPct);
+        const trailingStop = pos.lowestPrice * (1 + trailingPct);
+        let buyReason = null;
+        if (currentPrice >= hardStop) buyReason = 'STOP_LOSS';
+        else if (pnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) buyReason = 'TRAILING_STOP';
+        if (buyReason) await this.executeRealBuyToClose(pos, currentPrice, buyReason, telegram);
+      }
     }
   }
 
-  getAdaptiveThreshold() { return this.performance.adaptiveThreshold || 0.70; }
-
-  updateAdaptiveThreshold() {
-    var recent = this.performance.feedbackLoop.slice(-30);
-    if (recent.length < 10) return;
-    var winRate = recent.filter(function(f) { return f.return > 0; }).length / recent.length;
-    if (winRate > 0.70) this.performance.adaptiveThreshold = Math.max(0.60, this.performance.adaptiveThreshold - 0.02);
-    else if (winRate < 0.50) this.performance.adaptiveThreshold = Math.min(0.85, this.performance.adaptiveThreshold + 0.03);
-    if (this.performance.consecutiveLosses >= 3) this.performance.adaptiveThreshold = Math.min(0.90, this.performance.adaptiveThreshold + 0.05);
+  async executeRealSell(pos, currentPrice, reason, telegram) {
+    try {
+      await binance.realSell(pos.symbol, pos.quantity);
+      if (telegram) {
+        const netPnl = (currentPrice - pos.entryPrice) * pos.quantity;
+        const netPnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
+        telegram.sendMessage(`${emoji} — ${pos.symbol}\n💰 G:${pos.entryPrice.toFixed(6)} C:${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '+' : ''}${netPnlPct.toFixed(2)}% | ${reason}`).catch(() => { });
+      }
+      this.deleteRealPositionFromDB(pos.symbol);
+      delete this.realPositions[pos.symbol];
+    } catch (e) { }
   }
 
-  reset(startBalance) {
-    startBalance = startBalance || 1000;
-    db.prepare("DELETE FROM sim_positions").run();
-    db.prepare("DELETE FROM sim_wallet").run();
-    db.prepare('INSERT INTO sim_wallet (balance) VALUES (?)').run(startBalance);
-    this.trailingStops = {};
-    this.performance = { signals: [], feedbackLoop: [], adaptiveThreshold: 0.70, consecutiveLosses: 0, dailyPnL: [] };
-    console.log('[SIM] Sifirlandi — ' + startBalance + ' USDT');
+  async executeRealBuyToClose(pos, currentPrice, reason, telegram) {
+    try {
+      await binance.realBuy(pos.symbol, pos.quantity * pos.entryPrice, currentPrice);
+      if (telegram) {
+        const netPnl = (pos.entryPrice - currentPrice) * pos.quantity;
+        const netPnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+        const emoji = netPnl >= 0 ? '✅ KAR' : '❌ ZARAR';
+        telegram.sendMessage(`${emoji} — ${pos.symbol}\n💰 G:${pos.entryPrice.toFixed(6)} C:${currentPrice.toFixed(6)}\n${netPnl >= 0 ? '+' : ''}${netPnlPct.toFixed(2)}% | ${reason}`).catch(() => { });
+      }
+      this.deleteRealPositionFromDB(pos.symbol);
+      delete this.realPositions[pos.symbol];
+    } catch (e) { }
   }
 
-  getStats() {
-    var wallet = this.getWallet(), openPos = this.getOpenPositions();
-    var allPos = db.prepare("SELECT * FROM sim_positions ORDER BY opened_at DESC").all();
-    var closed = allPos.filter(function(p) { return p.status !== 'OPEN'; });
-    var wins = closed.filter(function(p) { return p.pnl > 0; });
-    var losses = closed.filter(function(p) { return p.pnl <= 0; });
-    var totalPnl = closed.reduce(function(s, p) { return s + (p.pnl || 0); }, 0);
-    var gW = wins.reduce(function(s, p) { return s + (p.pnl || 0); }, 0);
-    var gL = Math.abs(losses.reduce(function(s, p) { return s + (p.pnl || 0); }, 0));
-    var startBal = parseFloat((db.prepare("SELECT value FROM settings WHERE key='sim_balance'").get() || {}).value || 1000);
+  async scan() {
+    const baslangic = Date.now();
+    const settings = this.getSettings();
+    this.scanCount++;
 
-    var returns = closed.map(function(p) { return p.pnl_percent || 0; });
-    var avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-    var variance = returns.length > 1 ? returns.reduce((a, b) => a + Math.pow(b - avgReturn, 2), 0) / returns.length : 0;
-    var sharpe = Math.sqrt(variance) > 0 ? (avgReturn / Math.sqrt(variance)) * Math.sqrt(Math.max(1, closed.length)) : 0;
+    const tf = settings.analysis_timeframe || '4h';
+    const minHacim = parseFloat(settings.min_volume || 5000000);
+    const maxCoin = parseInt(settings.max_coins || 120);
+    const maxPos = parseInt(settings.max_open_positions || 3);
+    const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
+    const longEnabled = settings.long_enabled !== 'false';
+    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
+    const btcRegime = this.btcTrend.regime || 'RANGING';
 
-    var peak = startBal, maxDD = 0, runningBal = startBal;
-    for (var i = 0; i < closed.length; i++) {
-      runningBal += (closed[i].pnl || 0); if (runningBal > peak) peak = runningBal;
-      var dd = (peak - runningBal) / peak * 100; if (dd > maxDD) maxDD = dd;
+    console.log('\n' + '='.repeat(50));
+    console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
+    console.log(`[BTC] Rejim:${btcRegime} | RSI:${(this.btcTrend.rsi || 50).toFixed(1)} | TF:${tf}`);
+    console.log(`[ISLEM] LONG ${longEnabled ? '✅' : '❌'} | SHORT ${shortEnabled ? '✅' : '❌'} | ADAPTIF`);
+    console.log('='.repeat(50));
+
+    const STABLES = new Set(['BUSDUSDT', 'USDCUSDT', 'TUSDUSDT', 'USDTUSDT', 'FDUSDUSDT', 'DAIUSDT', 'USDPUSDT', 'EURUSDT', 'AEURUSDT', 'USTCUSDT']);
+    let tickers;
+    try { tickers = await binance.getAllTickers(); } catch (e) { return; }
+    for (const t of tickers) { this.prices[t.symbol] = parseFloat(t.lastPrice); }
+
+    const tumFiltreli = [];
+    for (const t of tickers) {
+      if (!t.symbol.endsWith('USDT')) continue;
+      if (STABLES.has(t.symbol)) continue;
+      const hacim = parseFloat(t.quoteVolume) || 0, degisim = parseFloat(t.priceChangePercent) || 0, fiyat = parseFloat(t.lastPrice) || 0;
+      if (fiyat <= 0 || hacim < minHacim || degisim <= -15 || degisim >= 15) continue;
+      tumFiltreli.push(t);
+    }
+    tumFiltreli.sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
+    const filtreli = tumFiltreli.slice(0, maxCoin);
+    console.log(filtreli.length + ' coin taranacak\n' + '-'.repeat(50));
+
+    db.prepare("DELETE FROM signals").run();
+
+    const allSignals = [];
+
+    for (const ticker of filtreli) {
+      try {
+        const candles = await binance.getKlines(ticker.symbol, tf, 200);
+        if (!candles || candles.length < 100) continue;
+        this.candlesData[ticker.symbol] = candles;
+
+        const longSignal = longEnabled ? analysis.analyze(candles, ticker, { btcRegime }) : null;
+        const shortSignal = shortEnabled ? shortAnalysis.analyze(candles, ticker, { btcRegime }) : null;
+
+        if (longSignal && longSignal.sinyal === 'ALIM') {
+          allSignals.push({
+            symbol: ticker.symbol, side: 'LONG', signal_type: 'ALIM',
+            price: longSignal.fiyat, fiyat: longSignal.fiyat,
+            score: longSignal.puan, trend: longSignal.trend, rsi: longSignal.rsi,
+            stop_loss: longSignal.stop_loss, hedef: longSignal.hedef || 0,
+            machineConfidence: longSignal.puan / 100,
+            machineReasoning: `${longSignal.passedCount}/${longSignal.totalRules} Kural | ${longSignal.ruleDetails}`,
+            passedCount: longSignal.passedCount, totalRules: longSignal.totalRules,
+            risk: longSignal.risk || 'ORTA', pozitif: longSignal.pozitif || [],
+            negatif: longSignal.negatif || [], ruleDetails: longSignal.ruleDetails || '',
+            macdBullish: longSignal.macdBullish || 0
+          });
+        }
+
+        if (shortSignal && shortSignal.sinyal === 'SATIS') {
+          allSignals.push({
+            symbol: ticker.symbol, side: 'SHORT', signal_type: 'SATIS',
+            price: shortSignal.fiyat, fiyat: shortSignal.fiyat,
+            score: shortSignal.puan, trend: shortSignal.trend, rsi: shortSignal.rsi,
+            stop_loss: shortSignal.stop_loss, hedef: shortSignal.hedef || 0,
+            machineConfidence: shortSignal.puan / 100,
+            machineReasoning: `${shortSignal.passedCount}/${shortSignal.totalRules} Kural | ${shortSignal.ruleDetails}`,
+            passedCount: shortSignal.passedCount, totalRules: shortSignal.totalRules,
+            risk: shortSignal.risk || 'ORTA', pozitif: shortSignal.pozitif || [],
+            negatif: shortSignal.negatif || [], ruleDetails: shortSignal.ruleDetails || '',
+            macdBullish: shortSignal.macdBullish || 0
+          });
+        }
+
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e) { }
     }
 
-    return {
-      balance: parseFloat((wallet ? wallet.balance : startBal).toFixed(4)), startBalance: startBal,
-      totalPnl: parseFloat(totalPnl.toFixed(4)), totalPnlPct: parseFloat((totalPnl / startBal * 100).toFixed(2)),
-      totalTrades: closed.length, openTrades: openPos.length, wins: wins.length, losses: losses.length,
-      winRate: parseFloat((closed.length > 0 ? wins.length / closed.length * 100 : 0).toFixed(1)),
-      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
-      avgWin: parseFloat((wins.length > 0 ? wins.reduce((s, p) => s + (p.pnl_percent || 0), 0) / wins.length : 0).toFixed(2)),
-      avgLoss: parseFloat((losses.length > 0 ? losses.reduce((s, p) => s + (p.pnl_percent || 0), 0) / losses.length : 0).toFixed(2)),
-      sharpeRatio: parseFloat(sharpe.toFixed(2)), maxDrawdown: parseFloat(maxDD.toFixed(2)),
-      adaptiveThreshold: parseFloat((this.performance.adaptiveThreshold * 100).toFixed(1)),
-      consecutiveLosses: this.performance.consecutiveLosses,
-      openPositions: openPos, recentTrades: allPos.slice(0, 30)
-    };
+    // ── PUANA GÖRE SIRALA ──────────────────────────
+    allSignals.sort((a, b) => b.score - a.score);
+
+    // ── EN İYİLERİ SEÇ (maxPos kadar, her sembolden sadece bir tane) ──
+    const selectedSignals = [];
+    const usedSymbols = new Set();
+    
+    for (const sig of allSignals) {
+      if (selectedSignals.length >= maxPos) break;
+      if (usedSymbols.has(sig.symbol)) continue;
+      
+      selectedSignals.push(sig);
+      usedSymbols.add(sig.symbol);
+    }
+    
+    let longCount = 0, shortCount = 0;
+
+    // ── TÜM SİNYALLERİ DB'YE KAYDET ────────────────
+    for (const sig of allSignals) {
+      const isSelected = selectedSignals.some(s => s.symbol === sig.symbol && s.side === sig.side);
+      db.prepare('INSERT INTO signals (symbol,signal_type,score,risk,price,fiyat,rsi,macd,trend,positive_signals,negative_signals,ai_comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(sig.symbol, sig.signal_type, sig.score, sig.risk, sig.fiyat, sig.fiyat,
+          sig.rsi, sig.macdBullish || 0, sig.trend,
+          JSON.stringify(sig.pozitif || []), JSON.stringify(sig.negatif || []),
+          isSelected ? `✅ SECILDI ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}` : `${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`);
+    }
+
+    // ── SEÇİLENLERİ SİMÜLASYONA VE GERÇEK ALIMA GÖNDER ──
+    const telegram = this.getTelegram();
+
+    for (const sig of selectedSignals) {
+      if (sig.side === 'LONG') longCount++; else shortCount++;
+
+      const emoji = sig.side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+      console.log(`[✅ ${emoji}] ${sig.symbol.padEnd(10)} | Puan:${String(sig.score).padStart(3)} | RSI:${sig.rsi.toFixed(1)} | ${sig.passedCount}/${sig.totalRules} Kural`);
+
+      console.log('[SIM DEBUG] Gönderilen sinyal:', JSON.stringify({
+        symbol: sig.symbol,
+        side: sig.side,
+        signal_type: sig.signal_type,
+        price: sig.fiyat
+      }));
+
+      simulation.openPosition({
+        symbol: sig.symbol,
+        side: sig.side,
+        signal_type: sig.signal_type,
+        price: sig.fiyat,
+        fiyat: sig.fiyat,
+        score: sig.score,
+        trend: sig.trend,
+        stop_loss: sig.stop_loss,
+        stopLoss: sig.stop_loss,
+        target: sig.hedef || 0,
+        machineConfidence: sig.machineConfidence,
+        machineReasoning: sig.machineReasoning,
+        passedCount: sig.passedCount,
+        totalRules: sig.totalRules
+      }, settings, this.btcTrend, this.candlesData);
+
+      if (realTrading && !this.realPositions[sig.symbol]) {
+        const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
+        if (sig.side === 'LONG') {
+          const buyResult = await binance.realBuy(sig.symbol, tradeAmount, sig.fiyat);
+          if (buyResult) {
+            const qty = parseFloat(buyResult.executedQty) || (tradeAmount / sig.fiyat);
+            const pos = { symbol: sig.symbol, side: 'LONG', entryPrice: sig.fiyat, quantity: qty, highestPrice: sig.fiyat, lowestPrice: sig.fiyat, stopLoss: sig.stop_loss, entryTime: new Date().toISOString(), machineConfidence: sig.machineConfidence };
+            this.realPositions[sig.symbol] = pos;
+            this.saveRealPositionToDB(sig.symbol, pos);
+          }
+        } else if (sig.side === 'SHORT') {
+          const sellResult = await binance.realSell(sig.symbol, tradeAmount / sig.fiyat);
+          if (sellResult) {
+            const qty = parseFloat(sellResult.executedQty) || (tradeAmount / sig.fiyat);
+            const pos = { symbol: sig.symbol, side: 'SHORT', entryPrice: sig.fiyat, quantity: qty, highestPrice: sig.fiyat, lowestPrice: sig.fiyat, stopLoss: sig.stop_loss, entryTime: new Date().toISOString(), machineConfidence: sig.machineConfidence };
+            this.realPositions[sig.symbol] = pos;
+            this.saveRealPositionToDB(sig.symbol, pos);
+          }
+        }
+      }
+
+      if (telegram) {
+        telegram.sendMessage(`${emoji} — ${sig.symbol}\n💰 G:${sig.fiyat}\n📊 ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`).catch(() => { });
+      }
+    }
+
+    simulation.updatePositions(this.prices, settings, this.candlesData);
+    await this.updateRealPositions();
+
+    const sure = Date.now() - baslangic;
+    const simStats = simulation.getStats();
+    this.performance.scans.push({ timestamp: Date.now(), coinsScanned: filtreli.length, signalsFound: selectedSignals.length, machineAccepted: selectedSignals.length, machineRejected: allSignals.length - selectedSignals.length, duration: sure });
+    this.performance.signalsGenerated += selectedSignals.length;
+    this.performance.signalsAccepted += selectedSignals.length;
+    this.performance.signalsRejected += allSignals.length - selectedSignals.length;
+
+    console.log('\n' + '-'.repeat(50));
+    console.log(`[TARAMA] ${selectedSignals.length} secildi (${longCount}L/${shortCount}S) | Toplam:${allSignals.length} sinyal | Rejim:${btcRegime}`);
+    console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Basari: %${simStats.winRate}`);
+
+    db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)')
+      .run(filtreli.length, selectedSignals.length, sure, JSON.stringify(selectedSignals.map(s => s.symbol)), selectedSignals.length, allSignals.length - selectedSignals.length);
+
+    if (typeof analysis.saveToDB === 'function') analysis.saveToDB();
+    if (typeof shortAnalysis.saveToDB === 'function') shortAnalysis.saveToDB();
+  }
+
+  async start() {
+    if (this.running) return;
+    this.running = true;
+    console.log('╔══════════════════════════════════════╗');
+    console.log('║   TRADING BOT – ADAPTIF CIFT MOTOR  ║');
+    console.log('╚══════════════════════════════════════╝');
+    await this.updateBTCTrend();
+    this.loadRealPositionsFromDB();
+
+    const self = this;
+    this.priceInterval = setInterval(async () => { await self.checkPositionsQuick(); }, 3000);
+    await this.scan();
+    const intervalMin = parseInt(this.getSettings().scan_interval || 20);
+    this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
+
+    console.log(`[BOT] Her ${intervalMin}dk tarama | Adaptif Cift Motor | Rejim:${this.btcTrend.regime}`);
+  }
+
+  stop() {
+    if (this.interval) clearInterval(this.interval);
+    if (this.priceInterval) clearInterval(this.priceInterval);
+    this.running = false;
+  }
+
+  getMachineReport() {
+    const simStats = simulation.getStats();
+    return { bot: { running: this.running, scanCount: this.scanCount }, simulation: { balance: simStats.balance, winRate: simStats.winRate } };
   }
 }
 
-module.exports = new SimulationEngine();
+module.exports = new TradingEngine();
