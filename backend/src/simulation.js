@@ -616,7 +616,24 @@ class AdvancedSimulationEngine {
       consecutiveLosses: 0,
       dailyPnL: []
     };
+async start() {
+    console.log('[SIM] AdvancedSimulationEngine baslatildi');
 
+    if (this._started) {
+      console.log('[SIM] Zaten calisiyor');
+      return;
+    }
+
+    this._started = true;
+
+    return true;
+  }
+
+  stop() {
+    console.log('[SIM] AdvancedSimulationEngine durduruldu');
+    this._started = false;
+    return true;
+  }
     console.log('[SIM] Sifirlandi — ' + startBalance + ' USDT');
   }
 
