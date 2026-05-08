@@ -26,7 +26,10 @@ class SimulationEngine {
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
+      // BU SATIR ÇOK ÖNEMLİ: side değerini signal.side'dan al, yoksa varsayılan LONG
       var side = signal.side || 'LONG';
+      console.log('[SIM DEBUG] Gelen side degeri:', side, 'Sembol:', signal.symbol);
+
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
       var stopLoss = side === 'SHORT' 
