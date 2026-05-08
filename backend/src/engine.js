@@ -292,18 +292,7 @@ class TradingEngine {
     allSignals.sort((a, b) => b.score - a.score);
 
     // ── EN İYİLERİ SEÇ (maxPos kadar) ──────────────
-    const selectedSignals = [];
-    const usedSymbols = new Set();
-    
-    for (const sig of allSignals) {
-      if (selectedSignals.length >= maxPos) break;
-      // Aynı sembolden hem LONG hem SHORT varsa, puanı yüksek olanı seç
-      if (usedSymbols.has(sig.symbol)) continue;
-      
-      selectedSignals.push(sig);
-      usedSymbols.add(sig.symbol);
-    }
-    
+    const selectedSignals = allSignals.slice(0, maxPos);
     let longCount = 0, shortCount = 0;
 
     // ── TÜM SİNYALLERİ DB'YE KAYDET ────────────────
@@ -325,7 +314,30 @@ class TradingEngine {
       const emoji = sig.side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
       console.log(`[✅ ${emoji}] ${sig.symbol.padEnd(10)} | Puan:${String(sig.score).padStart(3)} | RSI:${sig.rsi.toFixed(1)} | ${sig.passedCount}/${sig.totalRules} Kural`);
 
-      simulation.openPosition(sig, settings, this.btcTrend, this.candlesData);
+      // DEBUG LOGU
+      console.log('[SIM DEBUG] Gönderilen sinyal:', JSON.stringify({
+        symbol: sig.symbol,
+        side: sig.side,
+        signal_type: sig.signal_type,
+        price: sig.fiyat
+      }));
+
+      simulation.openPosition({
+        symbol: sig.symbol,
+        side: sig.side,
+        signal_type: sig.signal_type,
+        price: sig.fiyat,
+        fiyat: sig.fiyat,
+        score: sig.score,
+        trend: sig.trend,
+        stop_loss: sig.stop_loss,
+        stopLoss: sig.stop_loss,
+        target: sig.hedef || 0,
+        machineConfidence: sig.machineConfidence,
+        machineReasoning: sig.machineReasoning,
+        passedCount: sig.passedCount,
+        totalRules: sig.totalRules
+      }, settings, this.btcTrend, this.candlesData);
 
       if (realTrading && !this.realPositions[sig.symbol]) {
         const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
