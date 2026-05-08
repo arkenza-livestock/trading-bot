@@ -2,7 +2,6 @@ const binance    = require('./binance');
 const analysis   = require('./analysis');
 const db         = require('./database');
 const simulation = require('./simulation');
-const MachineDecisionEngine = require('./MachineDecisionEngine');
 const TelegramService = require('./telegram');
 
 class TradingEngine {
@@ -13,7 +12,6 @@ class TradingEngine {
     this.btcTrend  = { trend:'BELIRSIZ', rsi:50, lastUpdate:0 };
     this.scanCount = 0;
     this.prices    = {};
-    this.machine = new MachineDecisionEngine();
     this.candlesData = {};
     this.learningManager = null;
     this.performance = { scans: [], signalsGenerated: 0, signalsAccepted: 0, signalsRejected: 0, rejectionReasons: {} };
@@ -84,7 +82,7 @@ class TradingEngine {
 
   async updateBTCTrend() {
     try {
-      const candles = await binance.getKlines('BTCUSDT', '1h', 200);
+      const candles = await binance.getKlines('BTCUSDT', '4h', 200);
       if (!candles || candles.length < 100) return;
       this.candlesData['BTCUSDT'] = candles;
       const closes = candles.map(c => parseFloat(c[4]));
@@ -107,10 +105,9 @@ class TradingEngine {
 
   async updateRealPositions() {
     const settings = this.getSettings();
-    // Vur-Kaç için dar ayarlar
-    const trailingPct = parseFloat(settings.trailing_stop_percent || 0.3) / 100;
-    const minProfitPct = parseFloat(settings.min_profit_percent || 0.8) / 100;
-    const hardStopPct = parseFloat(settings.stop_loss_percent || 1.5) / 100;
+    const trailingPct = parseFloat(settings.trailing_stop_percent || 0.5) / 100;
+    const minProfitPct = parseFloat(settings.min_profit_percent || 1.5) / 100;
+    const hardStopPct = parseFloat(settings.stop_loss_percent || 2.0) / 100;
     const telegram = this.getTelegram();
 
     for (const symbol of Object.keys(this.realPositions)) {
@@ -118,7 +115,18 @@ class TradingEngine {
       const currentPrice = this.prices[symbol];
       if (!currentPrice) continue;
 
-      if (pos.side === 'LONG') {
+      if (pos.side === 'SHORT') {
+        // SHORT pozisyon kapatma (eski SHORT'lar için)
+        if (currentPrice < pos.lowestPrice) { pos.lowestPrice = currentPrice; this.saveRealPositionToDB(symbol, pos); }
+        const pnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+        const hardStop = pos.entryPrice * (1 + hardStopPct);
+        const trailingStop = pos.lowestPrice * (1 + trailingPct);
+        let buyReason = null;
+        if (currentPrice >= hardStop) buyReason = 'STOP_LOSS';
+        else if (pnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) buyReason = 'TRAILING_STOP';
+        if (buyReason) await this.executeRealBuyToClose(pos, currentPrice, buyReason, telegram);
+      } else {
+        // LONG pozisyon güncelleme
         if (currentPrice > pos.highestPrice) { pos.highestPrice = currentPrice; this.saveRealPositionToDB(symbol, pos); }
         const pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
         const hardStop = pos.entryPrice * (1 - hardStopPct);
@@ -127,15 +135,6 @@ class TradingEngine {
         if (currentPrice <= hardStop) sellReason = 'STOP_LOSS';
         else if (pnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) sellReason = 'TRAILING_STOP';
         if (sellReason) await this.executeRealSell(pos, currentPrice, sellReason, telegram);
-      } else if (pos.side === 'SHORT') {
-        if (currentPrice < pos.lowestPrice) { pos.lowestPrice = currentPrice; this.saveRealPositionToDB(symbol, pos); }
-        const pnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
-        const hardStop = pos.entryPrice * (1 + hardStopPct);
-        const trailingStop = pos.lowestPrice * (1 + trailingPct);
-        let buyReason = null;
-        if (currentPrice >= hardStop) buyReason = 'STOP_LOSS';
-        else if (pnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) buyReason = 'TRAILING_STOP';
-        if (buyReason) await this.executeRealBuy(pos, currentPrice, buyReason, telegram);
       }
     }
   }
@@ -154,7 +153,8 @@ class TradingEngine {
     } catch(e) {}
   }
 
-  async executeRealBuy(pos, currentPrice, reason, telegram) {
+  async executeRealBuyToClose(pos, currentPrice, reason, telegram) {
+    // Eski SHORT pozisyonları kapatmak için
     try {
       await binance.realBuy(pos.symbol, pos.quantity * pos.entryPrice, currentPrice);
       if (telegram) {
@@ -174,16 +174,13 @@ class TradingEngine {
     this.scanCount++;
 
     const minHacim = parseFloat(settings.min_volume || 5000000);
-    // DAHA FAZLA COIN TARA
     const maxCoin  = parseInt(settings.max_coins || 120);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
-    const longEnabled = settings.long_enabled !== 'false';
-    const shortEnabled = settings.short_enabled === 'true' || settings.short_enabled === '1';
 
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
     console.log(`[BTC] ${this.btcTrend.trend} | RSI:${(this.btcTrend.rsi||50).toFixed(1)}`);
-    console.log(`[ISLEM] LONG ✅ | SHORT ${shortEnabled && this.btcTrend.trend !== 'YUKARI' ? '✅' : '❌'} | 1H VUR-KAC SINYAL ODAKLI`);
+    console.log(`[ISLEM] 6 KURAL STRATEJISI | Sadece LONG | 4H`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -205,93 +202,83 @@ class TradingEngine {
     console.log(filtreli.length + ' coin taranacak\n' + '-'.repeat(50));
     db.prepare("DELETE FROM signals").run();
 
-    let longCount = 0, shortCount = 0, machineAccepted = 0, machineRejected = 0;
+    let longCount = 0, machineAccepted = 0, machineRejected = 0;
     const signalsFound = [], rejectionReasons = {};
     const telegram = this.getTelegram();
 
     for (const ticker of filtreli) {
       try {
-        // 1 SAATLİK MUM
-        const candles1H = await binance.getKlines(ticker.symbol, '1h', 200);
-        if (!candles1H || candles1H.length < 100) continue;
-        this.candlesData[ticker.symbol] = candles1H;
-        const result = analysis.analyze(candles1H, ticker);
+        // 4 SAATLİK MUM
+        const candles4H = await binance.getKlines(ticker.symbol, '4h', 200);
+        if (!candles4H || candles4H.length < 100) continue;
+        this.candlesData[ticker.symbol] = candles4H;
+        const result = analysis.analyze(candles4H, ticker);
         if (!result) continue;
-        const machineAnalysis = this.machine.analyze(candles1H, { symbol: ticker.symbol, priceChangePercent: ticker.priceChangePercent || 0, quoteVolume: ticker.quoteVolume || 0 });
 
-        let sinyalTipi = 'BEKLE', side = null, finalScore = result.puan || 0, machineOnay = false, rejectReason = '';
+        const sinyalTipi = result.sinyal || result.signal_type || 'BEKLE';
+        const passedCount = result.passedCount || 0;
+        const finalScore = result.puan || 0;
+        const ruleResults = result.ruleResults || {};
+        
+        let machineOnay = false;
+        let rejectReason = '';
 
-        // VUR-KAÇ SİNYAL ODAKLI: Güven 60, Puan 25
-        if (machineAnalysis.action === 'BUY' && machineAnalysis.confidence >= 0.60 && longEnabled && finalScore >= 25) {
-          if (this.btcTrend.trend === 'ASAGI') {
-            rejectReason = 'BTC_TAM_DUSUS_LONG_KORUMA';
-          } else {
-            sinyalTipi = 'ALIM'; side = 'LONG'; machineOnay = true;
-          }
-        }
-        else if (machineAnalysis.action === 'SELL' && shortEnabled && this.btcTrend.trend !== 'YUKARI' && finalScore >= 25) {
-          sinyalTipi = 'SATIS'; side = 'SHORT'; machineOnay = true;
-        }
-        else if (machineAnalysis.confidence < 0.55) {
-          rejectReason = 'DUSUK_GUVEN';
-        } else if (finalScore < 25) {
-          rejectReason = 'DUSUK_PUAN';
-        } else if (machineAnalysis.action === 'BUY' && !longEnabled) {
-          rejectReason = 'LONG_KAPALI';
-        } else if (machineAnalysis.action === 'SELL' && !shortEnabled) {
-          rejectReason = 'SHORT_KAPALI';
-        } else if (machineAnalysis.action === 'SELL' && this.btcTrend.trend === 'YUKARI') {
-          rejectReason = 'BTC_YUKARI_SHORT_KORUMA';
+        if (sinyalTipi === 'ALIM') {
+          machineOnay = true;
+        } else if (passedCount < 4) {
+          rejectReason = `KURAL_YETERSIZ (${passedCount}/6)`;
         } else {
-          rejectReason = 'MAKINE_BEKLE_DEDI';
+          rejectReason = 'DIGER';
         }
 
-        if (machineOnay) { machineAccepted++; if (side === 'LONG') longCount++; else shortCount++; }
+        if (machineOnay) { machineAccepted++; longCount++; }
         else if (rejectReason) { machineRejected++; rejectionReasons[rejectReason] = (rejectionReasons[rejectReason] || 0) + 1; }
 
-        const risk = machineOnay ? (machineAnalysis.confidence >= 0.75 ? 'DUSUK' : 'ORTA') : 'YUKSEK';
+        const risk = passedCount >= 5 ? 'DUSUK' : passedCount >= 4 ? 'ORTA' : 'YUKSEK';
+
+        // Kural detaylarını ai_comment'e ekle
+        const ruleNames = ['Destek', 'RSI', 'Ichimoku', 'RSI_Div', 'Hacim', 'MACD'];
+        const ruleKeys = ['supportTrend', 'rsiOversold', 'ichimokuCloud', 'rsiDivergence', 'volumeSpike', 'macdCrossover'];
+        let ruleDetail = '';
+        for (let i = 0; i < ruleKeys.length; i++) {
+          ruleDetail += (ruleResults[ruleKeys[i]] ? '✅' : '❌') + ruleNames[i] + ' ';
+        }
 
         db.prepare('INSERT INTO signals (symbol,signal_type,score,risk,price,fiyat,rsi,macd,trend,positive_signals,negative_signals,ai_comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-          .run(ticker.symbol, sinyalTipi, finalScore, risk, result.fiyat, result.fiyat, result.rsi, result.macdBullish ? 1 : 0, result.trend,
+          .run(ticker.symbol, sinyalTipi, finalScore, risk, result.fiyat, result.fiyat, result.rsi, 
+            ruleResults.macdCrossover ? 1 : 0, result.trend,
             JSON.stringify(result.pozitif || []), JSON.stringify(result.negatif || []),
-            machineOnay ? `✅ Makine ONAYLI (${side}) | %${(machineAnalysis.confidence*100).toFixed(0)}` : `❌ ${rejectReason}`);
+            machineOnay ? `✅ ${passedCount}/6 Kural | ${ruleDetail.trim()}` : `❌ ${rejectReason}`);
 
-        if (machineOnay && side) {
+        if (machineOnay) {
           signalsFound.push(ticker.symbol);
-          const emoji = side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-          console.log(`[✅ ${emoji}] ${ticker.symbol.padEnd(10)} | Puan:${String(finalScore).padStart(3)} | RSI:${result.rsi.toFixed(1)} | AI:%${(machineAnalysis.confidence*100).toFixed(0)}`);
+          console.log(`[✅ ALIM] ${ticker.symbol.padEnd(10)} | ${passedCount}/6 Kural | Puan:${String(finalScore).padStart(3)} | RSI:${result.rsi.toFixed(1)} | ${ruleDetail.trim()}`);
 
+          // Simülasyona gönder (sadece LONG)
           simulation.openPosition({
-            symbol: ticker.symbol, side, signal_type: sinyalTipi,
+            symbol: ticker.symbol, side: 'LONG', signal_type: 'ALIM',
             price: result.fiyat, fiyat: result.fiyat, score: finalScore, trend: result.trend,
-            stop_loss: machineAnalysis.stopLoss || result.stop_loss,
-            stopLoss: machineAnalysis.stopLoss || result.stop_loss, target: 0,
-            machineConfidence: machineAnalysis.confidence, machineReasoning: machineAnalysis.reasoning
+            stop_loss: result.stop_loss,
+            stopLoss: result.stop_loss, target: result.hedef || 0,
+            machineConfidence: passedCount / 6,
+            machineReasoning: `${passedCount}/6 Kural`,
+            ruleResults: ruleResults
           }, settings, this.btcTrend, this.candlesData);
 
+          // Gerçek alım (sadece LONG)
           if (realTrading && !this.realPositions[ticker.symbol]) {
             const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
-            if (side === 'LONG') {
-              const buyResult = await binance.realBuy(ticker.symbol, tradeAmount, result.fiyat);
-              if (buyResult) {
-                const qty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
-                const pos = { symbol: ticker.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: qty, highestPrice: result.fiyat, lowestPrice: result.fiyat, stopLoss: result.fiyat * 0.985, entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence };
-                this.realPositions[ticker.symbol] = pos;
-                this.saveRealPositionToDB(ticker.symbol, pos);
-              }
-            } else if (side === 'SHORT') {
-              const sellResult = await binance.realSell(ticker.symbol, tradeAmount / result.fiyat);
-              if (sellResult) {
-                const qty = parseFloat(sellResult.executedQty) || (tradeAmount / result.fiyat);
-                const pos = { symbol: ticker.symbol, side: 'SHORT', entryPrice: result.fiyat, quantity: qty, highestPrice: result.fiyat, lowestPrice: result.fiyat, stopLoss: result.fiyat * 1.015, entryTime: new Date().toISOString(), machineConfidence: machineAnalysis.confidence };
-                this.realPositions[ticker.symbol] = pos;
-                this.saveRealPositionToDB(ticker.symbol, pos);
-              }
+            const buyResult = await binance.realBuy(ticker.symbol, tradeAmount, result.fiyat);
+            if (buyResult) {
+              const qty = parseFloat(buyResult.executedQty) || (tradeAmount / result.fiyat);
+              const pos = { symbol: ticker.symbol, side: 'LONG', entryPrice: result.fiyat, quantity: qty, highestPrice: result.fiyat, lowestPrice: result.fiyat, stopLoss: result.stop_loss, entryTime: new Date().toISOString(), machineConfidence: passedCount / 6 };
+              this.realPositions[ticker.symbol] = pos;
+              this.saveRealPositionToDB(ticker.symbol, pos);
             }
           }
 
           if (telegram) {
-            telegram.sendMessage(`${emoji} — ${ticker.symbol}\n💰 G:${result.fiyat}\n🧠 AI:%${(machineAnalysis.confidence*100).toFixed(0)} P:${finalScore}`).catch(() => {});
+            telegram.sendMessage(`✅ ALIM — ${ticker.symbol}\n💰 G:${result.fiyat}\n📊 ${passedCount}/6 Kural\n${ruleDetail.trim()}`).catch(() => {});
           }
         }
         await new Promise(r => setTimeout(r, 150));
@@ -308,25 +295,26 @@ class TradingEngine {
     this.performance.signalsRejected += machineRejected;
 
     console.log('\n' + '-'.repeat(50));
-    console.log(`[TARAMA] ${signalsFound.length} sinyal (${longCount}L/${shortCount}S) | ✅${machineAccepted} ❌${machineRejected}`);
+    console.log(`[TARAMA] ${signalsFound.length} sinyal | ✅${machineAccepted} ❌${machineRejected}`);
     console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Basari: %${simStats.winRate}`);
 
     db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)')
       .run(filtreli.length, signalsFound.length, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected);
 
-    this.machine.saveToDB();
-    if (this.learningManager && this.scanCount % 3 === 0) { try { await this.learningManager.saveAndSync('Tarama #' + this.scanCount); } catch(e) {} }
+    // Kural ağırlıklarını kaydet
+    if (typeof analysis.saveWeightsToDB === 'function') {
+      analysis.saveWeightsToDB();
+    }
   }
 
   async start() {
     if (this.running) return;
     this.running = true;
     console.log('╔══════════════════════════════════════╗');
-    console.log('║ TRADING BOT v21 - 1H VUR-KAC SİNYAL ║');
+    console.log('║   TRADING BOT v21 - 6 KURAL STRATEJI║');
     console.log('╚══════════════════════════════════════╝');
     await this.updateBTCTrend();
     this.loadRealPositionsFromDB();
-    const loaded = this.machine.loadFromDB();
 
     const self = this;
     this.priceInterval = setInterval(async () => { await self.checkPositionsQuick(); }, 3000);
@@ -334,7 +322,7 @@ class TradingEngine {
     const intervalMin = parseInt(this.getSettings().scan_interval || 20);
     this.interval = setInterval(async () => { await self.updateBTCTrend(); await self.scan(); }, intervalMin * 60 * 1000);
 
-    console.log(`[BOT] Her ${intervalMin}dk tarama | 1H Vur-Kac | Guven:%60 | Puan:25`);
+    console.log(`[BOT] Her ${intervalMin}dk tarama | 4H | 6 Kural | Sadece LONG`);
   }
 
   stop() {
