@@ -5,7 +5,8 @@ function Backtest() {
     symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT',
     interval: '4h', days: 30, stopLoss: 2.0, trailingStop: 0.5, minProfit: 1.5,
     commission: 0.1, slippage: 0.05, minScore: 50, tradeAmount: 100, maxPositions: 3,
-    epochs: 1, machineConfidenceMin: 0.60
+    epochs: 1, machineConfidenceMin: 0.60,
+    longEnabled: true, shortEnabled: true
   });
 
   const [results, setResults] = useState(null);
@@ -13,6 +14,7 @@ function Backtest() {
   const [error, setError] = useState('');
 
   const handleChange = function(e) { setParams({ ...params, [e.target.name]: e.target.value }); };
+  const handleToggle = function(key) { setParams({ ...params, [key]: !params[key] }); };
 
   const setTumu = function() { setParams({ ...params, symbols: 'TUMU' }); };
   const setTop5 = function() { setParams({ ...params, symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT' }); };
@@ -28,7 +30,7 @@ function Backtest() {
         slippage: parseFloat(params.slippage), minScore: parseInt(params.minScore),
         tradeAmount: parseFloat(params.tradeAmount), maxPositions: parseInt(params.maxPositions),
         epochs: parseInt(params.epochs), machineConfidenceMin: parseFloat(params.machineConfidenceMin),
-        longEnabled: true, shortEnabled: false
+        longEnabled: params.longEnabled, shortEnabled: params.shortEnabled
       };
       var res = await fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error('Sunucu hatasi: ' + res.status);
@@ -44,7 +46,19 @@ function Backtest() {
   return (
     <div style={{maxWidth:520,padding:'32px 20px',margin:'0 auto'}}>
       <h1 style={{fontSize:22,fontWeight:700,marginBottom:4,color:'#f1f5f9'}}>Backtest</h1>
-      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>📊 6 Kural Stratejisi | Sadece LONG</p>
+      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>🟢 LONG & 🔴 SHORT | Adaptif Cift Motor</p>
+
+      <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
+        <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Islem Yonu</h3>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid #111827'}}>
+          <span style={{color:'#cbd5e1',fontSize:14}}>🟢 LONG</span>
+          <label className="toggle-switch"><input type="checkbox" checked={params.longEnabled} onChange={function(){handleToggle('longEnabled');}} /><span className="toggle-slider"></span></label>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0'}}>
+          <span style={{color:'#cbd5e1',fontSize:14}}>🔴 SHORT</span>
+          <label className="toggle-switch"><input type="checkbox" checked={params.shortEnabled} onChange={function(){handleToggle('shortEnabled');}} /><span className="toggle-slider"></span></label>
+        </div>
+      </div>
 
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Parametreler</h3>
@@ -72,7 +86,7 @@ function Backtest() {
         <Row label="Slippage (%)"><input name="slippage" type="number" step="0.01" value={params.slippage} onChange={handleChange} style={{width:60,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
       </div>
 
-      <button onClick={runBacktest} disabled={loading} style={{marginTop:8,padding:'14px 0',fontSize:15,fontWeight:600,width:'100%',background:loading?'#1a1a2e':'#1e293b',border:'1px solid #334155',borderRadius:10,color:loading?'#64748b':'#e2e8f0',cursor:loading?'not-allowed':'pointer'}}>{loading?'Calisiyor...':'🚀 Backtest Calistir (Sadece LONG)'}</button>
+      <button onClick={runBacktest} disabled={loading} style={{marginTop:8,padding:'14px 0',fontSize:15,fontWeight:600,width:'100%',background:loading?'#1a1a2e':'#1e293b',border:'1px solid #334155',borderRadius:10,color:loading?'#64748b':'#e2e8f0',cursor:loading?'not-allowed':'pointer'}}>{loading?'Calisiyor...':'🚀 Backtest Calistir'}</button>
       {error && <div style={{marginTop:15,padding:14,background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:10,color:'#ef4444',fontSize:13}}>{error}</div>}
       {loading && <div style={{marginTop:15,padding:30,textAlign:'center',color:'#fbbf24',background:'#0d1321',border:'1px solid #1a2540',borderRadius:10}}>Backtest calisiyor... 1-5 dakika surebilir.</div>}
 
@@ -88,15 +102,22 @@ function Backtest() {
             <div className="card"><div className="card-label">📉 MaxDD</div><div className="card-value red" style={{fontSize:24}}>%{results.summary.maxDrawdown || '0.0'}</div></div>
           </div>
 
+          <h3 style={{fontSize:14,marginTop:20,marginBottom:10,color:'#94a3b8'}}>🟢 LONG & 🔴 SHORT Dagilimi</h3>
+          <div className="card-grid" style={{gridTemplateColumns:'repeat(2,1fr)'}}>
+            <div className="card" style={{borderLeft:'3px solid #22c55e'}}><div className="card-label">🟢 LONG Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary.longCount}</div><div style={{fontSize:12,color:'#22c55e',marginTop:4}}>Basari: %{results.summary.longWinRate}</div></div>
+            <div className="card" style={{borderLeft:'3px solid #ef4444'}}><div className="card-label">🔴 SHORT Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary.shortCount}</div><div style={{fontSize:12,color:'#ef4444',marginTop:4}}>Basari: %{results.summary.shortWinRate}</div></div>
+          </div>
+
           {results.trades && results.trades.length > 0 && (
             <div style={{marginTop:15}}>
               <h3 style={{fontSize:14,marginBottom:10,color:'#94a3b8'}}>Islemler ({results.trades.length})</h3>
               <div className="table-container">
                 <table>
-                  <thead><tr><th>Sembol</th><th>Giris</th><th>Cikis</th><th>PnL%</th><th>PnL</th><th>Neden</th></tr></thead>
+                  <thead><tr><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>PnL%</th><th>PnL</th><th>Neden</th></tr></thead>
                   <tbody>
                     {results.trades.slice(-20).reverse().map(function(trade,i){
-                      return (<tr key={i} className={trade.netPnl>=0?'row-profit':'row-loss'}><td><strong>{trade.symbol}</strong></td><td>{trade.entryPrice?trade.entryPrice.toFixed(4):'-'}</td><td>{trade.exitPrice?trade.exitPrice.toFixed(4):'-'}</td><td style={{color:trade.netPnl>=0?'#22c55e':'#ef4444',fontWeight:600}}>%{trade.netPnlPct?trade.netPnlPct.toFixed(2):'0'}</td><td style={{color:trade.netPnl>=0?'#22c55e':'#ef4444'}}>{trade.netPnl?trade.netPnl.toFixed(4):'0'}</td><td><span className="badge badge-wait">{trade.reason||'-'}</span></td></tr>);
+                      var isLong = trade.side === 'LONG';
+                      return (<tr key={i} className={trade.netPnl>=0?'row-profit':'row-loss'}><td><strong>{trade.symbol}</strong></td><td><span className={'badge '+(isLong?'badge-buy':'badge-sell')}>{trade.side||'LONG'}</span></td><td>{trade.entryPrice?trade.entryPrice.toFixed(4):'-'}</td><td>{trade.exitPrice?trade.exitPrice.toFixed(4):'-'}</td><td style={{color:trade.netPnl>=0?'#22c55e':'#ef4444',fontWeight:600}}>%{trade.netPnlPct?trade.netPnlPct.toFixed(2):'0'}</td><td style={{color:trade.netPnl>=0?'#22c55e':'#ef4444'}}>{trade.netPnl?trade.netPnl.toFixed(4):'0'}</td><td><span className="badge badge-wait">{trade.reason||'-'}</span></td></tr>);
                     })}
                   </tbody>
                 </table>
