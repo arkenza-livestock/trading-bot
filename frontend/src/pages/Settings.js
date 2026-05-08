@@ -96,6 +96,13 @@ function Settings() {
       {/* TARAMA */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Tarama Ayarlari</h3>
+        <Row label="Analiz Mum Araligi">
+          <select value={settings.analysis_timeframe || '4h'} onChange={function(e){ handleChange('analysis_timeframe', e.target.value); }} style={{background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 10px',fontSize:13}}>
+            <option value="1h">1 Saat</option>
+            <option value="4h">4 Saat</option>
+            <option value="1d">1 Gun</option>
+          </select>
+        </Row>
         <Row label="Tarama Araligi (dk)"><input type="number" value={settings.scan_interval||'20'} onChange={function(e){handleChange('scan_interval',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
         <Row label="Maksimum Coin"><input type="number" value={settings.max_coins||'120'} onChange={function(e){handleChange('max_coins',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
         <Row label="Minimum Hacim (USDT)"><input type="number" value={settings.min_volume||'5000000'} onChange={function(e){handleChange('min_volume',e.target.value);}} style={{width:120,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
