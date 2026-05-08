@@ -26,9 +26,17 @@ class SimulationEngine {
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
+      // ═══════════════════════════════════════════════
+      // DÜZELTİLMİŞ SİDE BELİRLEME (tüm varyasyonları kapsar)
+      // ═══════════════════════════════════════════════
       var side = 'LONG';
-      if (signal.side === 'SHORT' || signal.signal_type === 'SATIS' || signal.sinyal === 'SATIS') {
+      var incomingSide = (signal.side || signal.signal_type || signal.sinyal || signal.direction || '').toString().toUpperCase();
+      if (incomingSide === 'SHORT' || incomingSide === 'SELL' || incomingSide === 'SATIS' || incomingSide === 'SAT' || incomingSide === 'AÇIK') {
         side = 'SHORT';
+      } else if (incomingSide === 'LONG' || incomingSide === 'BUY' || incomingSide === 'ALIM' || incomingSide === 'AL' || incomingSide === 'KAPALI') {
+        side = 'LONG';
+      } else {
+        console.error(`[SIM] ⚠️ Bilinmeyen sinyal yönü: "${incomingSide}" - Sembol: ${signal.symbol}. Varsayılan LONG olarak açılıyor.`);
       }
 
       var price = signal.price || signal.fiyat;
@@ -102,9 +110,6 @@ class SimulationEngine {
     } catch(e) { console.error('[SIM] Kapatma hatasi:', e.message); return null; }
   }
 
-  // ═══════════════════════════════════════════
-  // BU FONKSİYON EKSİKTİ! DÜZELTİLDİ.
-  // ═══════════════════════════════════════════
   updatePositions(prices, settings, candlesData) {
     var trailingPct = parseFloat(settings.trailing_stop_percent || 0.5) / 100;
     var minProfitPct = parseFloat(settings.min_profit_percent || 1.5) / 100;
