@@ -1,12 +1,9 @@
 const db = require('./database');
-const MachineDecisionEngine = require('./MachineDecisionEngine');
 
-class AdvancedSimulationEngine {
+class SimulationEngine {
 
   constructor() {
     this.trailingStops = {};
-    this.machine = new MachineDecisionEngine();
-    this.marketMemory = { btcHistory: [], allCandles: {}, regimeHistory: [], correlationMatrix: {} };
     this.performance = { signals: [], feedbackLoop: [], adaptiveThreshold: 0.70, consecutiveLosses: 0, dailyPnL: [] };
   }
 
@@ -18,99 +15,58 @@ class AdvancedSimulationEngine {
     return db.prepare("SELECT * FROM sim_positions WHERE status='OPEN'").all();
   }
 
-  secEnIyiSinyal(sinyaller, btcTrend, candlesData) {
-    if (!sinyaller || sinyaller.length === 0) return null;
-    var self = this;
-    var degerlendirilen = sinyaller
-      .filter(function(s) { return s.signal_type === 'ALIM' || s.signal_type === 'SATIS' || s.sinyal === 'ALIM' || s.sinyal === 'SATIS'; })
-      .map(function(sinyal) {
-        var machineScore = 0.5;
-        if (candlesData && candlesData[sinyal.symbol]) {
-          var ma = self.machine.analyze(candlesData[sinyal.symbol], { symbol: sinyal.symbol, priceChangePercent: sinyal.degisim24h || 0, quoteVolume: sinyal.hacim24h || 0 });
-          if (ma.action === 'BUY' || ma.action === 'SELL') { machineScore = ma.confidence; if (ma.stopLoss) sinyal.stop_loss = ma.stopLoss; if (ma.takeProfit) sinyal.target = ma.takeProfit; }
-          else if (ma.action === 'WAIT') { machineScore = ma.confidence * 0.5; }
-          else { machineScore = 0; }
-          sinyal.machineReasoning = ma.reasoning; sinyal.machineConfidence = ma.confidence; sinyal.similarPatternsFound = ma.similarPatternsFound || 0;
-        }
-        return { ...sinyal, machineScore: machineScore, combinedScore: (machineScore * 0.7) + ((sinyal.score || sinyal.puan || 0) / 100 * 0.3) };
-      })
-      .filter(function(s) { return s.machineScore > 0; })
-      .sort(function(a, b) { return b.combinedScore - a.combinedScore; });
-    if (degerlendirilen.length === 0) { console.log('[SIM] Hicbir sinyal makine onayindan gecemedi'); return null; }
-    return degerlendirilen[0];
-  }
-
   openPosition(signal, settings, btcTrend, candlesData) {
     try {
       var wallet = this.getWallet();
       var openPos = this.getOpenPositions();
       var maxPos = parseInt(settings.max_open_positions || 3);
       var baseAmt = parseFloat(settings.trade_amount_usdt || 100);
+      
       if (openPos.length >= maxPos) { console.log('[SIM] Max pozisyon doldu'); return null; }
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
-
-      // BTC korumaları (engine.js ile tam uyumlu)
-      if (btcTrend && btcTrend.trend === 'ASAGI' && signal.side === 'LONG') {
-        console.log('[SIM] BTC tam düsüs — ' + signal.symbol + ' LONG atlandi');
-        return null;
-      }
-      if (btcTrend && btcTrend.trend === 'YUKARI' && signal.side === 'SHORT') {
-        console.log('[SIM] BTC güçlü yükseliş — ' + signal.symbol + ' SHORT atlandi');
-        return null;
-      }
-
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
-      if (candlesData && candlesData[signal.symbol]) {
-        var ma = this.machine.analyze(candlesData[signal.symbol], { symbol: signal.symbol });
-        var threshold = this.getAdaptiveThreshold();
-        if (ma.confidence < threshold) { console.log('[SIM] Guven esigi altinda'); return null; }
-      }
-
-      var side = signal.side || 'LONG';
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
-      var stopLoss = side === 'SHORT' ? (signal.stop_loss || signal.stopLoss || price * 1.02) : (signal.stop_loss || signal.stopLoss || price * 0.98);
+      var stopLoss = signal.stop_loss || signal.stopLoss || price * 0.98;
       var guc = (signal.machineConfidence || 0) >= 0.80 ? 'AI_GUCLU' : (signal.machineConfidence || 0) >= 0.65 ? 'AI_NORMAL' : 'AI_ZAYIF';
+      var passedRules = signal.passedCount || signal.ruleResults ? Object.values(signal.ruleResults || {}).filter(v => v === true).length : 0;
 
       var result = db.prepare(
         'INSERT INTO sim_positions (symbol,side,quantity,entry_price,current_price,stop_loss,take_profit,highest_price,lowest_price,signal_guc,trend4H,trend1D,score,machine_confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
-      ).run(signal.symbol, side, quantity, price, price, stopLoss, 0, price, price, guc, signal.trend || '-', signal.trend || '-', signal.score || signal.puan || 0, signal.machineConfidence || 0);
+      ).run(signal.symbol, 'LONG', quantity, price, price, stopLoss, 0, price, price, guc, signal.trend || '-', signal.trend || '-', signal.score || signal.puan || 0, signal.machineConfidence || 0);
 
       db.prepare('UPDATE sim_wallet SET balance=balance-?, updated_at=CURRENT_TIMESTAMP').run(baseAmt);
 
-      this.trailingStops[signal.symbol] = { highestPrice: price, lowestPrice: price, side: side, entryTime: Date.now(), machineConfidence: signal.machineConfidence || 0 };
-      this.performance.signals.push({ symbol: signal.symbol, side: side, entryPrice: price, stopLoss: stopLoss, machineConfidence: signal.machineConfidence || 0, timestamp: Date.now() });
+      this.trailingStops[signal.symbol] = { highestPrice: price, lowestPrice: price, side: 'LONG', entryTime: Date.now(), machineConfidence: signal.machineConfidence || 0 };
+      this.performance.signals.push({ symbol: signal.symbol, side: 'LONG', entryPrice: price, stopLoss: stopLoss, machineConfidence: signal.machineConfidence || 0, timestamp: Date.now() });
 
-      console.log('[SIM] ACILDI: ' + signal.symbol + ' (' + side + ') @ ' + price + ' | ' + baseAmt + ' USDT | Guc:' + guc + ' | AI:%' + ((signal.machineConfidence||0)*100).toFixed(0));
+      console.log('[SIM] ACILDI: ' + signal.symbol + ' (LONG) @ ' + price + ' | ' + baseAmt + ' USDT | Kurallar:' + passedRules + '/6 | AI:%' + ((signal.machineConfidence||0)*100).toFixed(0));
       return result.lastInsertRowid;
     } catch(e) { console.error('[SIM] Acma hatasi:', e.message); return null; }
   }
 
   closePosition(pos, exitPrice, reason) {
     try {
-      var totalCost = 0.003, side = pos.side || 'LONG';
-      var brutoPnlPct = side === 'SHORT' ? ((pos.entry_price - exitPrice) / pos.entry_price) * 100 : ((exitPrice - pos.entry_price) / pos.entry_price) * 100;
+      var totalCost = 0.003;
+      var brutoPnlPct = ((exitPrice - pos.entry_price) / pos.entry_price) * 100;
       var netPnlPct = brutoPnlPct - (totalCost * 100);
-      var netPnl = (side === 'SHORT' ? (pos.entry_price - exitPrice) : (exitPrice - pos.entry_price)) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
-      var exitAmount = side === 'SHORT' ? (pos.entry_price * pos.quantity + netPnl) : (exitPrice * pos.quantity);
+      var netPnl = (exitPrice - pos.entry_price) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
+      var exitAmount = exitPrice * pos.quantity;
 
       db.prepare('UPDATE sim_positions SET status=?,exit_price=?,current_price=?,pnl=?,pnl_percent=?,close_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?').run(reason, exitPrice, exitPrice, netPnl, netPnlPct, reason, pos.id);
       db.prepare('UPDATE sim_wallet SET balance=balance+?,total_pnl=total_pnl+?,total_trades=total_trades+?,winning_trades=winning_trades+?,updated_at=CURRENT_TIMESTAMP').run(exitAmount, netPnl, 1, netPnl > 0 ? 1 : 0);
 
       var signalRecord = this.performance.signals.find(function(s) { return s.symbol === pos.symbol && Math.abs(s.entryPrice - pos.entry_price) < pos.entry_price * 0.01; });
       if (signalRecord) {
-        var maxFavorable = side === 'SHORT' ? (pos.lowest_price ? ((pos.entry_price - pos.lowest_price) / pos.entry_price) * 100 : brutoPnlPct)
-          : (pos.highest_price ? ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
-        var maxAdverse = side === 'SHORT' ? (pos.highest_price ? ((pos.entry_price - pos.highest_price) / pos.entry_price) * 100 : brutoPnlPct)
-          : (pos.lowest_price ? ((pos.lowest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
-        this.machine.feedbackSignalResult(signalRecord.timestamp, netPnlPct, maxFavorable, maxAdverse);
+        var maxFavorable = pos.highest_price ? ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct;
+        var maxAdverse = pos.lowest_price ? ((pos.lowest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct;
         this.performance.feedbackLoop.push({ symbol: pos.symbol, return: netPnlPct, maxFavorable: maxFavorable, maxAdverse: maxAdverse, reason: reason, timestamp: Date.now() });
         this.performance.consecutiveLosses = netPnlPct <= 0 ? this.performance.consecutiveLosses + 1 : 0;
         this.updateAdaptiveThreshold();
       }
       delete this.trailingStops[pos.symbol];
-      console.log(`[SIM] ${netPnl >= 0 ? 'KAR' : 'ZARAR'} ${reason}: ${pos.symbol} (${side}) | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT | PesPese:${this.performance.consecutiveLosses}`);
+      console.log(`[SIM] ${netPnl >= 0 ? 'KAR' : 'ZARAR'} ${reason}: ${pos.symbol} (LONG) | %${netPnlPct.toFixed(2)} | ${netPnl.toFixed(4)} USDT | PesPese:${this.performance.consecutiveLosses}`);
       return { netPnl, netPnlPct };
     } catch(e) { console.error('[SIM] Kapatma hatasi:', e.message); return null; }
   }
@@ -126,14 +82,13 @@ class AdvancedSimulationEngine {
       var pos = openPos[i];
       var currentPrice = prices[pos.symbol];
       if (!currentPrice) continue;
-      var side = pos.side || 'LONG';
 
-      var brutoPnlPct = side === 'SHORT' ? ((pos.entry_price - currentPrice) / pos.entry_price) * 100 : ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
+      var brutoPnlPct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
       var netPnlPct = brutoPnlPct - (totalCost * 100);
-      var netPnl = (side === 'SHORT' ? (pos.entry_price - currentPrice) : (currentPrice - pos.entry_price)) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
+      var netPnl = (currentPrice - pos.entry_price) * pos.quantity - (pos.entry_price * pos.quantity * totalCost);
 
       if (!this.trailingStops[pos.symbol]) {
-        this.trailingStops[pos.symbol] = { highestPrice: pos.highest_price || pos.entry_price, lowestPrice: pos.lowest_price || pos.entry_price, side: side, entryTime: Date.now() };
+        this.trailingStops[pos.symbol] = { highestPrice: pos.highest_price || pos.entry_price, lowestPrice: pos.lowest_price || pos.entry_price, side: 'LONG', entryTime: Date.now() };
       }
 
       var trailing = this.trailingStops[pos.symbol];
@@ -142,23 +97,14 @@ class AdvancedSimulationEngine {
       var stopPrice = pos.stop_loss;
       var closeReason = null;
 
-      if (side === 'SHORT') {
-        if (currentPrice < trailing.lowestPrice) { trailing.lowestPrice = currentPrice; newLowest = currentPrice; }
-        if (currentPrice > trailing.highestPrice) newHighest = currentPrice;
-        var hardStop = pos.entry_price * (1 + hardStopPct);
-        var trailingStop = trailing.lowestPrice * (1 + trailingPct);
-        stopPrice = Math.min(trailingStop, hardStop);
-        if (currentPrice >= hardStop) closeReason = 'STOP_LOSS';
-        else if (brutoPnlPct >= minProfitPct * 100 && currentPrice >= trailingStop) closeReason = 'TRAILING_STOP';
-      } else {
-        if (currentPrice > trailing.highestPrice) { trailing.highestPrice = currentPrice; newHighest = currentPrice; }
-        if (currentPrice < trailing.lowestPrice) newLowest = currentPrice;
-        var hardStop = pos.entry_price * (1 - hardStopPct);
-        var trailingStop = trailing.highestPrice * (1 - trailingPct);
-        stopPrice = Math.max(trailingStop, hardStop);
-        if (currentPrice <= hardStop) closeReason = 'STOP_LOSS';
-        else if (brutoPnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) closeReason = 'TRAILING_STOP';
-      }
+      if (currentPrice > trailing.highestPrice) { trailing.highestPrice = currentPrice; newHighest = currentPrice; }
+      if (currentPrice < trailing.lowestPrice) { newLowest = currentPrice; }
+      var hardStop = pos.entry_price * (1 - hardStopPct);
+      var trailingStop = trailing.highestPrice * (1 - trailingPct);
+      stopPrice = Math.max(trailingStop, hardStop);
+
+      if (currentPrice <= hardStop) closeReason = 'STOP_LOSS';
+      else if (brutoPnlPct >= minProfitPct * 100 && currentPrice <= trailingStop) closeReason = 'TRAILING_STOP';
 
       if (closeReason) this.closePosition(pos, currentPrice, closeReason);
       else db.prepare('UPDATE sim_positions SET current_price=?,pnl=?,pnl_percent=?,stop_loss=?,highest_price=?,lowest_price=? WHERE id=?').run(currentPrice, netPnl, netPnlPct, stopPrice, newHighest, newLowest, pos.id);
@@ -224,4 +170,4 @@ class AdvancedSimulationEngine {
   }
 }
 
-module.exports = new AdvancedSimulationEngine();
+module.exports = new SimulationEngine();
