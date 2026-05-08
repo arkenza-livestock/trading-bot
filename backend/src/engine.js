@@ -271,8 +271,11 @@ class TradingEngine {
         }
 
         if (shortSignal && shortSignal.sinyal === 'SATIS') {
-          allSignals.push({
-            symbol: ticker.symbol, side: 'SHORT', signal_type: 'SATIS',
+  allSignals.push({
+    symbol: ticker.symbol,
+    side: 'SHORT',  // ← DOĞRU
+    signal_type: 'SATIS',
+    ...
             price: shortSignal.fiyat, fiyat: shortSignal.fiyat,
             score: shortSignal.puan, trend: shortSignal.trend, rsi: shortSignal.rsi,
             stop_loss: shortSignal.stop_loss, hedef: shortSignal.hedef || 0,
