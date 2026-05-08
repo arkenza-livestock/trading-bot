@@ -2,6 +2,7 @@ const db = require('./database');
 const MachineDecisionEngine = require('./MachineDecisionEngine');
 
 class AdvancedSimulationEngine {
+
   constructor() {
     this.trailingStops = {};
     this.machine = new MachineDecisionEngine();
@@ -26,27 +27,16 @@ class AdvancedSimulationEngine {
         var machineScore = 0.5;
         if (candlesData && candlesData[sinyal.symbol]) {
           var ma = self.machine.analyze(candlesData[sinyal.symbol], { symbol: sinyal.symbol, priceChangePercent: sinyal.degisim24h || 0, quoteVolume: sinyal.hacim24h || 0 });
-          if (ma.action === 'BUY' || ma.action === 'SELL') {
-            machineScore = ma.confidence;
-            if (ma.stopLoss) sinyal.stop_loss = ma.stopLoss;
-            if (ma.takeProfit) sinyal.target = ma.takeProfit;
-          } else if (ma.action === 'WAIT') {
-            machineScore = ma.confidence * 0.5;
-          } else {
-            machineScore = 0;
-          }
-          sinyal.machineReasoning = ma.reasoning;
-          sinyal.machineConfidence = ma.confidence;
-          sinyal.similarPatternsFound = ma.similarPatternsFound || 0;
+          if (ma.action === 'BUY' || ma.action === 'SELL') { machineScore = ma.confidence; if (ma.stopLoss) sinyal.stop_loss = ma.stopLoss; if (ma.takeProfit) sinyal.target = ma.takeProfit; }
+          else if (ma.action === 'WAIT') { machineScore = ma.confidence * 0.5; }
+          else { machineScore = 0; }
+          sinyal.machineReasoning = ma.reasoning; sinyal.machineConfidence = ma.confidence; sinyal.similarPatternsFound = ma.similarPatternsFound || 0;
         }
         return { ...sinyal, machineScore: machineScore, combinedScore: (machineScore * 0.7) + ((sinyal.score || sinyal.puan || 0) / 100 * 0.3) };
       })
       .filter(function(s) { return s.machineScore > 0; })
       .sort(function(a, b) { return b.combinedScore - a.combinedScore; });
-    if (degerlendirilen.length === 0) {
-      console.log('[SIM] Hicbir sinyal makine onayindan gecemedi');
-      return null;
-    }
+    if (degerlendirilen.length === 0) { console.log('[SIM] Hicbir sinyal makine onayindan gecemedi'); return null; }
     return degerlendirilen[0];
   }
 
@@ -58,17 +48,17 @@ class AdvancedSimulationEngine {
       var baseAmt = parseFloat(settings.trade_amount_usdt || 100);
       if (openPos.length >= maxPos) { console.log('[SIM] Max pozisyon doldu'); return null; }
       if (openPos.find(function(p) { return p.symbol === signal.symbol; })) return null;
-      
-      // BTC düşüş kontrolü (sadece LONG için tam ASAGI'de engelle)
+
+      // BTC korumaları (engine.js ile tam uyumlu)
       if (btcTrend && btcTrend.trend === 'ASAGI' && signal.side === 'LONG') {
         console.log('[SIM] BTC tam düsüs — ' + signal.symbol + ' LONG atlandi');
         return null;
       }
+      if (btcTrend && btcTrend.trend === 'YUKARI' && signal.side === 'SHORT') {
+        console.log('[SIM] BTC güçlü yükseliş — ' + signal.symbol + ' SHORT atlandi');
+        return null;
+      }
 
-      // SHORT TEST MODU: BTC durumuna bakmaksızın SHORT'ları aç
-      // Normalde SHORT için btcDown şartı engine.js'de kontrol edilir
-      // Simülasyon test amaçlı olduğu için burada ek engel yok
-      
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
       if (candlesData && candlesData[signal.symbol]) {
@@ -92,7 +82,7 @@ class AdvancedSimulationEngine {
       this.trailingStops[signal.symbol] = { highestPrice: price, lowestPrice: price, side: side, entryTime: Date.now(), machineConfidence: signal.machineConfidence || 0 };
       this.performance.signals.push({ symbol: signal.symbol, side: side, entryPrice: price, stopLoss: stopLoss, machineConfidence: signal.machineConfidence || 0, timestamp: Date.now() });
 
-      console.log('[SIM] ACILDI: ' + signal.symbol + ' (' + side + ') @ ' + price + ' | ' + baseAmt + ' USDT | Guc:' + guc + ' | AI:%' + ((signal.machineConfidence || 0) * 100).toFixed(0));
+      console.log('[SIM] ACILDI: ' + signal.symbol + ' (' + side + ') @ ' + price + ' | ' + baseAmt + ' USDT | Guc:' + guc + ' | AI:%' + ((signal.machineConfidence||0)*100).toFixed(0));
       return result.lastInsertRowid;
     } catch(e) { console.error('[SIM] Acma hatasi:', e.message); return null; }
   }
@@ -110,8 +100,10 @@ class AdvancedSimulationEngine {
 
       var signalRecord = this.performance.signals.find(function(s) { return s.symbol === pos.symbol && Math.abs(s.entryPrice - pos.entry_price) < pos.entry_price * 0.01; });
       if (signalRecord) {
-        var maxFavorable = side === 'SHORT' ? (pos.lowest_price ? ((pos.entry_price - pos.lowest_price) / pos.entry_price) * 100 : brutoPnlPct) : (pos.highest_price ? ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
-        var maxAdverse = side === 'SHORT' ? (pos.highest_price ? ((pos.entry_price - pos.highest_price) / pos.entry_price) * 100 : brutoPnlPct) : (pos.lowest_price ? ((pos.lowest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
+        var maxFavorable = side === 'SHORT' ? (pos.lowest_price ? ((pos.entry_price - pos.lowest_price) / pos.entry_price) * 100 : brutoPnlPct)
+          : (pos.highest_price ? ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
+        var maxAdverse = side === 'SHORT' ? (pos.highest_price ? ((pos.entry_price - pos.highest_price) / pos.entry_price) * 100 : brutoPnlPct)
+          : (pos.lowest_price ? ((pos.lowest_price - pos.entry_price) / pos.entry_price) * 100 : brutoPnlPct);
         this.machine.feedbackSignalResult(signalRecord.timestamp, netPnlPct, maxFavorable, maxAdverse);
         this.performance.feedbackLoop.push({ symbol: pos.symbol, return: netPnlPct, maxFavorable: maxFavorable, maxAdverse: maxAdverse, reason: reason, timestamp: Date.now() });
         this.performance.consecutiveLosses = netPnlPct <= 0 ? this.performance.consecutiveLosses + 1 : 0;
