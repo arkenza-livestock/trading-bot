@@ -1,6 +1,6 @@
 const binance    = require('./binance');
-const analysis   = require('./analysis');          // LONG motoru
-const shortAnalysis = require('./shortAnalysis');  // SHORT motoru
+const analysis   = require('./analysis');
+const shortAnalysis = require('./shortAnalysis');
 const db         = require('./database');
 const simulation = require('./simulation');
 const TelegramService = require('./telegram');
@@ -82,11 +82,13 @@ class TradingEngine {
   }
 
   // ═══════════════════════════════════════════
-  // BTC TREND + PİYASA REJİMİ DEDEKTÖRÜ
+  // BTC TREND + PİYASA REJİMİ (DİNAMİK ZAMAN DİLİMİ)
   // ═══════════════════════════════════════════
   async updateBTCTrend() {
     try {
-      const candles = await binance.getKlines('BTCUSDT', '4h', 200);
+      const settings = this.getSettings();
+      const tf = settings.analysis_timeframe || '4h';
+      const candles = await binance.getKlines('BTCUSDT', tf, 200);
       if (!candles || candles.length < 100) return;
       this.candlesData['BTCUSDT'] = candles;
       const closes = candles.map(c => parseFloat(c[4]));
@@ -100,21 +102,13 @@ class TradingEngine {
       const ema50 = analysis.calcEMA ? analysis.calcEMA(closes, 50) : fiyat;
       const adx = analysis.calcADX ? analysis.calcADX(highs, lows, closes, 14) : { adx: 0, diPlus: 0, diMinus: 0 };
       const atr14 = analysis.calcATR ? analysis.calcATR(highs, lows, closes, 14) : 0;
-      const avgATR = atr14 > 0 && closes.length >= 14
-        ? closes.slice(-14).map((_, i) => {
-            const h = highs.slice(-14)[i], l = lows.slice(-14)[i], c = closes.slice(-14)[i];
-            return Math.max(h-l, Math.abs(h-c), Math.abs(l-c));
-          }).reduce((a,b) => a+b, 0) / 14
-        : atr14;
 
-      // Trend tespiti
       let trend = 'NOTR';
       if (fiyat > ema21 && ema21 > ema50) trend = 'YUKARI';
       else if (fiyat > ema21) trend = 'HAFIF_YUKARI';
       else if (fiyat < ema21 && ema21 < ema50) trend = 'ASAGI';
       else if (fiyat < ema21) trend = 'HAFIF_ASAGI';
 
-      // Rejim tespiti (RALLY, RANGING, DOWNTREND, VOLATILE)
       let regime = 'RANGING';
       if (trend === 'YUKARI' && adx.adx > 25 && adx.diPlus > adx.diMinus && fiyat > ema50) {
         regime = 'RALLY';
@@ -124,17 +118,25 @@ class TradingEngine {
         regime = 'RANGING';
       }
 
-      // Volatilite kontrolü (haber filtresi)
       const volumeSpike = volumes.length >= 20
         ? volumes[volumes.length-1] > (volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20) * 3
         : false;
-      if (atr14 > avgATR * 2 || volumeSpike) {
+      if (atr14 > this.getATRAverage(highs, lows, closes, 14) * 2 || volumeSpike) {
         regime = 'VOLATILE';
       }
 
       this.btcTrend = { trend, rsi, fiyat, strength: adx.adx, regime, lastUpdate: Date.now() };
       console.log(`[BTC] ${trend} | RSI:${rsi.toFixed(1)} | ADX:${adx.adx.toFixed(1)} | Rejim:${regime} | $${fiyat.toFixed(0)}`);
     } catch(e) { console.error('[BTC] Trend hatasi:', e.message); }
+  }
+
+  getATRAverage(highs, lows, closes, period) {
+    const trValues = [];
+    for (let i = 1; i < closes.length; i++) {
+      trValues.push(Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])));
+    }
+    if (trValues.length < period) return 0;
+    return trValues.slice(-period).reduce((a,b) => a+b, 0) / period;
   }
 
   async updateRealPositions() {
@@ -200,13 +202,14 @@ class TradingEngine {
   }
 
   // ═══════════════════════════════════════════
-  // ANA TARAMA (ÇİFT MOTORLU)
+  // ANA TARAMA (DİNAMİK ZAMAN DİLİMİ)
   // ═══════════════════════════════════════════
   async scan() {
     const baslangic = Date.now();
     const settings  = this.getSettings();
     this.scanCount++;
 
+    const tf = settings.analysis_timeframe || '4h';
     const minHacim = parseFloat(settings.min_volume || 5000000);
     const maxCoin  = parseInt(settings.max_coins || 120);
     const realTrading = settings.real_trading === 'true' || settings.real_trading === '1';
@@ -216,8 +219,8 @@ class TradingEngine {
 
     console.log('\n' + '='.repeat(50));
     console.log(`[${new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })}] TARAMA #${this.scanCount}`);
-    console.log(`[BTC] Rejim:${btcRegime} | RSI:${(this.btcTrend.rsi||50).toFixed(1)}`);
-    console.log(`[ISLEM] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled?'✅':'❌'} | ADAPTIF CIFT MOTOR`);
+    console.log(`[BTC] Rejim:${btcRegime} | RSI:${(this.btcTrend.rsi||50).toFixed(1)} | TF:${tf}`);
+    console.log(`[ISLEM] LONG ${longEnabled?'✅':'❌'} | SHORT ${shortEnabled?'✅':'❌'} | ADAPTIF`);
     console.log('='.repeat(50));
 
     const STABLES = new Set(['BUSDUSDT','USDCUSDT','TUSDUSDT','USDTUSDT','FDUSDUSDT','DAIUSDT','USDPUSDT','EURUSDT','AEURUSDT','USTCUSDT']);
@@ -244,33 +247,20 @@ class TradingEngine {
 
     for (const ticker of filtreli) {
       try {
-        const candles4H = await binance.getKlines(ticker.symbol, '4h', 200);
-        if (!candles4H || candles4H.length < 100) continue;
-        this.candlesData[ticker.symbol] = candles4H;
+        // DİNAMİK ZAMAN DİLİMİ
+        const candles = await binance.getKlines(ticker.symbol, tf, 200);
+        if (!candles || candles.length < 100) continue;
+        this.candlesData[ticker.symbol] = candles;
 
-        // ── LONG ANALİZİ ──
-        let longSignal = null;
-        if (longEnabled) {
-          longSignal = analysis.analyze(candles4H, ticker, { btcRegime });
-        }
+        const longSignal = longEnabled ? analysis.analyze(candles, ticker, { btcRegime }) : null;
+        const shortSignal = shortEnabled ? shortAnalysis.analyze(candles, ticker, { btcRegime }) : null;
 
-        // ── SHORT ANALİZİ ──
-        let shortSignal = null;
-        if (shortEnabled) {
-          shortSignal = shortAnalysis.analyze(candles4H, ticker, { btcRegime });
-        }
-
-        // ── Karar ve birleştirme ──
         let selectedSignal = null;
         let side = null;
 
-        // İkisi de varsa puanı yüksek olanı seç
         if (longSignal && longSignal.sinyal === 'ALIM' && shortSignal && shortSignal.sinyal === 'SATIS') {
-          if (longSignal.puan >= shortSignal.puan) {
-            selectedSignal = longSignal; side = 'LONG';
-          } else {
-            selectedSignal = shortSignal; side = 'SHORT';
-          }
+          if (longSignal.puan >= shortSignal.puan) { selectedSignal = longSignal; side = 'LONG'; }
+          else { selectedSignal = shortSignal; side = 'SHORT'; }
         } else if (longSignal && longSignal.sinyal === 'ALIM') {
           selectedSignal = longSignal; side = 'LONG';
         } else if (shortSignal && shortSignal.sinyal === 'SATIS') {
@@ -285,21 +275,17 @@ class TradingEngine {
           const emoji = side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
           console.log(`[✅ ${emoji}] ${ticker.symbol.padEnd(10)} | ${selectedSignal.passedCount}/${selectedSignal.totalRules} Kural | Puan:${String(selectedSignal.puan).padStart(3)} | Rejim:${btcRegime}`);
 
-          // ── Simülasyona gönder ──
           simulation.openPosition({
-            symbol: ticker.symbol, side,
-            signal_type: side === 'LONG' ? 'ALIM' : 'SATIS',
+            symbol: ticker.symbol, side, signal_type: side === 'LONG' ? 'ALIM' : 'SATIS',
             price: selectedSignal.fiyat, fiyat: selectedSignal.fiyat,
             score: selectedSignal.puan, trend: selectedSignal.trend,
             stop_loss: selectedSignal.stop_loss, stopLoss: selectedSignal.stop_loss,
             target: selectedSignal.hedef || 0,
             machineConfidence: selectedSignal.puan / 100,
             machineReasoning: `${selectedSignal.passedCount}/${selectedSignal.totalRules} Kural | ${selectedSignal.ruleDetails}`,
-            passedCount: selectedSignal.passedCount,
-            totalRules: selectedSignal.totalRules
+            passedCount: selectedSignal.passedCount, totalRules: selectedSignal.totalRules
           }, settings, this.btcTrend, this.candlesData);
 
-          // ── Gerçek alım ──
           if (realTrading && !this.realPositions[ticker.symbol]) {
             const tradeAmount = parseFloat(settings.trade_amount_usdt || 100);
             if (side === 'LONG') {
@@ -325,7 +311,6 @@ class TradingEngine {
             telegram.sendMessage(`${emoji} — ${ticker.symbol}\n💰 G:${selectedSignal.fiyat}\n📊 ${selectedSignal.passedCount}/${selectedSignal.totalRules} Kural | ${selectedSignal.ruleDetails}`).catch(() => {});
           }
 
-          // Sinyali DB'ye kaydet
           const finalScore = selectedSignal.puan;
           const sinyalTipi = side === 'LONG' ? 'ALIM' : 'SATIS';
           const risk = selectedSignal.risk || 'ORTA';
@@ -336,7 +321,6 @@ class TradingEngine {
               `✅ ${selectedSignal.passedCount}/${selectedSignal.totalRules} Kural | ${selectedSignal.ruleDetails}`);
         } else {
           machineRejected++;
-          // Reddedilme nedenini kaydet
           if (longSignal && longSignal.sinyal !== 'ALIM' && shortSignal && shortSignal.sinyal !== 'SATIS') {
             rejectionReasons['KURAL_YETERSIZ'] = (rejectionReasons['KURAL_YETERSIZ'] || 0) + 1;
           }
@@ -361,14 +345,10 @@ class TradingEngine {
     db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)')
       .run(filtreli.length, signalsFound.length, sure, JSON.stringify(signalsFound), machineAccepted, machineRejected);
 
-    // Ağırlıkları kaydet
     if (typeof analysis.saveToDB === 'function') analysis.saveToDB();
     if (typeof shortAnalysis.saveToDB === 'function') shortAnalysis.saveToDB();
   }
 
-  // ═══════════════════════════════════════════
-  // BAŞLAT
-  // ═══════════════════════════════════════════
   async start() {
     if (this.running) return;
     this.running = true;
