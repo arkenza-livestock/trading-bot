@@ -233,11 +233,11 @@ class TradingEngine {
     }
     tumFiltreli.sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
     const filtreli = tumFiltreli.slice(0, maxCoin);
-    console.log(filtreli.length + ' coin taranacak\n' + '-'.repeat(50));
+    console.log(`${filtreli.length} coin taranacak\n` + '-'.repeat(50));
 
     db.prepare("DELETE FROM signals").run();
 
-    const allSignals = [];
+    const allSignals = [];   // TÜM sinyaller (ALIM, SATIS, BEKLE)
 
     for (const ticker of filtreli) {
       try {
@@ -248,32 +248,52 @@ class TradingEngine {
         const longSignal = longEnabled ? analysis.analyze(candles, ticker, { btcRegime }) : null;
         const shortSignal = shortEnabled ? shortAnalysis.analyze(candles, ticker, { btcRegime }) : null;
 
-        if (longSignal && longSignal.sinyal === 'ALIM') {
+        // LONG sinyali (ALIM ya da BEKLE olabilir)
+        if (longSignal) {
           allSignals.push({
-            symbol: ticker.symbol, side: 'LONG', signal_type: 'ALIM',
-            price: longSignal.fiyat, fiyat: longSignal.fiyat,
-            score: longSignal.puan, trend: longSignal.trend, rsi: longSignal.rsi,
-            stop_loss: longSignal.stop_loss, hedef: longSignal.hedef || 0,
+            symbol: ticker.symbol,
+            side: 'LONG',
+            signal_type: longSignal.sinyal,   // ALIM / BEKLE
+            price: longSignal.fiyat,
+            fiyat: longSignal.fiyat,
+            score: longSignal.puan,
+            trend: longSignal.trend,
+            rsi: longSignal.rsi,
+            stop_loss: longSignal.stop_loss,
+            hedef: longSignal.hedef || 0,
             machineConfidence: longSignal.puan / 100,
-            machineReasoning: `${longSignal.passedCount}/${longSignal.totalRules} Kural | ${longSignal.ruleDetails}`,
-            passedCount: longSignal.passedCount, totalRules: longSignal.totalRules,
-            risk: longSignal.risk || 'ORTA', pozitif: longSignal.pozitif || [],
-            negatif: longSignal.negatif || [], ruleDetails: longSignal.ruleDetails || '',
+            machineReasoning: longSignal.ruleDetails,
+            passedCount: longSignal.passedCount,
+            totalRules: longSignal.totalRules,
+            risk: longSignal.risk || 'ORTA',
+            pozitif: longSignal.pozitif || [],
+            negatif: longSignal.negatif || [],
+            ruleDetails: longSignal.ruleDetails || '',
             macdBullish: longSignal.macdBullish || 0
           });
         }
 
-        if (shortSignal && shortSignal.sinyal === 'SATIS') {
+        // SHORT sinyali (SATIS ya da BEKLE olabilir)
+        if (shortSignal) {
           allSignals.push({
-            symbol: ticker.symbol, side: 'SHORT', signal_type: 'SATIS',
-            price: shortSignal.fiyat, fiyat: shortSignal.fiyat,
-            score: shortSignal.puan, trend: shortSignal.trend, rsi: shortSignal.rsi,
-            stop_loss: shortSignal.stop_loss, hedef: shortSignal.hedef || 0,
+            symbol: ticker.symbol,
+            side: 'SHORT',
+            signal_type: shortSignal.sinyal,   // SATIS / BEKLE
+            price: shortSignal.fiyat,
+            fiyat: shortSignal.fiyat,
+            score: shortSignal.puan,
+            trend: shortSignal.trend,
+            rsi: shortSignal.rsi,
+            stop_loss: shortSignal.stop_loss,
+            hedef: shortSignal.hedef || 0,
             machineConfidence: shortSignal.puan / 100,
-            machineReasoning: `${shortSignal.passedCount}/${shortSignal.totalRules} Kural | ${shortSignal.ruleDetails}`,
-            passedCount: shortSignal.passedCount, totalRules: shortSignal.totalRules,
-            risk: shortSignal.risk || 'ORTA', pozitif: shortSignal.pozitif || [],
-            negatif: shortSignal.negatif || [], ruleDetails: shortSignal.ruleDetails || '',
+            machineReasoning: shortSignal.ruleDetails,
+            passedCount: shortSignal.passedCount,
+            totalRules: shortSignal.totalRules,
+            risk: shortSignal.risk || 'ORTA',
+            pozitif: shortSignal.pozitif || [],
+            negatif: shortSignal.negatif || [],
+            ruleDetails: shortSignal.ruleDetails || '',
             macdBullish: shortSignal.macdBullish || 0
           });
         }
@@ -282,21 +302,34 @@ class TradingEngine {
       } catch (e) { }
     }
 
+    // ── SINIFLANDIR ──────────────────────────
+    const acceptedSignals = allSignals.filter(s => s.signal_type === 'ALIM' || s.signal_type === 'SATIS');
+    const rejectedSignals = allSignals.filter(s => s.signal_type === 'BEKLE');
+
     // ── PUANA GÖRE SIRALA ──────────────────────────
-    allSignals.sort((a, b) => b.score - a.score);
+    acceptedSignals.sort((a, b) => b.score - a.score);
 
     // ── EN İYİLERİ SEÇ (maxPos kadar) ──────────────
-    const selectedSignals = allSignals.slice(0, maxPos);
+    const selectedSignals = acceptedSignals.slice(0, maxPos);
     let longCount = 0, shortCount = 0;
 
     // ── TÜM SİNYALLERİ DB'YE KAYDET ────────────────
     for (const sig of allSignals) {
       const isSelected = selectedSignals.some(s => s.symbol === sig.symbol && s.side === sig.side);
+      let aiComment;
+      if (isSelected) {
+        aiComment = `✅ SECILDI ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`;
+      } else if (sig.signal_type === 'BEKLE') {
+        aiComment = `⛔ RED: ${sig.ruleDetails}`;
+      } else {
+        aiComment = `${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`;
+      }
+
       db.prepare('INSERT INTO signals (symbol,signal_type,score,risk,price,fiyat,rsi,macd,trend,positive_signals,negative_signals,ai_comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(sig.symbol, sig.signal_type, sig.score, sig.risk, sig.fiyat, sig.fiyat,
           sig.rsi, sig.macdBullish || 0, sig.trend,
           JSON.stringify(sig.pozitif || []), JSON.stringify(sig.negatif || []),
-          isSelected ? `✅ SECILDI ${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}` : `${sig.passedCount}/${sig.totalRules} Kural | ${sig.ruleDetails}`);
+          aiComment);
     }
 
     // ── SEÇİLENLERİ SİMÜLASYONA VE GERÇEK ALIMA GÖNDER ──
@@ -308,10 +341,9 @@ class TradingEngine {
       const emoji = sig.side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
       console.log(`[✅ ${emoji}] ${sig.symbol.padEnd(10)} | Puan:${String(sig.score).padStart(3)} | RSI:${sig.rsi.toFixed(1)} | ${sig.passedCount}/${sig.totalRules} Kural`);
 
-      // SIMÜLASYONA YÖNLENDİR
       simulation.openPosition({
         symbol: sig.symbol,
-        side: sig.side,           // ← burada 'LONG' veya 'SHORT' garantili
+        side: sig.side,
         signal_type: sig.signal_type,
         price: sig.fiyat,
         fiyat: sig.fiyat,
@@ -357,17 +389,17 @@ class TradingEngine {
 
     const sure = Date.now() - baslangic;
     const simStats = simulation.getStats();
-    this.performance.scans.push({ timestamp: Date.now(), coinsScanned: filtreli.length, signalsFound: selectedSignals.length, machineAccepted: selectedSignals.length, machineRejected: allSignals.length - selectedSignals.length, duration: sure });
-    this.performance.signalsGenerated += selectedSignals.length;
+    this.performance.scans.push({ timestamp: Date.now(), coinsScanned: filtreli.length, signalsFound: selectedSignals.length, machineAccepted: selectedSignals.length, machineRejected: rejectedSignals.length, duration: sure });
+    this.performance.signalsGenerated += acceptedSignals.length;
     this.performance.signalsAccepted += selectedSignals.length;
-    this.performance.signalsRejected += allSignals.length - selectedSignals.length;
+    this.performance.signalsRejected += rejectedSignals.length;
 
     console.log('\n' + '-'.repeat(50));
-    console.log(`[TARAMA] ${selectedSignals.length} secildi (${longCount}L/${shortCount}S) | Toplam:${allSignals.length} sinyal | Rejim:${btcRegime}`);
-    console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Basari: %${simStats.winRate}`);
+    console.log(`[TARAMA] ${filtreli.length} coin tarandı | ${selectedSignals.length} kabul (${longCount}L/${shortCount}S) | ${rejectedSignals.length} REDDEDİLDİ`);
+    console.log(`[SIM] Bakiye: ${simStats.balance?.toFixed(2)} | Başarı: %${simStats.winRate}`);
 
     db.prepare('INSERT INTO scan_logs (coin_count,signal_count,duration_ms,signals_found,machine_accepted,machine_rejected) VALUES (?,?,?,?,?,?)')
-      .run(filtreli.length, selectedSignals.length, sure, JSON.stringify(selectedSignals.map(s => s.symbol)), selectedSignals.length, allSignals.length - selectedSignals.length);
+      .run(filtreli.length, selectedSignals.length, sure, JSON.stringify(selectedSignals.map(s => s.symbol)), selectedSignals.length, rejectedSignals.length);
 
     if (typeof analysis.saveToDB === 'function') analysis.saveToDB();
     if (typeof shortAnalysis.saveToDB === 'function') shortAnalysis.saveToDB();
