@@ -1,3 +1,4 @@
+();
 /**
  * ═══════════════════════════════════════════════════════════
  *   ADAPTİF ÇOK FAKTÖRLÜ ANALİZ MOTORU – LONG (A1)
@@ -127,44 +128,45 @@ class AdaptiveHybridAnalysis {
 
     let score = totalWeight > 0 ? Math.round((earnedWeight / totalWeight) * 100) : 0;
 
-    // ──────────────── AKILLI RED FİLTRELERİ ────────────────
+    // ──────────────── AKILLI RED FİLTRELERİ (YUMUŞATILMIŞ) ────────────────
     const rsi = this.calcRSI(closes, 14);
     const stochK = this.calcStochK(closes, 14);
     const bollinger = this.calcBollinger(closes, 20);
     const avgVolume20 = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
     const lastVolume = volumes[volumes.length - 1];
-    const volumeQuality = lastVolume > avgVolume20 * 0.8;  // en az %80 hacim olsun
+    const volumeQuality = lastVolume > avgVolume20 * 0.7;   // %70 yeterli
 
     const redReasons = [];
 
-    // 1. RSI aşırı alım
-    if (rsi > 70) {
+    // 1. RSI aşırı alım (eşik 75)
+    if (rsi > 75) {
       redReasons.push(`RSI AŞIRI ALIM (${rsi.toFixed(1)})`);
     }
 
-    // 2. StochRSI aşırı alım
-    if (stochK > 80) {
+    // 2. StochRSI aşırı alım (eşik 85)
+    if (stochK > 85) {
       redReasons.push(`StochRSI AŞIRI ALIM (K:${stochK.toFixed(1)})`);
     }
 
-    // 3. Fiyat üst bollinger bandına çok yakın
-    if (bollinger && fiyat >= bollinger.upper * 0.99) {
-      redReasons.push(`FİYAT ÜST BANTTA (${((fiyat / bollinger.upper - 1) * 100).toFixed(2)}%)`);
+    // 3. Fiyat üst bollinger bandına %3'ten yakınsa
+    if (bollinger && fiyat >= bollinger.upper * 0.97) {
+      redReasons.push(`FİYAT ÜST BANTTA`);
     }
 
-    // 4. Düşük hacim (hacimsiz yükseliş olmaz)
+    // 4. Düşük hacim
     if (!volumeQuality) {
       redReasons.push('DÜŞÜK HACİM');
     }
 
-    // Eğer en az 2 red sebebi varsa sinyali tamamen iptal et
-    if (redReasons.length >= 2) {
-      score = Math.min(score, 40);  // puanı düşür
+    // Red sebepleri 3 veya daha fazlaysa sinyali BEKLE yap, yoksa sadece puan kır
+    if (redReasons.length >= 3) {
+      score = Math.min(score, 40);
+    } else if (redReasons.length === 2) {
+      score = Math.min(score, 55);
     } else if (redReasons.length === 1) {
-      score = Math.min(score, 55);  // tek sebep varsa puanı kır
+      score = Math.min(score, 65);
     }
-
-    const signal = (passedCount >= regimeCfg.minPass && redReasons.length < 2) ? 'ALIM' : 'BEKLE';
+    const signal = (passedCount >= regimeCfg.minPass && redReasons.length < 3) ? 'ALIM' : 'BEKLE';
     const risk = (passedCount >= regimeCfg.minPass + 1 && redReasons.length === 0) ? 'DUSUK' : 'ORTA';
 
     // Stop / hedef
@@ -199,12 +201,12 @@ class AdaptiveHybridAnalysis {
   }
 
   // ═══════════════ 12 KURAL ═══════════════
-  check_supportNear(c) { /* aynı */ const low50 = Math.min(...c.slice(-50)); return ((c[c.length-1] - low50) / c[c.length-1]) * 100 < 2; }
+  check_supportNear(c) { const low50 = Math.min(...c.slice(-50)); return ((c[c.length-1] - low50) / c[c.length-1]) * 100 < 2; }
   check_rsiOversold(c) { const r = this.calcRSI(c, 14); return r > 25 && r < 35; }
   check_ichimokuBelow(c, h, l) { const h52 = Math.max(...h.slice(-52)); const l52 = Math.min(...l.slice(-52)); const senkouB = (h52 + l52) / 2; return c[c.length-1] < senkouB; }
   check_rsiDivergence(c) { if (c.length < 20) return false; const recent = c.slice(-10), prev = c.slice(-20, -10); const rLow = Math.min(...recent), pLow = Math.min(...prev); if (rLow >= pLow) return false; return this.calcRSI(recent, 14) > this.calcRSI(prev, 14); }
   check_volumeBuying(c, h, l, v, o) { if (v.length < 21) return false; const curV = v[v.length-1]; const avgV = v.slice(-21, -1).reduce((a,b) => a+b, 0) / 20; const curC = c[c.length-1], curO = o[o.length-1]; return curV > avgV * 1.5 && curC > curO; }
-  check_macdCross(c) { /* aynı */ if (c.length < 35) return false; const ema12 = this.calcEMA(c, 12); const ema26 = this.calcEMA(c, 26); const macd = ema12 - ema26; const vals = []; for (let i = c.length - 9; i < c.length; i++) { const s12 = c.slice(0, i+1), s26 = c.slice(0, i+1); vals.push(this.calcEMA(s12, 12) - this.calcEMA(s26, 26)); } const signal = vals.reduce((a,b) => a + b, 0) / 9; return macd > signal; }
+  check_macdCross(c) { if (c.length < 35) return false; const ema12 = this.calcEMA(c, 12); const ema26 = this.calcEMA(c, 26); const macd = ema12 - ema26; const vals = []; for (let i = c.length - 9; i < c.length; i++) { const s12 = c.slice(0, i+1), s26 = c.slice(0, i+1); vals.push(this.calcEMA(s12, 12) - this.calcEMA(s26, 26)); } const signal = vals.reduce((a,b) => a + b, 0) / 9; return macd > signal; }
   check_goldenCross(c) { if (c.length < 51) return false; const ema21 = this.calcEMA(c, 21); const ema50 = this.calcEMA(c, 50); const prev21 = this.calcEMA(c.slice(0, -1), 21); const prev50 = this.calcEMA(c.slice(0, -1), 50); return prev21 <= prev50 && ema21 > ema50; }
   check_adxTrendUp(c, h, l) { const adx = this.calcADX(h, l, c, 14); return adx.adx > 25 && adx.diPlus > adx.diMinus; }
   check_bollingerBounce(c) { if (c.length < 20) return false; const slice = c.slice(-20); const mean = slice.reduce((a,b) => a + b, 0) / 20; const std = Math.sqrt(slice.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / 20); const lower = mean - 2 * std; return c[c.length-1] <= lower * 1.005; }
@@ -212,7 +214,7 @@ class AdaptiveHybridAnalysis {
   check_cmfPositive(c, h, l, v) { const period = 20; if (c.length < period) return false; let mfv = 0, volSum = 0; for (let i = c.length - period; i < c.length; i++) { const hi = h[i], lo = l[i], cl = c[i], vo = v[i]; if (hi === lo) continue; mfv += ((cl - lo) - (hi - cl)) / (hi - lo) * vo; volSum += vo; } return volSum > 0 && (mfv / volSum) > 0.1; }
   check_stochRsiOversold(c) { const k = this.calcStochK(c, 14); return k < 20; }
 
-  // ═══════════════ YENİ FONKSİYONLAR ═══════════════
+  // ═══════════════ YARDIMCI FONKSİYONLAR ═══════════════
   calcStochK(closes, rsiPeriod = 14) {
     const rsiVals = [];
     for (let i = rsiPeriod; i <= closes.length; i++) {
@@ -236,7 +238,6 @@ class AdaptiveHybridAnalysis {
     return { upper: mean + 2 * std, lower: mean - 2 * std };
   }
 
-  // ═══════════════ TEMEL GÖSTERGELER ═══════════════
   calcRSI(data, period = 14) {
     if (data.length < period + 1) return 50;
     let gains = 0, losses = 0;
@@ -260,7 +261,11 @@ class AdaptiveHybridAnalysis {
   calcATR(highs, lows, closes, period = 14) {
     const tr = [];
     for (let i = 1; i < closes.length; i++) {
-      tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+      tr.push(Math.max(
+        highs[i] - lows[i],
+        Math.abs(highs[i] - closes[i - 1]),
+        Math.abs(lows[i] - closes[i - 1])
+      ));
     }
     if (tr.length < period) return tr.reduce((a,b) => a + b, 0) / tr.length;
     return tr.slice(-period).reduce((a,b) => a + b, 0) / period;
@@ -283,6 +288,7 @@ class AdaptiveHybridAnalysis {
   }
 }
 
+// Geriye dönük uyumluluk sınıfı
 class ProfessionalAnalysis extends AdaptiveHybridAnalysis {
   constructor() { super(); }
   hesaplaRSI(d,p) { return this.calcRSI(d,p); }
