@@ -27,17 +27,21 @@ class SimulationEngine {
       if ((wallet?.balance || 0) < baseAmt) { console.log('[SIM] Yetersiz bakiye'); return null; }
 
       // ═══════════════════════════════════════════════
-      // DÜZELTİLMİŞ SİDE BELİRLEME (tüm varyasyonları kapsar)
+      // KESİN ÇÖZÜM: TÜM VARYASYONLARI KAPSAYAN SİDE
       // ═══════════════════════════════════════════════
       var side = 'LONG';
-      var incomingSide = (signal.side || signal.signal_type || signal.sinyal || signal.direction || '').toString().toUpperCase();
+      var rawSide = signal.side || signal.signal_type || signal.sinyal || signal.direction || '';
+      var incomingSide = rawSide.toString().toUpperCase().trim();
+      
       if (incomingSide === 'SHORT' || incomingSide === 'SELL' || incomingSide === 'SATIS' || incomingSide === 'SAT' || incomingSide === 'AÇIK') {
         side = 'SHORT';
       } else if (incomingSide === 'LONG' || incomingSide === 'BUY' || incomingSide === 'ALIM' || incomingSide === 'AL' || incomingSide === 'KAPALI') {
         side = 'LONG';
       } else {
-        console.error(`[SIM] ⚠️ Bilinmeyen sinyal yönü: "${incomingSide}" - Sembol: ${signal.symbol}. Varsayılan LONG olarak açılıyor.`);
+        console.error(`[SIM] ❗ Bilinmeyen sinyal yönü: "${incomingSide}" - ${signal.symbol}. Varsayılan LONG açılıyor. Lütfen kontrol et.`);
       }
+
+      console.log(`[SIM DEBUG] Gelen side: "${incomingSide}" → Açılan yön: ${side}`);
 
       var price = signal.price || signal.fiyat;
       var quantity = baseAmt / price;
