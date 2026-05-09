@@ -81,9 +81,6 @@ class TradingEngine {
     if (Object.keys(this.realPositions).length > 0) await this.updateRealPositions();
   }
 
-  // ═══════════════════════════════════════════
-  // BTC TREND + PİYASA REJİMİ (DİNAMİK ZAMAN DİLİMİ)
-  // ═══════════════════════════════════════════
   async updateBTCTrend() {
     try {
       const settings = this.getSettings();
@@ -201,9 +198,6 @@ class TradingEngine {
     } catch (e) { }
   }
 
-  // ═══════════════════════════════════════════
-  // ANA TARAMA (DİNAMİK ZAMAN DİLİMİ + ADAPTİF)
-  // ═══════════════════════════════════════════
   async scan() {
     const baslangic = Date.now();
     const settings = this.getSettings();
@@ -314,17 +308,10 @@ class TradingEngine {
       const emoji = sig.side === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
       console.log(`[✅ ${emoji}] ${sig.symbol.padEnd(10)} | Puan:${String(sig.score).padStart(3)} | RSI:${sig.rsi.toFixed(1)} | ${sig.passedCount}/${sig.totalRules} Kural`);
 
-      // DEBUG LOGU
-      console.log('[SIM DEBUG] Gönderilen sinyal:', JSON.stringify({
-        symbol: sig.symbol,
-        side: sig.side,
-        signal_type: sig.signal_type,
-        price: sig.fiyat
-      }));
-
+      // SIMÜLASYONA YÖNLENDİR
       simulation.openPosition({
         symbol: sig.symbol,
-        side: sig.side,
+        side: sig.side,           // ← burada 'LONG' veya 'SHORT' garantili
         signal_type: sig.signal_type,
         price: sig.fiyat,
         fiyat: sig.fiyat,
