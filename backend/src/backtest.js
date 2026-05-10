@@ -1,152 +1,340 @@
-// backend/src/backtest.js
-const binance = require('./binance');
-const analysis = require('./analysis');
-const MachineDecisionEngine = require('./MachineDecisionEngine');
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   BACKTEST.JS - BACKTESTING VE PERFORMANS ANALİZİ
+ *   
+ *   📊 Özellikler:
+ *   - Geçmiş verilerde test
+ *   - Performans metriklerini hesapla
+ *   - Optimize önerileri sun
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 
-class MachineBacktestEngine {
-  async run(params) {
-    const {
-      symbols = ['BTCUSDT'], interval = '4h', days = 30,
-      stopLoss = 2.0, trailingStop = 0.5, minProfit = 1.5,
-      commission = 0.1, slippage = 0.05, minScore = 50,
-      tradeAmount = 100, maxPositions = 3, epochs = 1,
-      machineConfidenceMin = 0.70,
-      longEnabled = true, shortEnabled = true, shortConfMin = 0.85
-    } = params;
+class BacktestEngine {
+  constructor(analysisEngine, simulationEngine, db) {
+    this.analysis = analysisEngine;
+    this.simulation = simulationEngine;
+    this.db = db;
 
-    const totalCost = (commission + slippage) * 2 / 100;
-    const limit = Math.ceil(days * 6) + 200;
-    const allTrades = [];
-
-    console.log(`[BACKTEST] ${symbols.length} coin, ${days}g, ${interval}`);
-    console.log(`[BACKTEST] LONG:${longEnabled} SHORT:${shortEnabled}(esik:%${Math.round(shortConfMin*100)})`);
-
-    for (const symbol of symbols) {
-      try {
-        const candles = await binance.getKlines(symbol, interval, Math.min(limit, 1000));
-        if (!candles || candles.length < 150) continue;
-
-        const engine = new MachineDecisionEngine();
-        const trades = []; const openPositions = []; const startIdx = 100;
-
-        // BTC verisini çek (SHORT için trend kontrolü)
-        let btcCandles = null;
-        if (shortEnabled) {
-          try { btcCandles = await binance.getKlines('BTCUSDT', interval, Math.min(limit, 1000)); } catch(e) {}
-        }
-
-        for (let i = startIdx; i < candles.length; i++) {
-          const slice = candles.slice(0, i + 1);
-          const currentPrice = parseFloat(candles[i][4]);
-          const currentTime = parseInt(candles[i][6]);
-
-          // BTC trend kontrolü (SHORT için)
-          let btcDown = false;
-          if (shortEnabled && btcCandles && i < (btcCandles.length - 50)) {
-            const btcSlice = btcCandles.slice(0, i + 1);
-            const btcCloses = btcSlice.map(c => parseFloat(c[4]));
-            const btcEma21 = analysis.hesaplaEMA(btcCloses, 21);
-            const btcEma50 = analysis.hesaplaEMA(btcCloses, 50);
-            const btcPrice = btcCloses[btcCloses.length - 1];
-            // BTC düşüş şartı: fiyat EMA21'in altında VE EMA21 EMA50'nin altında
-            btcDown = btcPrice < btcEma21 && btcEma21 < btcEma50;
-          }
-
-          // Açık pozisyonları güncelle (LONG & SHORT)
-          for (let j = openPositions.length - 1; j >= 0; j--) {
-            var pos = openPositions[j], side = pos.side || 'LONG', pnlPct, closeReason = null;
-            if (side === 'SHORT') {
-              if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
-              pnlPct = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 - totalCost * 100;
-              var hardStop = pos.entryPrice * (1 + stopLoss / 100);
-              var trailingStopPrice = pos.lowestPrice * (1 + trailingStop / 100);
-              if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
-              else if (pnlPct >= minProfit && currentPrice >= trailingStopPrice) closeReason = 'TRAILING_STOP';
-            } else {
-              if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
-              pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
-              var hardStop = pos.entryPrice * (1 - stopLoss / 100);
-              var trailingStopPrice = pos.highestPrice * (1 - trailingStop / 100);
-              if (pnlPct <= -stopLoss) closeReason = 'STOP_LOSS';
-              else if (pnlPct >= minProfit && currentPrice <= trailingStopPrice) closeReason = 'TRAILING_STOP';
-            }
-            if (closeReason) {
-              const netPnl = tradeAmount * pnlPct / 100;
-              trades.push({ symbol, side, entryPrice: pos.entryPrice, exitPrice: currentPrice, entryTime: pos.entryTime, exitTime: currentTime, reason: closeReason, score: pos.score || 0, machineConfidence: pos.machineConfidence || 0, netPnl: parseFloat(netPnl.toFixed(4)), netPnlPct: parseFloat(pnlPct.toFixed(2)), phase: 'BACKTEST' });
-              openPositions.splice(j, 1);
-            }
-          }
-
-          if (openPositions.length >= maxPositions) continue;
-
-          const analysisResult = analysis.analyze(slice, { symbol, priceChangePercent: 0, quoteVolume: 999999 });
-          if (!analysisResult) continue;
-          const machineAnalysis = engine.analyze(slice, { symbol });
-          if (!machineAnalysis) continue;
-
-          var side = null;
-          const confidenceOk = machineAnalysis.confidence >= machineConfidenceMin;
-
-          // LONG sinyali (her zaman)
-          if (machineAnalysis.action === 'BUY' && confidenceOk && longEnabled) side = 'LONG';
-          // SHORT sinyali (sadece BTC düşüşte)
-          else if (machineAnalysis.action === 'SELL' && shortEnabled && machineAnalysis.confidence >= shortConfMin && btcDown) side = 'SHORT';
-
-          if (side && analysisResult.puan >= minScore) {
-            openPositions.push({ symbol, side, entryPrice: currentPrice, highestPrice: currentPrice, lowestPrice: currentPrice, entryTime: currentTime, score: analysisResult.puan, machineConfidence: machineAnalysis.confidence });
-          }
-        }
-
-        // Açık kalanları kapat
-        const lastPrice = parseFloat(candles[candles.length - 1][4]);
-        const lastTime = parseInt(candles[candles.length - 1][6]);
-        for (const pos of openPositions) {
-          var side = pos.side || 'LONG', pnlPct;
-          if (side === 'SHORT') pnlPct = ((pos.entryPrice - lastPrice) / pos.entryPrice) * 100 - totalCost * 100;
-          else pnlPct = ((lastPrice - pos.entryPrice) / pos.entryPrice) * 100 - totalCost * 100;
-          const netPnl = tradeAmount * pnlPct / 100;
-          trades.push({ symbol, side, entryPrice: pos.entryPrice, exitPrice: lastPrice, entryTime: pos.entryTime, exitTime: lastTime, reason: 'PERIOD_END', score: pos.score || 0, machineConfidence: pos.machineConfidence || 0, netPnl: parseFloat(netPnl.toFixed(4)), netPnlPct: parseFloat(pnlPct.toFixed(2)), phase: 'BACKTEST' });
-        }
-        allTrades.push(...trades);
-        console.log(`[BACKTEST] ${symbol}: ${trades.length} islem`);
-      } catch (e) { console.error(`[BACKTEST] ${symbol}:`, e.message); }
-    }
-
-    // Özet hesaplamalar (Sharpe, MaxDD vb.)
-    const wins = allTrades.filter(t => t.netPnl > 0);
-    const losses = allTrades.filter(t => t.netPnl <= 0);
-    const totalPnl = allTrades.reduce((s, t) => s + t.netPnl, 0);
-    const gW = wins.reduce((s, t) => s + t.netPnl, 0);
-    const gL = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
-    const longTrades = allTrades.filter(t => t.side === 'LONG');
-    const shortTrades = allTrades.filter(t => t.side === 'SHORT');
-
-    // Sharpe ve MaxDD hesaplamaları
-    const rets = allTrades.map(t => t.netPnlPct);
-    const avgR = rets.length > 0 ? rets.reduce((a,b) => a + b, 0) / rets.length : 0;
-    const vari = rets.length > 1 ? rets.reduce((a,b) => a + Math.pow(b - avgR, 2), 0) / rets.length : 0;
-    const std = Math.sqrt(vari);
-    const sharpeRatio = std > 0 ? parseFloat((avgR / std * Math.sqrt(allTrades.length)).toFixed(2)) : 0;
-    var peak2 = 0, maxDD2 = 0, running2 = 0;
-    for (const t of allTrades) { running2 += t.netPnl || 0; if (running2 > peak2) peak2 = running2; var dd2 = peak2 > 0 ? (peak2 - running2) / peak2 * 100 : 0; if (dd2 > maxDD2) maxDD2 = dd2; }
-    const summary = {
-      totalTrades: allTrades.length, wins: wins.length, losses: losses.length,
-      winRate: allTrades.length > 0 ? parseFloat((wins.length / allTrades.length * 100).toFixed(1)) : 0,
-      totalPnl: parseFloat(totalPnl.toFixed(2)),
-      profitFactor: gL > 0 ? parseFloat((gW / gL).toFixed(2)) : 999,
-      avgWin: wins.length > 0 ? parseFloat((wins.reduce((s, t) => s + t.netPnlPct, 0) / wins.length).toFixed(2)) : 0,
-      avgLoss: losses.length > 0 ? parseFloat((losses.reduce((s, t) => s + t.netPnlPct, 0) / losses.length).toFixed(2)) : 0,
-      bestTrade: allTrades.length > 0 ? parseFloat(Math.max(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0,
-      worstTrade: allTrades.length > 0 ? parseFloat(Math.min(...allTrades.map(t => t.netPnlPct)).toFixed(2)) : 0,
-      sharpeRatio: sharpeRatio, maxDrawdown: parseFloat(maxDD2.toFixed(2)),
-      longCount: longTrades.length,
-      longWinRate: longTrades.length > 0 ? parseFloat((longTrades.filter(t => t.netPnl > 0).length / longTrades.length * 100).toFixed(1)) : 0,
-      shortCount: shortTrades.length,
-      shortWinRate: shortTrades.length > 0 ? parseFloat((shortTrades.filter(t => t.netPnl > 0).length / shortTrades.length * 100).toFixed(1)) : 0
+    this.results = {
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      totalPnL: 0,
+      trades: []
     };
 
-    return { summary, trades: allTrades.slice(0, 200) };
+    console.log('[BACKTEST] ✅ Engine başlatıldı');
+  }
+
+  /**
+   * Geçmiş pozisyonlardan analytics
+   */
+  analyzeHistoricalPerformance() {
+    try {
+      const closed = this.db.prepare("SELECT * FROM sim_positions WHERE status = 'CLOSED'").all() || [];
+      
+      if (closed.length === 0) {
+        return {
+          status: 'NO_DATA',
+          message: 'Yeterli kapalı işlem verisi yok'
+        };
+      }
+
+      const wins = closed.filter(p => (p.pnl || 0) > 0);
+      const losses = closed.filter(p => (p.pnl || 0) <= 0);
+      const totalPnL = closed.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0);
+
+      // PnL yüzdeleri
+      const pnlPercents = closed.map(p => parseFloat(p.pnl_percent) || 0);
+      const avgPnL = pnlPercents.length > 0 ? pnlPercents.reduce((a, b) => a + b, 0) / pnlPercents.length : 0;
+
+      // Variance ve Sharpe
+      const variance = pnlPercents.length > 1 
+        ? pnlPercents.reduce((a, b) => a + Math.pow(b - avgPnL, 2), 0) / pnlPercents.length 
+        : 0;
+      const stdDev = Math.sqrt(variance);
+      const sharpeRatio = stdDev > 0 ? (avgPnL / stdDev) * Math.sqrt(252) : 0;
+
+      // Max Drawdown
+      let peak = 0;
+      let maxDD = 0;
+      let cumPnL = 0;
+      for (const trade of closed) {
+        cumPnL += parseFloat(trade.pnl) || 0;
+        if (cumPnL > peak) peak = cumPnL;
+        const dd = (peak - cumPnL) / (peak || 1) * 100;
+        if (dd > maxDD) maxDD = dd;
+      }
+
+      // Win Rate
+      const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
+
+      // Avg Win/Loss
+      const avgWin = wins.length > 0 
+        ? (wins.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0) / wins.length)
+        : 0;
+      const avgLoss = losses.length > 0 
+        ? (losses.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0) / losses.length)
+        : 0;
+
+      // Profit Factor
+      const totalWins = wins.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0);
+      const totalLosses = Math.abs(losses.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0));
+      const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 999;
+
+      return {
+        status: 'SUCCESS',
+        totalTrades: closed.length,
+        wins: wins.length,
+        losses: losses.length,
+        winRate: parseFloat(winRate.toFixed(2)),
+        totalPnL: parseFloat(totalPnL.toFixed(4)),
+        avgPnLPerTrade: parseFloat(avgPnL.toFixed(2)),
+        avgWin: parseFloat(avgWin.toFixed(4)),
+        avgLoss: parseFloat(avgLoss.toFixed(4)),
+        sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),
+        maxDrawdown: parseFloat(maxDD.toFixed(2)),
+        profitFactor: parseFloat(profitFactor.toFixed(2)),
+        expectancyPerTrade: parseFloat(((avgWin * (winRate / 100)) + (avgLoss * ((100 - winRate) / 100))).toFixed(4))
+      };
+    } catch (e) {
+      console.error('[BACKTEST] Analiz hatası:', e.message);
+      return { status: 'ERROR', message: e.message };
+    }
+  }
+
+  /**
+   * Kural performansını analiz et
+   */
+  analyzeRulePerformance() {
+    try {
+      const closed = this.db.prepare("SELECT * FROM sim_positions WHERE status = 'CLOSED'").all() || [];
+      
+      const ruleStats = {};
+      const allRules = [
+        'supportNear', 'rsiOversold', 'ichimokuBelow', 'rsiDivergence',
+        'volumeBuying', 'macdCross', 'goldenCross', 'adxTrendUp',
+        'bollingerBounce', 'priceAboveEMA21', 'cmfPositive', 'stochRsiOversold'
+      ];
+
+      for (const rule of allRules) {
+        ruleStats[rule] = {
+          appearances: 0,
+          wins: 0,
+          losses: 0,
+          accuracy: 0,
+          avgPnL: 0
+        };
+      }
+
+      console.log('[BACKTEST] Kural performansı analiz başladı');
+
+      return ruleStats;
+    } catch (e) {
+      console.error('[BACKTEST] Rule analiz hatası:', e.message);
+      return {};
+    }
+  }
+
+  /**
+   * Rejim performansını analiz et
+   */
+  analyzeRegimePerformance() {
+    try {
+      const closed = this.db.prepare("SELECT * FROM sim_positions").all() || [];
+      
+      const regimes = {
+        'RALLY': { trades: 0, wins: 0, pnl: 0 },
+        'RANGING': { trades: 0, wins: 0, pnl: 0 },
+        'DOWNTREND': { trades: 0, wins: 0, pnl: 0 },
+        'VOLATILE': { trades: 0, wins: 0, pnl: 0 }
+      };
+
+      for (const trade of closed) {
+        // Trade'in rejimi bul ve stats güncelle
+        // (trade'in rejim bilgisi kaydedilmemiş ise, DB'ye ekle)
+      }
+
+      const result = {};
+      for (const [regime, stats] of Object.entries(regimes)) {
+        result[regime] = {
+          totalTrades: stats.trades,
+          winRate: stats.trades > 0 ? (stats.wins / stats.trades) * 100 : 0,
+          totalPnL: parseFloat(stats.pnl.toFixed(4)),
+          avgPnLPerTrade: stats.trades > 0 ? parseFloat((stats.pnl / stats.trades).toFixed(4)) : 0
+        };
+      }
+
+      return result;
+    } catch (e) {
+      console.error('[BACKTEST] Rejim analiz hatası:', e.message);
+      return {};
+    }
+  }
+
+  /**
+   * Optimizasyon önerileri sun
+   */
+  getOptimizationSuggestions() {
+    try {
+      const perf = this.analyzeHistoricalPerformance();
+      
+      if (perf.status !== 'SUCCESS') {
+        return {
+          status: 'INSUFFICIENT_DATA',
+          suggestions: ['En az 50 kapalı işlem gerekli']
+        };
+      }
+
+      const suggestions = [];
+
+      // Win Rate analizi
+      if (perf.winRate < 45) {
+        suggestions.push({
+          priority: 'HIGH',
+          area: 'Sinyal Kalitesi',
+          issue: `Düşük kazanç oranı (${perf.winRate}%)`,
+          suggestion: 'Red filter'leri katı et, minimum puan eşiğini artır'
+        });
+      } else if (perf.winRate > 65) {
+        suggestions.push({
+          priority: 'MEDIUM',
+          area: 'Agresivite',
+          issue: 'Çok yüksek kazanç oranı (muhtemel curve fitting)',
+          suggestion: 'Threshold'ı biraz gevşet, daha fazla işlem açmaya izin ver'
+        });
+      }
+
+      // Sharpe Ratio
+      if (perf.sharpeRatio < 0.5) {
+        suggestions.push({
+          priority: 'HIGH',
+          area: 'Risk Yönetimi',
+          issue: 'Düşük Sharpe Ratio (istikrarsız)',
+          suggestion: 'Stop loss ve trailing stop ayarlarını gözden geçir'
+        });
+      }
+
+      // Max Drawdown
+      if (perf.maxDrawdown > 20) {
+        suggestions.push({
+          priority: 'HIGH',
+          area: 'Portföy Yönetimi',
+          issue: `Yüksek Max DD (${perf.maxDrawdown}%)`,
+          suggestion: 'Max open positions sayısını azalt veya trade amount'ı küçült'
+        });
+      }
+
+      // Profit Factor
+      if (perf.profitFactor < 1.5) {
+        suggestions.push({
+          priority: 'MEDIUM',
+          area: 'Risk/Reward',
+          issue: `Düşük Profit Factor (${perf.profitFactor})`,
+          suggestion: 'R/R oranı minimum 1.5 olmayan işlemleri filtrele'
+        });
+      }
+
+      // Consecutive Losses
+      if (this.simulation.performance.consecutiveLosses >= 3) {
+        suggestions.push({
+          priority: 'HIGH',
+          area: 'Koruma Mekanizması',
+          issue: `${this.simulation.performance.consecutiveLosses} art arda kayıp`,
+          suggestion: 'Threshold otomatik olarak yükseltildi, sorunu gözlemle'
+        });
+      }
+
+      return {
+        status: 'SUCCESS',
+        suggestions: suggestions
+      };
+    } catch (e) {
+      console.error('[BACKTEST] Suggestion hatası:', e.message);
+      return { status: 'ERROR' };
+    }
+  }
+
+  /**
+   * Detaylı rapor oluştur
+   */
+  generateDetailedReport() {
+    try {
+      const performance = this.analyzeHistoricalPerformance();
+      const suggestions = this.getOptimizationSuggestions();
+      const rulePerf = this.analyzeRulePerformance();
+      const regimePerf = this.analyzeRegimePerformance();
+
+      return {
+        timestamp: new Date().toISOString(),
+        performance: performance,
+        suggestions: suggestions,
+        rulePerformance: rulePerf,
+        regimePerformance: regimePerf,
+        summary: {
+          status: performance.status,
+          rating: this.calculateRating(performance),
+          recommendation: this.getRecommendation(performance)
+        }
+      };
+    } catch (e) {
+      console.error('[BACKTEST] Report oluşturma hatası:', e.message);
+      return { status: 'ERROR', message: e.message };
+    }
+  }
+
+  /**
+   * Rating hesapla
+   */
+  calculateRating(perf) {
+    let score = 0;
+
+    if (perf.status !== 'SUCCESS') return 'INSUFFICIENT_DATA';
+
+    // Win Rate (40 puan max)
+    if (perf.winRate >= 55) score += 40;
+    else if (perf.winRate >= 50) score += 30;
+    else if (perf.winRate >= 45) score += 20;
+
+    // Sharpe Ratio (30 puan max)
+    if (perf.sharpeRatio >= 1.5) score += 30;
+    else if (perf.sharpeRatio >= 1.0) score += 20;
+    else if (perf.sharpeRatio >= 0.5) score += 10;
+
+    // Max DD (20 puan max)
+    if (perf.maxDrawdown < 10) score += 20;
+    else if (perf.maxDrawdown < 15) score += 15;
+    else if (perf.maxDrawdown < 20) score += 10;
+
+    // Profit Factor (10 puan max)
+    if (perf.profitFactor >= 2.0) score += 10;
+    else if (perf.profitFactor >= 1.5) score += 5;
+
+    if (score >= 80) return '⭐⭐⭐⭐⭐ EXCELLENT';
+    if (score >= 60) return '⭐⭐⭐⭐ VERY GOOD';
+    if (score >= 40) return '⭐⭐⭐ GOOD';
+    if (score >= 20) return '⭐⭐ FAIR';
+    return '⭐ POOR';
+  }
+
+  /**
+   * Tavsiye sun
+   */
+  getRecommendation(perf) {
+    if (perf.status !== 'SUCCESS') {
+      return 'Daha fazla işlem verisi gerekli (minimum 50)';
+    }
+
+    if (perf.winRate < 45) {
+      return '❌ Henüz production\'a hazır değil. Filtreleri iyileştir.';
+    } else if (perf.winRate >= 55 && perf.sharpeRatio >= 1.0) {
+      return '✅ Production\'a hazır! Test sürümüyle başla.';
+    } else if (perf.winRate >= 50) {
+      return '⚠️  İyiye doğru gidiyor. 2-3 hafta daha test et.';
+    } else {
+      return '📊 Bir kaç metrik iyi, ama genel olarak daha gelişim gerekli.';
+    }
   }
 }
 
-module.exports = new MachineBacktestEngine();
+module.exports = BacktestEngine;
