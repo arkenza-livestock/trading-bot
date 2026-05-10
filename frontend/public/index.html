@@ -1,18 +1,267 @@
 <!DOCTYPE html>
 <html lang="tr">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Kripto Sinyal Botu</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot v21</title>
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0e1a; color: #e2e8f0; }
-      ::-webkit-scrollbar { width: 6px; }
-      ::-webkit-scrollbar-track { background: #1a1f2e; }
-      ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: Arial, sans-serif; 
+            background: #0a0e27; 
+            color: #fff; 
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            padding: 40px; 
+            border-radius: 10px; 
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        h1 { font-size: 2em; margin-bottom: 10px; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .stat-box {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-label { font-size: 0.9em; opacity: 0.8; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #4ade80; margin-top: 10px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .card {
+            background: #1a1f3a;
+            border: 1px solid #2d3748;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .card h2 {
+            margin-bottom: 15px;
+            color: #4ade80;
+            font-size: 1.3em;
+        }
+        .card p {
+            line-height: 1.8;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #4ade80;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        button:hover { background: #22c55e; }
+        button.danger { background: #ef4444; }
+        button.danger:hover { background: #dc2626; }
+        button.warning { background: #f59e0b; }
+        button.warning:hover { background: #d97706; }
+        .status-ok { color: #4ade80; }
+        .status-error { color: #ef4444; }
+        .list { list-style: none; }
+        .list li { padding: 8px 0; border-bottom: 1px solid #2d3748; }
+        .list li:last-child { border-bottom: none; }
+        .success { background: #1e7e34; padding: 10px; border-radius: 5px; margin-top: 10px; }
+        .error { background: #b91c1c; padding: 10px; border-radius: 5px; margin-top: 10px; }
     </style>
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Trading Bot v21</h1>
+            <p>Makine Zekası Kripto Trading</p>
+            
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-label">Status</div>
+                    <div class="stat-value" id="botStatus">⏹️</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Wallet</div>
+                    <div class="stat-value" id="wallet">$0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Total PnL</div>
+                    <div class="stat-value" id="pnl">$0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="winrate">0%</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- API Status -->
+            <div class="card">
+                <h2>📡 API Status</h2>
+                <p id="apiStatus" class="status-error">⏳ Checking...</p>
+                <button onclick="checkHealth()">Kontrol Et</button>
+            </div>
+
+            <!-- Bot Control -->
+            <div class="card">
+                <h2>⚙️ Bot Kontrol</h2>
+                <button onclick="startBot()">▶️ Başlat</button>
+                <button class="danger" onclick="stopBot()">⏹️ Durdur</button>
+                <button class="warning" onclick="runScan()">🔍 Tarama</button>
+            </div>
+
+            <!-- Settings -->
+            <div class="card">
+                <h2>⚙️ Ayarlar</h2>
+                <p>📊 Tarama: <strong id="scanInt">20</strong> dakika</p>
+                <p>📈 Max Pozisyon: <strong id="maxPos">3</strong></p>
+                <p>💰 Trade Tutarı: <strong id="tradeAmt">100</strong> USDT</p>
+            </div>
+
+            <!-- Open Positions -->
+            <div class="card">
+                <h2>📍 Açık Pozisyonlar</h2>
+                <p><strong id="posCount">0</strong> açık trade</p>
+                <ul id="posList" class="list"></ul>
+            </div>
+
+            <!-- Recent Signals -->
+            <div class="card">
+                <h2>🟢 Son Sinyaller</h2>
+                <ul id="sigList" class="list"></ul>
+            </div>
+
+            <!-- API Endpoints -->
+            <div class="card">
+                <h2>📚 API Endpoints</h2>
+                <ul class="list">
+                    <li>/api/health</li>
+                    <li>/api/db/stats</li>
+                    <li>/api/positions/open</li>
+                    <li>/api/settings</li>
+                    <li>/api/bot/start</li>
+                    <li>/api/bot/stop</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Her 5 saniye güncelle
+        setInterval(updateDashboard, 5000);
+        updateDashboard();
+
+        async function checkHealth() {
+            try {
+                const res = await fetch('/api/health');
+                if (res.ok) {
+                    document.getElementById('apiStatus').innerHTML = '<span class="status-ok">✅ API Aktif</span>';
+                } else {
+                    document.getElementById('apiStatus').innerHTML = '<span class="status-error">❌ API Hata</span>';
+                }
+            } catch (e) {
+                document.getElementById('apiStatus').innerHTML = '<span class="status-error">❌ Bağlantı Yok</span>';
+            }
+        }
+
+        async function updateDashboard() {
+            try {
+                // Stats
+                const statsRes = await fetch('/api/db/stats');
+                const stats = await statsRes.json();
+                
+                document.getElementById('botStatus').textContent = '🟢';
+                document.getElementById('wallet').textContent = '$' + (stats.wallet?.balance || 0).toFixed(2);
+                document.getElementById('pnl').textContent = (stats.totalPnL > 0 ? '+' : '') + (stats.totalPnL || 0).toFixed(2) + '$';
+                document.getElementById('winrate').textContent = (stats.winRate || 0) + '%';
+
+                // Settings
+                const setRes = await fetch('/api/settings');
+                const sets = await setRes.json();
+                document.getElementById('scanInt').textContent = sets.scan_interval || '20';
+                document.getElementById('maxPos').textContent = sets.max_open_positions || '3';
+                document.getElementById('tradeAmt').textContent = sets.trade_amount_usdt || '100';
+
+                // Positions
+                const posRes = await fetch('/api/positions/open');
+                const positions = await posRes.json();
+                document.getElementById('posCount').textContent = positions.length;
+                
+                let posHTML = '';
+                if (positions.length > 0) {
+                    positions.slice(0, 5).forEach(p => {
+                        posHTML += `<li>${p.symbol} @ $${(p.entry_price || 0).toFixed(2)}</li>`;
+                    });
+                } else {
+                    posHTML = '<li style="opacity: 0.5;">Açık pozisyon yok</li>';
+                }
+                document.getElementById('posList').innerHTML = posHTML;
+
+                // Signals
+                const sigRes = await fetch('/api/signals/recent');
+                const signals = await sigRes.json();
+                
+                let sigHTML = '';
+                if (signals.length > 0) {
+                    signals.slice(0, 5).forEach(s => {
+                        sigHTML += `<li>🟢 ${s.symbol} (${s.puan || 0})</li>`;
+                    });
+                } else {
+                    sigHTML = '<li style="opacity: 0.5;">Sinyal yok</li>';
+                }
+                document.getElementById('sigList').innerHTML = sigHTML;
+
+            } catch (e) {
+                console.error('Hata:', e);
+            }
+        }
+
+        async function startBot() {
+            try {
+                const res = await fetch('/api/bot/start', { method: 'POST' });
+                const data = await res.json();
+                alert('✅ ' + data.message);
+            } catch (e) {
+                alert('❌ Hata: ' + e.message);
+            }
+        }
+
+        async function stopBot() {
+            try {
+                const res = await fetch('/api/bot/stop', { method: 'POST' });
+                const data = await res.json();
+                alert('⏹️ ' + data.message);
+            } catch (e) {
+                alert('❌ Hata: ' + e.message);
+            }
+        }
+
+        async function runScan() {
+            try {
+                const res = await fetch('/api/bot/scan', { method: 'POST' });
+                const data = await res.json();
+                alert('✅ ' + data.message);
+            } catch (e) {
+                alert('❌ Hata: ' + e.message);
+            }
+        }
+
+        // İlk check
+        checkHealth();
+    </script>
+</body>
 </html>
