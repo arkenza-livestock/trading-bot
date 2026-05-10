@@ -504,7 +504,7 @@ class AnalysisEngine {
   calcStochK(closes, rsiPeriod = 14) {
     const rsiValues = [];
     for (let i = rsiPeriod; i <= closes.length; i++) {
-      rsiValues.push(this.calcRSI(closes.slice(0, i), rsiPeriod));
+      (this.calcRSI(closes.slice(0, i), rsiPeriod));
     }
     if (rsiValues.length < 14) return 50;
     const stochK = [];
