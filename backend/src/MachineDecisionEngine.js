@@ -1,610 +1,324 @@
-class ProfessionalAnalysis {
+class MachineDecisionEngine {
+
+  constructor() {
+    this.memory = {
+      signals: [],
+      outcomes: [],
+      patternLibrary: [],
+      regimeHistory: [],
+      indicatorReliability: {}
+    };
+
+    this.settings = {
+      minHistoricalBars: 200,
+      lookbackWindow: 100,
+      minSimilarPatterns: 5,
+      confidenceRequired: 0.70,
+      maxDrawdownAllowed: 0.05,
+      learningRate: 0.01,
+      outcomeHorizon: 20
+    };
+
+    this.indicatorWeights = {
+      rsi: 0.12, macd: 0.12, emaTrend: 0.12, bollinger: 0.10,
+      volume: 0.10, supportResist: 0.12, divergence: 0.12, mfi: 0.10, adx: 0.10
+    };
+
+    this.state = {
+      mode: 'OBSERVING', consecutiveLosses: 0, totalSignals: 0,
+      successfulSignals: 0, currentDrawdown: 0, peakBalance: 1, currentBalance: 1
+    };
+  }
+
+  // ═══════════════════════════════════════════
+  // VERİTABANINA KAYDET (KALICI)
+  // ═══════════════════════════════════════════
+  saveToDB() {
+    try {
+      const db = require('./database');
+
+      // Son 200 deseni kaydet
+      const recentPatterns = this.memory.patternLibrary.slice(-200);
+      if (recentPatterns.length > 0) {
+        const stmt = db.prepare('INSERT OR REPLACE INTO machine_patterns (id, symbol, pattern_data, outcome, return_pct, similarity) VALUES (?,?,?,?,?,?)');
+        const deleteOld = db.prepare('DELETE FROM machine_patterns');
+        deleteOld.run();
+
+        const tx = db.transaction(() => {
+          recentPatterns.forEach((p, i) => {
+            stmt.run(i + 1, 'ALL', JSON.stringify(p.state), p.outcome, p.return || 0, 1.0);
+          });
+        });
+        tx();
+      }
+
+      // Gösterge ağırlıklarını kaydet
+      const wStmt = db.prepare('INSERT INTO machine_weights (weights_data, threshold) VALUES (?,?)');
+      wStmt.run(JSON.stringify(this.indicatorWeights), this.settings.confidenceRequired);
+
+      return true;
+    } catch(e) {
+      console.error('[MAKINE] DB kayit hatasi:', e.message);
+      return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // VERİTABANINDAN YÜKLE (KALICI)
+  // ═══════════════════════════════════════════
+  loadFromDB() {
+    try {
+      const db = require('./database');
+
+      // Desenleri yükle
+      const patterns = db.prepare('SELECT * FROM machine_patterns ORDER BY id').all();
+      if (patterns && patterns.length > 0) {
+        this.memory.patternLibrary = patterns.map(p => ({
+          state: JSON.parse(p.pattern_data || '{}'),
+          outcome: p.outcome,
+          return: p.return_pct || 0
+        }));
+      }
+
+      // Ağırlıkları yükle (son kaydedilen)
+      const weights = db.prepare('SELECT * FROM machine_weights ORDER BY id DESC LIMIT 1').get();
+      if (weights) {
+        this.indicatorWeights = JSON.parse(weights.weights_data || '{}');
+        this.settings.confidenceRequired = weights.threshold || 0.70;
+      }
+
+      console.log(`[MAKINE] ✅ Veritabanindan yuklendi: ${this.memory.patternLibrary.length} desen, esik:%${Math.round(this.settings.confidenceRequired*100)}`);
+      return true;
+    } catch(e) {
+      console.error('[MAKINE] DB yukleme hatasi:', e.message);
+      return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // ANALİZ FONKSİYONLARI (AYNI KALDI)
+  // ═══════════════════════════════════════════
 
   analyze(candles, ticker) {
-    if (!candles || candles.length < 100) return null;
-
-    const closes  = candles.map(c => parseFloat(c[4]));
-    const highs   = candles.map(c => parseFloat(c[2]));
-    const lows    = candles.map(c => parseFloat(c[3]));
-    const volumes = candles.map(c => parseFloat(c[5]));
-    const opens   = candles.map(c => parseFloat(c[1]));
-    const fiyat   = closes[closes.length - 1];
-
-    // ── RSI ──────────────────────────────────────────────────
-    const rsi        = this.hesaplaRSI(closes, 14);
-    const rsiOnceki  = this.hesaplaRSI(closes.slice(0,-1), 14);
-    const rsiYon     = rsi > rsiOnceki ? 'YUKARI' : 'ASAGI';
-    const rsiDivBull = this.rsiBullishDiv(closes);
-    const rsiDivBear = this.rsiBearishDiv(closes);
-
-    // ── STOCHASTIC RSI ───────────────────────────────────────
-    const stochRSI = this.hesaplaStochRSI(closes);
-    const stochK   = stochRSI.k;
-    const stochD   = stochRSI.d;
-    const stochBull = stochK > stochD && stochK < 20;
-    const stochBear = stochK < stochD && stochK > 80;
-
-    // ── WILLIAMS %R ──────────────────────────────────────────
-    const williamsR    = this.hesaplaWilliamsR(highs, lows, closes, 14);
-    const williamsAsirim = williamsR < -80;
-    const williamsAlim = williamsR < -80 && williamsR > this.hesaplaWilliamsR(
-      highs.slice(0,-1), lows.slice(0,-1), closes.slice(0,-1), 14
-    );
-
-    // ── CCI ──────────────────────────────────────────────────
-    const cci     = this.hesaplaCCI(highs, lows, closes, 20);
-    const cciBull = cci > -100 && cci < 0;
-    const cciBear = cci < 100  && cci > 0;
-
-    // ── ADX ──────────────────────────────────────────────────
-    const adx        = this.hesaplaADX(highs, lows, closes, 14);
-    const trendGuclu = adx.adx > 25;
-    const diPlus     = adx.diPlus;
-    const diMinus    = adx.diMinus;
-    const trendYon   = diPlus > diMinus ? 'YUKARI' : 'ASAGI';
-
-    // ── EMA ──────────────────────────────────────────────────
-    const ema9   = this.hesaplaEMA(closes, 9);
-    const ema21  = this.hesaplaEMA(closes, 21);
-    const ema50  = this.hesaplaEMA(closes, 50);
-    const ema100 = this.hesaplaEMA(closes, 100);
-    const ema200 = closes.length >= 200 ? this.hesaplaEMA(closes, 200) : null;
-
-    const ema21Onceki = this.hesaplaEMA(closes.slice(0,-1), 21);
-    const ema50Onceki = this.hesaplaEMA(closes.slice(0,-1), 50);
-    const goldenCross = ema21Onceki <= ema50Onceki && ema21 > ema50;
-    const deathCross  = ema21Onceki >= ema50Onceki && ema21 < ema50;
-    const emaBullAlign = fiyat > ema9 && ema9 > ema21 && ema21 > ema50;
-    const emaBearAlign = fiyat < ema9 && ema9 < ema21 && ema21 < ema50;
-
-    let trend = 'NOTR';
-    if      (emaBullAlign)                   trend = 'GUCLU_YUKARI';
-    else if (fiyat > ema21 && fiyat > ema50) trend = 'YUKARI';
-    else if (emaBearAlign)                   trend = 'GUCLU_ASAGI';
-    else if (fiyat < ema21 && fiyat < ema50) trend = 'ASAGI';
-
-    // ── MACD ─────────────────────────────────────────────────
-    const macd       = this.hesaplaMACD(closes);
-    const macdLine   = macd.macdLine;
-    const signalLine = macd.signalLine;
-    const macdHist   = macd.histogram;
-    const macdBullish = macd.bullishCross;
-    const macdBearish = macd.bearishCross;
-    const macdBullDiv = macd.bullDiv;
-    const macdBearDiv = macd.bearDiv;
-    const macdZeroXup = macdLine > 0 && macd.prevMacd <= 0;
-
-    // ── BOLLINGER BANDS ──────────────────────────────────────
-    const bb       = this.hesaplaBollinger(closes, 20, 2);
-    const bPct     = bb.percent;
-    const bWidth   = bb.width;
-    const bSqueeze = bWidth < 2.0;
-
-    // ── OBV ──────────────────────────────────────────────────
-    const obv      = this.hesaplaOBV(closes, volumes);
-    const obvTrend = obv.trend;
-    const obvDiv   = obv.divergence;
-
-    // ── CMF ──────────────────────────────────────────────────
-    const cmf     = this.hesaplaCMF(highs, lows, closes, volumes, 20);
-    const cmfBull = cmf > 0.1;
-    const cmfBear = cmf < -0.1;
-
-    // ── VWAP ─────────────────────────────────────────────────
-    const vwap     = this.hesaplaVWAP(highs, lows, closes, volumes);
-    const vwapBull = fiyat > vwap;
-    const vwapDist = (fiyat - vwap) / vwap * 100;
-
-    // ── ATR ──────────────────────────────────────────────────
-    const atr14   = this.hesaplaATR(highs, lows, closes, 14);
-    const atrOran = atr14 / fiyat * 100;
-
-    // ── HACİM ────────────────────────────────────────────────
-    const vol20Ort = volumes.slice(-20,-1).reduce((a,b)=>a+b,0) / 19;
-    const sonVol   = volumes[volumes.length-1];
-    const volOran  = parseFloat((sonVol / vol20Ort).toFixed(2));
-    const volSpike  = volOran > 2.0;
-    const volYuksek = volOran > 1.5;
-    const volDusuk  = volOran < 0.5;
-
-    const son5 = candles.slice(-5);
-    const alimVol  = son5.filter(c=>parseFloat(c[4])>parseFloat(c[1])).reduce((a,c)=>a+parseFloat(c[5]),0);
-    const satisVol = son5.filter(c=>parseFloat(c[4])<parseFloat(c[1])).reduce((a,c)=>a+parseFloat(c[5]),0);
-    const volBaskisi = alimVol > satisVol ? 'ALIM' : 'SATIS';
-    const alimOrani  = alimVol+satisVol > 0 ? alimVol/(alimVol+satisVol)*100 : 50;
-
-    // ── DESTEK / DİRENÇ ──────────────────────────────────────
-    const sr      = this.hesaplaSR(highs, lows, 50);
-    const destek  = sr.destek;
-    const direnc  = sr.direnc;
-    const destekUzak    = (fiyat - destek) / fiyat * 100;
-    const direncUzak    = (direnc - fiyat) / fiyat * 100;
-    const direncKirildi = closes.slice(-3).some(c => c > direnc * 0.998);
-    const destekKirildi = closes.slice(-3).some(c => c < destek * 1.002);
-
-    // ── FİBONACCI ────────────────────────────────────────────
-    const fib      = this.hesaplaFibonacci(highs, lows, 50);
-    const fibDesteği = Math.abs(fiyat-fib.level382)/fiyat < 0.015 ||
-                       Math.abs(fiyat-fib.level500)/fiyat < 0.015 ||
-                       Math.abs(fiyat-fib.level618)/fiyat < 0.015;
-
-    // ── MUM YAPILARI ─────────────────────────────────────────
-    const mumlar = this.analizMumYapilari(candles);
-
-    // ── TREND ÇİZGİSİ ────────────────────────────────────────
-    const son10H = highs.slice(-10);
-    const son10L = lows.slice(-10);
-    const hhCount = son10H.filter((h,i)=>i>0&&h>son10H[i-1]).length;
-    const hlCount = son10L.filter((l,i)=>i>0&&l>son10L[i-1]).length;
-    const yukselisTrendi = hhCount >= 5 && hlCount >= 5;
-    const dususTrendi    = son10H.filter((h,i)=>i>0&&h<son10H[i-1]).length >= 5;
-
-    // ════════════════════════════════════════════════════════
-    // PUAN SİSTEMİ
-    // ════════════════════════════════════════════════════════
-    let puan = 0;
-    const pozitif = [];
-    const negatif = [];
-
-    // ── RSI (MAX 35) ─────────────────────────────────────────
-    if      (rsi < 20) { puan += 35; pozitif.push(`🔥 RSI Ekstrem Satım (${rsi.toFixed(1)})`); }
-    else if (rsi < 25) { puan += 30; pozitif.push(`RSI Aşırı Satım (${rsi.toFixed(1)})`); }
-    else if (rsi < 30) { puan += 25; pozitif.push(`RSI Güçlü Satım (${rsi.toFixed(1)})`); }
-    else if (rsi < 35) { puan += 20; pozitif.push(`RSI Satım Bölgesi (${rsi.toFixed(1)})`); }
-    else if (rsi < 45) { puan += 10; pozitif.push(`RSI Nötr-Pozitif (${rsi.toFixed(1)})`); }
-    else if (rsi > 80) { puan -= 30; negatif.push(`RSI Aşırı Alım (${rsi.toFixed(1)})`); }
-    else if (rsi > 70) { puan -= 15; negatif.push(`RSI Alım Bölgesi (${rsi.toFixed(1)})`); }
-    if (rsiYon === 'YUKARI' && rsi < 55) { puan += 8; pozitif.push('RSI Yukarı Döndü'); }
-    if (rsiDivBull) { puan += 20; pozitif.push('📈 RSI Bullish Divergence'); }
-    if (rsiDivBear) { puan -= 20; negatif.push('📉 RSI Bearish Divergence'); }
-
-    // ── STOCHASTIC RSI (MAX 20) ──────────────────────────────
-    if      (stochBull)   { puan += 20; pozitif.push(`Stoch RSI Alım (K:${stochK.toFixed(0)})`); }
-    else if (stochK < 20) { puan += 10; pozitif.push(`Stoch RSI Oversold (${stochK.toFixed(0)})`); }
-    else if (stochBear)   { puan -= 20; negatif.push(`Stoch RSI Satım (K:${stochK.toFixed(0)})`); }
-    else if (stochK > 80) { puan -= 10; negatif.push(`Stoch RSI Overbought (${stochK.toFixed(0)})`); }
-
-    // ── WILLIAMS %R (MAX 15) ─────────────────────────────────
-    if      (williamsAlim)   { puan += 15; pozitif.push(`Williams %R Alım (${williamsR.toFixed(0)})`); }
-    else if (williamsAsirim) { puan +=  8; pozitif.push(`Williams %R Oversold (${williamsR.toFixed(0)})`); }
-    else if (williamsR > -20){ puan -= 10; negatif.push('Williams %R Overbought'); }
-
-    // ── CCI (MAX 15) ─────────────────────────────────────────
-    if      (cciBull && cci < -150) { puan += 15; pozitif.push(`CCI Aşırı Satım (${cci.toFixed(0)})`); }
-    else if (cciBull)               { puan +=  8; pozitif.push(`CCI Pozitif (${cci.toFixed(0)})`); }
-    else if (cci > 150)             { puan -= 15; negatif.push(`CCI Aşırı Alım (${cci.toFixed(0)})`); }
-
-    // ── ADX (MAX 15) ─────────────────────────────────────────
-    if      (trendGuclu && trendYon === 'YUKARI') { puan += 15; pozitif.push(`ADX Güçlü Yükseliş (${adx.adx.toFixed(0)})`); }
-    else if (trendGuclu && trendYon === 'ASAGI')  { puan -= 15; negatif.push(`ADX Güçlü Düşüş (${adx.adx.toFixed(0)})`); }
-    else if (!trendGuclu)                         { puan -=  5; negatif.push(`ADX Zayıf Trend (${adx.adx.toFixed(0)})`); }
-
-    // ── EMA / TREND (MAX 30) ─────────────────────────────────
-    if      (goldenCross)        { puan += 30; pozitif.push('🌟 Golden Cross (EMA21/50)'); }
-    else if (deathCross)         { puan -= 30; negatif.push('💀 Death Cross (EMA21/50)'); }
-    else if (emaBullAlign)       { puan += 25; pozitif.push('EMA Bull Alignment (9>21>50)'); }
-    else if (emaBearAlign)       { puan -= 25; negatif.push('EMA Bear Alignment'); }
-    else if (trend === 'YUKARI') { puan += 12; pozitif.push('Yükseliş Trendi'); }
-    else if (trend === 'ASAGI')  { puan -= 12; negatif.push('Düşüş Trendi'); }
-    if      (ema200 && fiyat > ema200) { puan += 10; pozitif.push('EMA200 Üstünde'); }
-    else if (ema200 && fiyat < ema200) { puan -= 10; negatif.push('EMA200 Altında'); }
-
-    // ── MACD (MAX 30) ────────────────────────────────────────
-    if      (macdBullish) { puan += 25; pozitif.push('⚡ MACD Bullish Crossover'); }
-    else if (macdBearish) { puan -= 25; negatif.push('⚡ MACD Bearish Crossover'); }
-    else if (macdLine > signalLine && macdHist > 0) { puan += 10; pozitif.push('MACD Pozitif Momentum'); }
-    else if (macdLine < signalLine && macdHist < 0) { puan -= 10; negatif.push('MACD Negatif Momentum'); }
-    if (macdZeroXup)  { puan += 15; pozitif.push('MACD Sıfır Çizgisi Kırıldı'); }
-    if (macdBullDiv)  { puan += 18; pozitif.push('MACD Bullish Divergence'); }
-    if (macdBearDiv)  { puan -= 18; negatif.push('MACD Bearish Divergence'); }
-
-    // ── BOLLINGER (MAX 25) ───────────────────────────────────
-    if      (bPct <  2)  { puan += 25; pozitif.push('🎯 Bollinger Alt Bandı Dibinde'); }
-    else if (bPct < 10)  { puan += 20; pozitif.push('Bollinger Alt Bandında'); }
-    else if (bPct < 20)  { puan += 12; pozitif.push('Bollinger Alt Bölgede'); }
-    else if (bPct > 98)  { puan -= 25; negatif.push('Bollinger Üst Bandı Tepesinde'); }
-    else if (bPct > 90)  { puan -= 20; negatif.push('Bollinger Üst Bandında'); }
-    else if (bPct > 80)  { puan -= 12; negatif.push('Bollinger Üst Bölgede'); }
-    if (bSqueeze) { puan += 8; pozitif.push('Bollinger Squeeze (Patlama Yakın)'); }
-
-    // ── OBV (MAX 20) ─────────────────────────────────────────
-    if      (obvTrend === 'GUCLU_YUKARI') { puan += 20; pozitif.push('OBV Güçlü Yükseliş'); }
-    else if (obvTrend === 'YUKARI')       { puan += 12; pozitif.push('OBV Yükseliş'); }
-    else if (obvTrend === 'ASAGI')        { puan -= 12; negatif.push('OBV Düşüş'); }
-    if (obvDiv === 'BULL') { puan += 18; pozitif.push('OBV Bullish Divergence'); }
-    if (obvDiv === 'BEAR') { puan -= 18; negatif.push('OBV Bearish Divergence'); }
-
-    // ── CMF (MAX 15) ─────────────────────────────────────────
-    if      (cmf > 0.2)  { puan += 15; pozitif.push(`CMF Güçlü Para Girişi (${cmf.toFixed(2)})`); }
-    else if (cmfBull)    { puan += 10; pozitif.push(`CMF Para Girişi (${cmf.toFixed(2)})`); }
-    else if (cmf < -0.2) { puan -= 15; negatif.push(`CMF Güçlü Para Çıkışı (${cmf.toFixed(2)})`); }
-    else if (cmfBear)    { puan -= 10; negatif.push(`CMF Para Çıkışı (${cmf.toFixed(2)})`); }
-
-    // ── VWAP (MAX 10) ────────────────────────────────────────
-    if      (vwapBull && vwapDist < 2)   { puan += 10; pozitif.push('VWAP Üstünde (Yakın)'); }
-    else if (vwapBull)                    { puan +=  5; pozitif.push('VWAP Üstünde'); }
-    else if (!vwapBull && vwapDist > -5)  { puan -=  8; negatif.push('VWAP Altında'); }
-
-    // ── HACİM (MAX 20) ───────────────────────────────────────
-    if      (volSpike)  { puan += 20; pozitif.push(`Hacim Patlaması (${volOran}x)`); }
-    else if (volYuksek) { puan += 12; pozitif.push(`Yüksek Hacim (${volOran}x)`); }
-    else if (volDusuk)  { puan -= 15; negatif.push(`Düşük Hacim (${volOran}x)`); }
-    if      (volBaskisi === 'ALIM'  && alimOrani > 65) { puan += 12; pozitif.push(`Alım Baskısı (%${alimOrani.toFixed(0)})`); }
-    else if (volBaskisi === 'SATIS' && alimOrani < 35) { puan -= 12; negatif.push(`Satış Baskısı`); }
-
-    // ── DESTEK / DİRENÇ (MAX 25) ────────────────────────────
-    if      (destekUzak < 1) { puan += 25; pozitif.push('🏛️ Desteğe Çok Yakın (<1%)'); }
-    else if (destekUzak < 3) { puan += 18; pozitif.push('Desteğe Yakın (<3%)'); }
-    else if (destekUzak < 5) { puan += 10; pozitif.push('Destek Bölgesinde'); }
-    if      (direncUzak < 1) { puan -= 20; negatif.push('Direce Çok Yakın (<1%)'); }
-    else if (direncUzak < 3) { puan -= 10; negatif.push('Dirence Yakın (<3%)'); }
-    if (direncKirildi) { puan += 25; pozitif.push('🚀 Direnç Kırıldı!'); }
-    if (destekKirildi) { puan -= 25; negatif.push('⚠️ Destek Kırıldı!'); }
-
-    // ── FİBONACCI (MAX 12) ───────────────────────────────────
-    if (fibDesteği) { puan += 12; pozitif.push('📐 Fibonacci Destek Seviyesi'); }
-
-    // ── MUM YAPILARI (MAX 25) ────────────────────────────────
-    if (mumlar.bullishEngulfing)  { puan += 25; pozitif.push('🕯️ Bullish Engulfing'); }
-    if (mumlar.bearishEngulfing)  { puan -= 25; negatif.push('🕯️ Bearish Engulfing'); }
-    if (mumlar.hammer)            { puan += 20; pozitif.push('🔨 Hammer Mumu'); }
-    if (mumlar.invertedHammer)    { puan += 15; pozitif.push('Inverted Hammer'); }
-    if (mumlar.shootingStar)      { puan -= 20; negatif.push('🌠 Shooting Star'); }
-    if (mumlar.dojiDragonfly)     { puan += 15; pozitif.push('Dragonfly Doji'); }
-    if (mumlar.dojiGravestone)    { puan -= 15; negatif.push('Gravestone Doji'); }
-    if (mumlar.morningStar)       { puan += 25; pozitif.push('⭐ Morning Star'); }
-    if (mumlar.eveningStar)       { puan -= 25; negatif.push('⭐ Evening Star'); }
-    if (mumlar.threeWhiteSoldiers){ puan += 20; pozitif.push('3 White Soldiers'); }
-    if (mumlar.threeBlackCrows)   { puan -= 20; negatif.push('3 Black Crows'); }
-    if (mumlar.piercingLine)      { puan += 18; pozitif.push('Piercing Line'); }
-    if (mumlar.doji)              { puan +=  5; pozitif.push('Doji (Kararsızlık)'); }
-
-    // ── TREND ÇİZGİSİ (MAX 15) ──────────────────────────────
-    if (yukselisTrendi) { puan += 15; pozitif.push('HH & HL (Yükseliş Trendi)'); }
-    if (dususTrendi)    { puan -= 15; negatif.push('LH & LL (Düşüş Trendi)'); }
-
-    // ── SİNYAL KARARI ────────────────────────────────────────
-    const sinyal = puan >= 50 ? 'ALIM' : puan <= -20 ? 'SATIS' : 'BEKLE';
-    const risk   = puan >= 80 ? 'DUSUK' : puan >= 60 ? 'ORTA' : 'YUKSEK';
-
-    const hedef   = parseFloat((fiyat + atr14 * 3).toFixed(8));
-    const stopLos = parseFloat((fiyat - atr14 * 1.5).toFixed(8));
-    const rrOrani = parseFloat(((hedef - fiyat) / (fiyat - stopLos)).toFixed(2));
-
-    return {
-      symbol:    ticker.symbol,
-      fiyat:     parseFloat(fiyat.toFixed(8)),
-      puan, risk, sinyal,
-      rsi:       parseFloat(rsi.toFixed(2)),
-      rsiYon, rsiDivBull, rsiDivBear,
-      stochK:    parseFloat(stochK.toFixed(2)),
-      stochD:    parseFloat(stochD.toFixed(2)),
-      stochBull,
-      williamsR: parseFloat(williamsR.toFixed(2)),
-      williamsAlim,
-      cci:       parseFloat(cci.toFixed(2)),
-      adx:       parseFloat(adx.adx.toFixed(2)),
-      diPlus:    parseFloat(diPlus.toFixed(2)),
-      diMinus:   parseFloat(diMinus.toFixed(2)),
-      trendGuclu, trendYon,
-      trend, goldenCross, deathCross, emaBullAlign,
-      ema9:      parseFloat(ema9.toFixed(8)),
-      ema21:     parseFloat(ema21.toFixed(8)),
-      ema50:     parseFloat(ema50.toFixed(8)),
-      ema200:    ema200 ? parseFloat(ema200.toFixed(8)) : null,
-      macdLine:  parseFloat(macdLine.toFixed(8)),
-      signalLine:parseFloat(signalLine.toFixed(8)),
-      macdHist:  parseFloat(macdHist.toFixed(8)),
-      macdBullish, macdBearish, macdBullDiv, macdZeroXup,
-      bPct:      parseFloat(bPct.toFixed(2)),
-      bWidth:    parseFloat(bWidth.toFixed(2)),
-      bSqueeze,
-      bollinger_pct: parseFloat(bPct.toFixed(2)),
-      obvTrend, obvDiv,
-      cmf:       parseFloat(cmf.toFixed(4)),
-      cmfBull,
-      vwap:      parseFloat(vwap.toFixed(8)),
-      vwapBull,
-      volOran, volSpike, volBaskisi,
-      alimOrani: parseFloat(alimOrani.toFixed(1)),
-      destek:    parseFloat(destek.toFixed(8)),
-      direnc:    parseFloat(direnc.toFixed(8)),
-      destekUzak:parseFloat(destekUzak.toFixed(2)),
-      direncUzak:parseFloat(direncUzak.toFixed(2)),
-      direncKirildi, destekKirildi, fibDesteği,
-      fib382:    parseFloat(fib.level382.toFixed(8)),
-      fib618:    parseFloat(fib.level618.toFixed(8)),
-      mumlar, yukselisTrendi, dususTrendi,
-      atr14:     parseFloat(atr14.toFixed(8)),
-      atrOran:   parseFloat(atrOran.toFixed(2)),
-      hedef, stop_loss: stopLos, rrOrani,
-      pozitif, negatif,
-      degisim24h: parseFloat(ticker.priceChangePercent || 0),
-      hacim24h:   parseFloat(ticker.quoteVolume || 0)
-    };
-  }
-
-  hesaplaRSI(data, period=14) {
-    if (data.length < period+1) return 50;
-    let gains=0, losses=0;
-    for (let i=data.length-period; i<data.length; i++) {
-      const d = data[i]-data[i-1];
-      if (d>0) gains+=d; else losses-=d;
+    if (!candles || candles.length < this.settings.minHistoricalBars) {
+      return this.createNullResponse('YETERSIZ_VERI');
     }
-    const ag=gains/period, al=losses/period;
-    if (al===0) return 100;
-    return parseFloat((100-100/(1+ag/al)).toFixed(2));
-  }
 
-  hesaplaEMA(data, period) {
-    if (data.length<period) return data[data.length-1];
-    const k=2/(period+1);
-    let ema=data.slice(0,period).reduce((a,b)=>a+b,0)/period;
-    for (let i=period; i<data.length; i++) ema=data[i]*k+ema*(1-k);
-    return parseFloat(ema.toFixed(8));
-  }
+    const currentState = this.extractMarketState(candles);
+    const similarPatterns = this.findSimilarHistoricalPatterns(candles, currentState, this.settings.lookbackWindow);
 
-  hesaplaStochRSI(closes, rsiP=14, stochP=14, smoothK=3, smoothD=3) {
-    const rsiSeries=[];
-    for (let i=rsiP; i<=closes.length; i++)
-      rsiSeries.push(this.hesaplaRSI(closes.slice(0,i), rsiP));
-    if (rsiSeries.length<stochP) return {k:50,d:50};
-    const stoch=[];
-    for (let i=stochP-1; i<rsiSeries.length; i++) {
-      const sl=rsiSeries.slice(i-stochP+1,i+1);
-      const mx=Math.max(...sl), mn=Math.min(...sl);
-      stoch.push(mx===mn?50:(rsiSeries[i]-mn)/(mx-mn)*100);
+    if (similarPatterns.length < this.settings.minSimilarPatterns) {
+      return this.createNullResponse('YETERSIZ_BENZER_DESEN');
     }
-    const kS=[];
-    for (let i=smoothK-1; i<stoch.length; i++)
-      kS.push(stoch.slice(i-smoothK+1,i+1).reduce((a,b)=>a+b,0)/smoothK);
-    const dS=[];
-    for (let i=smoothD-1; i<kS.length; i++)
-      dS.push(kS.slice(i-smoothD+1,i+1).reduce((a,b)=>a+b,0)/smoothD);
-    return {k:kS[kS.length-1]||50, d:dS[dS.length-1]||50};
-  }
 
-  hesaplaWilliamsR(highs, lows, closes, period=14) {
-    const hh=Math.max(...highs.slice(-period));
-    const ll=Math.min(...lows.slice(-period));
-    const c=closes[closes.length-1];
-    if (hh===ll) return -50;
-    return (hh-c)/(hh-ll)*-100;
-  }
+    const patternAnalysis = this.analyzePatternOutcomes(similarPatterns, currentState);
+    const riskProfile = this.calculateRiskProfile(patternAnalysis, currentState, candles);
+    const selfAssessment = this.evaluateSelfPerformance();
+    const decision = this.makeDecision(patternAnalysis, riskProfile, selfAssessment, currentState);
 
-  hesaplaCCI(highs, lows, closes, period=20) {
-    const tp=closes.map((c,i)=>(highs[i]+lows[i]+c)/3);
-    const sl=tp.slice(-period);
-    const mean=sl.reduce((a,b)=>a+b,0)/period;
-    const mad=sl.reduce((a,b)=>a+Math.abs(b-mean),0)/period;
-    if (mad===0) return 0;
-    return (tp[tp.length-1]-mean)/(0.015*mad);
-  }
-
-  hesaplaADX(highs, lows, closes, period=14) {
-    if (highs.length<period+1) return {adx:0,diPlus:0,diMinus:0};
-    const tr=[],dp=[],dm=[];
-    for (let i=1; i<highs.length; i++) {
-      const h=highs[i],l=lows[i],ph=highs[i-1],pl=lows[i-1],pc=closes[i-1];
-      tr.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));
-      dp.push(h-ph>pl-l&&h-ph>0?h-ph:0);
-      dm.push(pl-l>h-ph&&pl-l>0?pl-l:0);
-    }
-    const atr=tr.slice(-period).reduce((a,b)=>a+b,0)/period;
-    const diP=(dp.slice(-period).reduce((a,b)=>a+b,0)/period)/atr*100;
-    const diM=(dm.slice(-period).reduce((a,b)=>a+b,0)/period)/atr*100;
-    const dx=Math.abs(diP-diM)/(diP+diM)*100;
-    return {adx:dx,diPlus:diP,diMinus:diM};
-  }
-
-  hesaplaMACD(closes, fast=12, slow=26, signal=9) {
-    const series=[];
-    for (let i=slow; i<closes.length; i++) {
-      series.push(this.hesaplaEMA(closes.slice(0,i+1),fast)-this.hesaplaEMA(closes.slice(0,i+1),slow));
-    }
-    const macdLine=series[series.length-1];
-    const signalLine=this.hesaplaEMA(series,signal);
-    const histogram=macdLine-signalLine;
-    const prevMacd=series[series.length-2]||0;
-    const prevSignal=this.hesaplaEMA(series.slice(0,-1),signal);
-    const c5=closes.slice(-5), m5=series.slice(-5);
-    return {
-      macdLine, signalLine, histogram, prevMacd,
-      bullishCross: prevMacd<=prevSignal && macdLine>signalLine,
-      bearishCross: prevMacd>=prevSignal && macdLine<signalLine,
-      bullDiv: c5[4]<c5[0] && m5[4]>m5[0],
-      bearDiv: c5[4]>c5[0] && m5[4]<m5[0]
-    };
-  }
-
-  hesaplaBollinger(closes, period=20, mult=2) {
-    const sl=closes.slice(-period);
-    const mean=sl.reduce((a,b)=>a+b,0)/period;
-    const std=Math.sqrt(sl.reduce((a,b)=>a+Math.pow(b-mean,2),0)/period);
-    const upper=mean+mult*std, lower=mean-mult*std;
-    const width=(upper-lower)/mean*100;
-    const pct=(closes[closes.length-1]-lower)/(upper-lower)*100;
-    const psl=closes.slice(-period-5,-5);
-    const pm=psl.reduce((a,b)=>a+b,0)/period;
-    const ps=Math.sqrt(psl.reduce((a,b)=>a+Math.pow(b-pm,2),0)/period);
-    const pw=((pm+2*ps)-(pm-2*ps))/pm*100;
-    return {upper,lower,mid:mean,width,percent:pct,expanding:width>pw*1.1,contracting:width<pw*0.9};
-  }
-
-  hesaplaOBV(closes, volumes) {
-    let obv=0;
-    const s=[0];
-    for (let i=1; i<closes.length; i++) {
-      if (closes[i]>closes[i-1]) obv+=volumes[i];
-      else if (closes[i]<closes[i-1]) obv-=volumes[i];
-      s.push(obv);
-    }
-    const o5=s.slice(-5).reduce((a,b)=>a+b,0)/5;
-    const o20=s.slice(-20).reduce((a,b)=>a+b,0)/20;
-    const o50=s.slice(-50).reduce((a,b)=>a+b,0)/50;
-    let trend='NOTR';
-    if (o5>o20&&o20>o50) trend='GUCLU_YUKARI';
-    else if (o5>o20)     trend='YUKARI';
-    else if (o5<o20&&o20<o50) trend='ASAGI';
-    const c5=closes.slice(-5), s5=s.slice(-5);
-    let divergence='YOK';
-    if (c5[4]<c5[0]&&s5[4]>s5[0]) divergence='BULL';
-    if (c5[4]>c5[0]&&s5[4]<s5[0]) divergence='BEAR';
-    return {trend,divergence,current:obv};
-  }
-
-  hesaplaCMF(highs, lows, closes, volumes, period=20) {
-    let mfv=0, vol=0;
-    for (let i=closes.length-period; i<closes.length; i++) {
-      const h=highs[i],l=lows[i],c=closes[i],v=volumes[i];
-      mfv+=(h===l?0:((c-l)-(h-c))/(h-l))*v;
-      vol+=v;
-    }
-    return vol===0?0:mfv/vol;
-  }
-
-  hesaplaVWAP(highs, lows, closes, volumes) {
-    let tpv=0, vol=0;
-    const p=Math.min(20,closes.length);
-    for (let i=closes.length-p; i<closes.length; i++) {
-      const tp=(highs[i]+lows[i]+closes[i])/3;
-      tpv+=tp*volumes[i]; vol+=volumes[i];
-    }
-    return vol===0?closes[closes.length-1]:tpv/vol;
-  }
-
-  hesaplaATR(highs, lows, closes, period=14) {
-    const tr=[];
-    for (let i=1; i<closes.length; i++)
-      tr.push(Math.max(highs[i]-lows[i],Math.abs(highs[i]-closes[i-1]),Math.abs(lows[i]-closes[i-1])));
-    return tr.slice(-period).reduce((a,b)=>a+b,0)/period;
-  }
-
-  hesaplaSR(highs, lows, lookback=50) {
-    return {direnc:Math.max(...highs.slice(-lookback)), destek:Math.min(...lows.slice(-lookback))};
-  }
-
-  hesaplaFibonacci(highs, lows, lookback=50) {
-    const mx=Math.max(...highs.slice(-lookback));
-    const mn=Math.min(...lows.slice(-lookback));
-    const d=mx-mn;
-    return {level236:mx-d*0.236,level382:mx-d*0.382,level500:mx-d*0.5,level618:mx-d*0.618,level786:mx-d*0.786};
-  }
-
-  rsiBullishDiv(closes) {
-    const n=closes.length;
-    if (n<10) return false;
-    return closes[n-1]<closes[n-6] && this.hesaplaRSI(closes,14)>this.hesaplaRSI(closes.slice(0,-5),14);
-  }
-
-  rsiBearishDiv(closes) {
-    const n=closes.length;
-    if (n<10) return false;
-    return closes[n-1]>closes[n-6] && this.hesaplaRSI(closes,14)<this.hesaplaRSI(closes.slice(0,-5),14);
-  }
-
-  analizMumYapilari(candles) {
-    const n=candles.length;
-    if (n<3) return {};
-    const c0=candles[n-1],c1=candles[n-2],c2=candles[n-3];
-    const o0=parseFloat(c0[1]),h0=parseFloat(c0[2]),l0=parseFloat(c0[3]),cl0=parseFloat(c0[4]);
-    const o1=parseFloat(c1[1]),h1=parseFloat(c1[2]),l1=parseFloat(c1[3]),cl1=parseFloat(c1[4]);
-    const o2=parseFloat(c2[1]),h2=parseFloat(c2[2]),l2=parseFloat(c2[3]),cl2=parseFloat(c2[4]);
-    const b0=Math.abs(cl0-o0),b1=Math.abs(cl1-o1),r0=h0-l0;
-    const u0=h0-Math.max(cl0,o0),a0=Math.min(cl0,o0)-l0;
-    const bull0=cl0>o0,bear0=cl0<o0,bull1=cl1>o1,bear1=cl1<o1;
-    return {
-      hammer:           a0>b0*2&&u0<b0*0.5&&bull0,
-      invertedHammer:   u0>b0*2&&a0<b0*0.5&&bull0,
-      shootingStar:     u0>b0*2&&a0<b0*0.5&&bear0,
-      hangingMan:       a0>b0*2&&u0<b0*0.5&&bear0,
-      doji:             b0<r0*0.1,
-      dojiDragonfly:    b0<r0*0.1&&a0>r0*0.6,
-      dojiGravestone:   b0<r0*0.1&&u0>r0*0.6,
-      marubozu:         b0>r0*0.9,
-      bullishEngulfing: bear1&&bull0&&o0<=cl1&&cl0>=o1,
-      bearishEngulfing: bull1&&bear0&&o0>=cl1&&cl0<=o1,
-      piercingLine:     bear1&&bull0&&o0<l1&&cl0>(o1+cl1)/2,
-      darkCloudCover:   bull1&&bear0&&o0>h1&&cl0<(o1+cl1)/2,
-      tweezerBottom:    Math.abs(l0-l1)/l0<0.001&&bull0&&bear1,
-      tweezerTop:       Math.abs(h0-h1)/h0<0.001&&bear0&&bull1,
-      morningStar:      bear1&&b1<Math.abs(cl2-o2)*0.5&&bull0&&cl0>(o2+cl2)/2,
-      eveningStar:      bull1&&b1<Math.abs(cl2-o2)*0.5&&bear0&&cl0<(o2+cl2)/2,
-      threeWhiteSoldiers:bull0&&bull1&&cl2>o2&&cl0>cl1&&cl1>cl2,
-      threeBlackCrows:  bear0&&bear1&&cl2<o2&&cl0<cl1&&cl1<cl2,
-    };
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // YENİ: MAKİNE ZEKASI İÇİN PİYASA DURUMU ANALİZİ
-  // ═══════════════════════════════════════════════════════════
-  analyzeForMachine(candles, ticker) {
-    if (!candles || candles.length < 100) return null;
-
-    const closes  = candles.map(c => parseFloat(c[4]));
-    const highs   = candles.map(c => parseFloat(c[2]));
-    const lows    = candles.map(c => parseFloat(c[3]));
-    const volumes = candles.map(c => parseFloat(c[5]));
-    const fiyat   = closes[closes.length - 1];
-
-    const rsi     = this.hesaplaRSI(closes, 14);
-    const ema21   = this.hesaplaEMA(closes, 21);
-    const ema50   = this.hesaplaEMA(closes, 50);
-    const ema200  = closes.length >= 200 ? this.hesaplaEMA(closes, 200) : null;
-    const macd    = this.hesaplaMACD(closes);
-    const bb      = this.hesaplaBollinger(closes, 20, 2);
-    const atr14   = this.hesaplaATR(highs, lows, closes, 14);
-    const adx     = this.hesaplaADX(highs, lows, closes, 14);
-
-    let regime = 'RANGING';
-    if (adx.adx > 25 && fiyat > ema21 && ema21 > ema50) regime = 'TRENDING_UP';
-    else if (adx.adx > 25 && fiyat < ema21 && ema21 < ema50) regime = 'TRENDING_DOWN';
-    else if (rsi < 30 && bb.percent < 10) regime = 'OVERSOLD_BOUNCE';
-    else if (rsi > 70 && bb.percent > 90) regime = 'OVERBOUGHT_REJECT';
-
-    const volSon20 = volumes.slice(-20);
-    const volOrt   = volSon20.slice(0, -1).reduce((a, b) => a + b, 0) / 19;
-    const sonVol   = volumes[volumes.length - 1];
-    const volOran  = sonVol / volOrt;
-
-    let volumeProfile = 'NORMAL';
-    if (volOran > 2.0) volumeProfile = 'HIGH_SPIKE';
-    else if (volOran > 1.5) volumeProfile = 'ABOVE_AVERAGE';
-    else if (volOran < 0.5) volumeProfile = 'LOW';
-
-    const son50High = Math.max(...highs.slice(-50));
-    const son50Low  = Math.min(...lows.slice(-50));
-    const destekUzaklik = ((fiyat - son50Low) / fiyat) * 100;
-    const direncUzaklik = ((son50High - fiyat) / fiyat) * 100;
-
-    let divergence = 'NONE';
-    if (closes.length >= 14) {
-      const rsiNow = this.hesaplaRSI(closes, 14);
-      const rsiPrev = this.hesaplaRSI(closes.slice(0, -5), 14);
-      const priceNow = closes[closes.length - 1];
-      const pricePrev = closes[closes.length - 6];
-      if (priceNow < pricePrev && rsiNow > rsiPrev) divergence = 'BULLISH';
-      else if (priceNow > pricePrev && rsiNow < rsiPrev) divergence = 'BEARISH';
+    if (decision.action !== 'WAIT') {
+      this.recordDecision(decision, currentState);
     }
 
     return {
-      symbol: ticker.symbol,
-      fiyat, rsi, regime,
-      trend: fiyat > ema21 ? 'YUKARI' : 'ASAGI',
-      ema21, ema50, ema200,
-      macdLine: macd.macdLine,
-      macdHistogram: macd.histogram,
-      bollingerPercent: bb.percent,
-      bollingerSqueeze: bb.width < 2.0,
-      atr14, atrPercent: (atr14 / fiyat) * 100,
-      volumeProfile, volOran,
-      destek: son50Low, direnc: son50High,
-      destekUzaklik, direncUzaklik,
-      divergence,
-      adx: adx.adx,
+      symbol: ticker?.symbol || 'UNKNOWN',
+      action: decision.action,
+      confidence: decision.confidence,
+      expectedReturn: decision.expectedReturn,
+      stopLoss: decision.stopLoss,
+      takeProfit: decision.takeProfit,
+      reasoning: decision.reasoning,
+      similarPatternsFound: similarPatterns.length,
+      patternSuccessRate: patternAnalysis.successRate,
+      machineConfidence: selfAssessment.confidence,
       timestamp: Date.now()
     };
   }
+
+  extractMarketState(candles) {
+    const closes  = candles.map(c => parseFloat(c[4]));
+    const highs   = candles.map(c => parseFloat(c[2]));
+    const lows    = candles.map(c => parseFloat(c[3]));
+    const volumes = candles.map(c => parseFloat(c[5]));
+    const price   = closes[closes.length - 1];
+
+    return {
+      price, priceChange5: ((price - closes[closes.length - 6]) / closes[closes.length - 6]) * 100,
+      priceChange10: ((price - closes[closes.length - 11]) / closes[closes.length - 11]) * 100,
+      priceChange20: ((price - closes[closes.length - 21]) / closes[closes.length - 21]) * 100,
+      volatility14: this.calculateVolatility(closes, 14), volatility50: this.calculateVolatility(closes, 50),
+      volatilityRatio: 0, trendStrength: 0, trendDirection: 0,
+      rsi14: this.calculateRSI(closes, 14), rsiSlope: 0,
+      volumeProfile: this.analyzeVolumeProfile(volumes, closes), volumeChange: 0,
+      supportDistance: 0, resistanceDistance: 0, higherHighs: 0, lowerLows: 0,
+      consolidationScore: 0, indicatorConsensus: 0
+    };
+  }
+
+  findSimilarHistoricalPatterns(candles, currentState, windowSize) {
+    const patterns = [];
+    for (let i = windowSize; i < candles.length - 25; i++) {
+      const historicalSlice = candles.slice(i - windowSize, i);
+      const historicalState = this.extractMarketState(historicalSlice);
+      const similarity = this.calculateCosineSimilarity(currentState, historicalState);
+      if (similarity > 0.80) {
+        const futureCandles = candles.slice(i, i + this.settings.outcomeHorizon);
+        const outcome = this.evaluateOutcome(historicalSlice, futureCandles);
+        patterns.push({ index: i, similarity, outcome, state: historicalState });
+      }
+    }
+    return patterns.sort((a, b) => b.similarity - a.similarity).slice(0, 20);
+  }
+
+  calculateCosineSimilarity(state1, state2) {
+    const features = ['priceChange5','priceChange10','priceChange20','volatility14','volatility50','rsi14','trendStrength','trendDirection','volumeProfile','supportDistance','resistanceDistance'];
+    let dotProduct = 0, magnitude1 = 0, magnitude2 = 0;
+    for (const f of features) {
+      const v1 = Number(state1[f]) || 0, v2 = Number(state2[f]) || 0;
+      dotProduct += v1 * v2; magnitude1 += v1 * v1; magnitude2 += v2 * v2;
+    }
+    magnitude1 = Math.sqrt(magnitude1); magnitude2 = Math.sqrt(magnitude2);
+    if (magnitude1 === 0 || magnitude2 === 0) return 0;
+    return dotProduct / (magnitude1 * magnitude2);
+  }
+
+  evaluateOutcome(beforeCandles, futureCandles) {
+    if (futureCandles.length < 5) return { direction: 'UNKNOWN', return: 0 };
+    const startPrice = parseFloat(beforeCandles[beforeCandles.length - 1][4]);
+    const endPrice = parseFloat(futureCandles[futureCandles.length - 1][4]);
+    const maxPrice = Math.max(...futureCandles.map(c => parseFloat(c[2])));
+    const minPrice = Math.min(...futureCandles.map(c => parseFloat(c[3])));
+    const returnPct = ((endPrice - startPrice) / startPrice) * 100;
+    const maxGain = ((maxPrice - startPrice) / startPrice) * 100;
+    const maxLoss = ((startPrice - minPrice) / startPrice) * 100;
+    return { direction: returnPct > 2 ? 'UP' : returnPct < -2 ? 'DOWN' : 'FLAT', returnPct, maxGain, maxLoss, riskRewardRatio: maxLoss > 0 ? maxGain / maxLoss : 0, profitable: returnPct > 0 };
+  }
+
+  analyzePatternOutcomes(similarPatterns, currentState) {
+    const total = similarPatterns.length;
+    const profitable = similarPatterns.filter(p => p.outcome.profitable).length;
+    const upPatterns = similarPatterns.filter(p => p.outcome.direction === 'UP');
+    const downPatterns = similarPatterns.filter(p => p.outcome.direction === 'DOWN');
+    const avgReturn = similarPatterns.reduce((s, p) => s + p.outcome.returnPct, 0) / total;
+    const avgMaxGain = similarPatterns.reduce((s, p) => s + p.outcome.maxGain, 0) / total;
+    const avgMaxLoss = similarPatterns.reduce((s, p) => s + p.outcome.maxLoss, 0) / total;
+    const weightedSuccess = similarPatterns.reduce((s, p) => s + (p.outcome.profitable ? p.similarity : 0), 0) / similarPatterns.reduce((s, p) => s + p.similarity, 0);
+    return { totalPatterns: total, successRate: profitable / total, weightedSuccessRate: weightedSuccess, upProbability: upPatterns.length / total, downProbability: downPatterns.length / total, avgReturn, avgMaxGain, avgMaxLoss, riskRewardRatio: avgMaxLoss > 0 ? avgMaxGain / avgMaxLoss : 0, confidence: weightedSuccess, topMatches: similarPatterns.slice(0,3).map(p => ({similarity:p.similarity,outcome:p.outcome})) };
+  }
+
+  calculateRiskProfile(patternAnalysis, currentState, candles) {
+    const closes = candles.map(c => parseFloat(c[4]));
+    const price = closes[closes.length - 1];
+    const atr14 = this.calculateATR(candles, 14);
+    const winRate = patternAnalysis.successRate;
+    const avgWin = patternAnalysis.avgMaxGain;
+    const avgLoss = patternAnalysis.avgMaxLoss;
+    let kellyFraction = 0;
+    if (avgLoss > 0 && winRate > 0) {
+      const b = avgWin / avgLoss;
+      kellyFraction = (winRate * b - (1 - winRate)) / b;
+      kellyFraction = Math.max(0, Math.min(0.25, kellyFraction));
+    }
+    return { kellyFraction, atr14, suggestedStopLoss: price - (atr14 * 1.5), suggestedTakeProfit: price + (atr14 * avgWin / Math.max(avgLoss, 0.1)), riskPerTrade: kellyFraction * 100, acceptable: kellyFraction > 0.02 && patternAnalysis.riskRewardRatio > 1.5 };
+  }
+
+  evaluateSelfPerformance() {
+    const recentSignals = this.memory.signals.slice(-30);
+    if (recentSignals.length < 10) return { confidence: 1.0, shouldTrade: true, reason: 'YETERLI_GECMIS_YOK' };
+    const recentOutcomes = this.memory.outcomes.slice(-30);
+    const winRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
+    let consecutiveLosses = 0;
+    for (let i = recentOutcomes.length - 1; i >= 0; i--) { if (!recentOutcomes[i].profitable) consecutiveLosses++; else break; }
+    const currentDrawdown = this.state.currentDrawdown;
+    const shouldTrade = consecutiveLosses < 3 && currentDrawdown < this.settings.maxDrawdownAllowed && winRate > 0.4;
+    return { confidence: winRate, consecutiveLosses, currentDrawdown, shouldTrade, reason: !shouldTrade ? (consecutiveLosses >= 3 ? 'PES_PESE_KAYIP' : currentDrawdown >= this.settings.maxDrawdownAllowed ? 'YUKSEK_DRAWDOWN' : 'DUSUK_BASARI_ORANI') : 'OK' };
+  }
+
+  makeDecision(patternAnalysis, riskProfile, selfAssessment, currentState) {
+    if (!selfAssessment.shouldTrade) return { action: 'WAIT', confidence: 0, reasoning: `MAKINE_BEKLEMEDE: ${selfAssessment.reason}`, expectedReturn: 0, stopLoss: null, takeProfit: null };
+    if (!riskProfile.acceptable) return { action: 'WAIT', confidence: 0, reasoning: 'RISK_PROFILI_UYGUN_DEGIL', expectedReturn: 0, stopLoss: null, takeProfit: null };
+    const adjustedThreshold = this.getDynamicConfidenceThreshold();
+    if (patternAnalysis.confidence < adjustedThreshold) return { action: 'WAIT', confidence: patternAnalysis.confidence, reasoning: `GUVEN_ESIGI_ALTINDA`, expectedReturn: patternAnalysis.avgReturn, stopLoss: null, takeProfit: null };
+    const direction = patternAnalysis.upProbability > patternAnalysis.downProbability ? 'BUY' : 'SELL';
+    return { action: direction, confidence: patternAnalysis.confidence, reasoning: `${patternAnalysis.totalPatterns} benzer desen, basari:%${(patternAnalysis.successRate*100).toFixed(1)}`, expectedReturn: patternAnalysis.avgReturn, stopLoss: riskProfile.suggestedStopLoss, takeProfit: riskProfile.suggestedTakeProfit };
+  }
+
+  getDynamicConfidenceThreshold() {
+    const recentOutcomes = this.memory.outcomes.slice(-20);
+    if (recentOutcomes.length < 10) return this.settings.confidenceRequired;
+    const winRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
+    if (winRate < 0.5) return 0.85;
+    if (winRate < 0.6) return 0.80;
+    if (winRate < 0.7) return 0.75;
+    return 0.65;
+  }
+
+  recordDecision(decision, marketState) {
+    this.memory.signals.push({ ...decision, marketState, timestamp: Date.now() });
+    this.state.totalSignals++;
+  }
+
+  feedbackSignalResult(signalTimestamp, actualReturn, maxFavorable, maxAdverse) {
+    const signal = this.memory.signals.find(s => s.timestamp === signalTimestamp);
+    if (!signal) return;
+    const outcome = { signalTimestamp, actualReturn, maxFavorable, maxAdverse, profitable: actualReturn > 0, riskRewardRealized: maxAdverse > 0 ? maxFavorable / maxAdverse : 0 };
+    this.memory.outcomes.push(outcome);
+    if (outcome.profitable) { this.memory.patternLibrary.push({ state: signal.marketState, outcome: 'SUCCESS', return: actualReturn }); this.state.successfulSignals++; }
+    if (actualReturn < 0) { this.state.consecutiveLosses++; this.state.currentBalance *= (1 + actualReturn / 100); if (this.state.currentBalance < this.state.peakBalance) { this.state.currentDrawdown = (this.state.peakBalance - this.state.currentBalance) / this.state.peakBalance; } }
+    else { this.state.consecutiveLosses = 0; this.state.currentBalance *= (1 + actualReturn / 100); if (this.state.currentBalance > this.state.peakBalance) { this.state.peakBalance = this.state.currentBalance; this.state.currentDrawdown = 0; } }
+    this.adaptThresholds();
+  }
+
+  adaptThresholds() {
+    const recentOutcomes = this.memory.outcomes.slice(-50);
+    if (recentOutcomes.length < 20) return;
+    const successRate = recentOutcomes.filter(o => o.profitable).length / recentOutcomes.length;
+    if (successRate > 0.75) { this.settings.confidenceRequired = Math.max(0.60, this.settings.confidenceRequired - 0.01); }
+    else if (successRate < 0.55) { this.settings.confidenceRequired = Math.min(0.85, this.settings.confidenceRequired + 0.02); }
+  }
+
+  calculateRSI(data, period = 14) {
+    if (data.length < period + 1) return 50;
+    let gains = 0, losses = 0;
+    for (let i = data.length - period; i < data.length; i++) { const diff = data[i] - data[i - 1]; if (diff > 0) gains += diff; else losses -= diff; }
+    const avgGain = gains / period, avgLoss = losses / period;
+    if (avgLoss === 0) return 100;
+    return 100 - (100 / (1 + avgGain / avgLoss));
+  }
+
+  calculateVolatility(closes, period = 14) {
+    if (closes.length < period) return 0;
+    const returns = [];
+    for (let i = closes.length - period; i < closes.length; i++) { returns.push((closes[i] - closes[i - 1]) / closes[i - 1]); }
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+    return Math.sqrt(variance) * 100;
+  }
+
+  calculateATR(candles, period = 14) {
+    const trValues = [];
+    for (let i = 1; i < candles.length; i++) {
+      const h = parseFloat(candles[i][2]), l = parseFloat(candles[i][3]), pc = parseFloat(candles[i - 1][4]);
+      trValues.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
+    if (trValues.length < period) return trValues.reduce((a, b) => a + b, 0) / trValues.length;
+    return trValues.slice(-period).reduce((a, b) => a + b, 0) / period;
+  }
+
+  analyzeVolumeProfile(volumes, closes) {
+    const recent = volumes.slice(-20);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const current = volumes[volumes.length - 1];
+    const ratio = current / avg;
+    if (ratio > 2.0) return 'HIGH_SPIKE';
+    if (ratio > 1.5) return 'ABOVE_AVERAGE';
+    if (ratio < 0.5) return 'LOW';
+    return 'NORMAL';
+  }
+
+  createNullResponse(reason) {
+    return { symbol: 'UNKNOWN', action: 'WAIT', confidence: 0, reasoning: reason, expectedReturn: 0, stopLoss: null, takeProfit: null, similarPatternsFound: 0, patternSuccessRate: 0, machineConfidence: 0, timestamp: Date.now() };
+  }
 }
 
-module.exports = new ProfessionalAnalysis();
+module.exports = MachineDecisionEngine;
