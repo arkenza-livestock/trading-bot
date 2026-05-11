@@ -46,7 +46,7 @@ function Settings() {
   return (
     <div style={{maxWidth:500,padding:'32px 20px',margin:'0 auto'}}>
       <h1 style={{fontSize:22,fontWeight:700,marginBottom:4,color:'#f1f5f9'}}>Ayarlar</h1>
-      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>Adaptif Cift Motor | LONG & SHORT</p>
+      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>Bot konfigurasyonu</p>
       {message && <div style={{marginBottom:20,padding:14,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)',borderRadius:10,color:'#22c55e',fontSize:13}}>{message}</div>}
 
       {/* GERCEK ALIM */}
@@ -60,7 +60,7 @@ function Settings() {
       {/* LONG AYARLARI */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:longEnabled?'4px solid #22c55e':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🟢 LONG Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{longEnabled?'ACIK - Adaptif 12 kural ile LONG sinyaller':'KAPALI - LONG sinyaller pas gecilir'}</p></div>
+          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🟢 LONG Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{longEnabled?'ACIK - LONG sinyalleri isleme alinir':'KAPALI - LONG sinyaller pas gecilir'}</p></div>
           <label className="toggle-switch"><input type="checkbox" checked={longEnabled} onChange={function(e){handleChange('long_enabled',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
         </div>
       </div>
@@ -68,12 +68,17 @@ function Settings() {
       {/* SHORT AYARLARI */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderLeft:shortEnabled?'4px solid #ef4444':'4px solid #334155',borderRadius:14,padding:'22px 22px',marginBottom:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🔴 SHORT Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{shortEnabled?'ACIK - Adaptif 8 kural ile SHORT sinyaller':'KAPALI - SHORT sinyaller pas gecilir'}</p></div>
+          <div><h3 style={{fontSize:14,fontWeight:600,color:'#f1f5f9',marginBottom:4}}>🔴 SHORT Islemleri</h3><p style={{color:'#64748b',fontSize:12,margin:0}}>{shortEnabled?'ACIK - SHORT sinyalleri isleme alinir':'KAPALI - Sadece LONG sinyaller'}</p></div>
           <label className="toggle-switch"><input type="checkbox" checked={shortEnabled} onChange={function(e){handleChange('short_enabled',e.target.checked?'true':'false');}} /><span className="toggle-slider"></span></label>
         </div>
         {shortEnabled && (
-          <div style={{marginTop:10,padding:10,background:'rgba(239,68,68,0.08)',borderRadius:8,fontSize:11,color:'#fca5a5'}}>
-            🔴 SHORT sinyalleri bagimsiz motor ile uretilir. Piyasa rejimine gore kural seti otomatik degisir.
+          <div>
+            <Row label="SHORT Guven Esigi (%)">
+              <input type="number" step="1" value={settings.short_confidence_min?String(parseFloat(settings.short_confidence_min)*100):'85'} onChange={function(e){handleChange('short_confidence_min',String(parseFloat(e.target.value)/100));}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} />
+            </Row>
+            <div style={{marginTop:10,padding:10,background:'rgba(239,68,68,0.08)',borderRadius:8,fontSize:11,color:'#fca5a5'}}>
+              🔴 SHORT sadece BTC düsüs trendindeyken acilir (ek koruma)
+            </div>
           </div>
         )}
       </div>
@@ -96,16 +101,16 @@ function Settings() {
       {/* TARAMA */}
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Tarama Ayarlari</h3>
-        <Row label="Analiz Mum Araligi">
-          <select value={settings.analysis_timeframe || '4h'} onChange={function(e){ handleChange('analysis_timeframe', e.target.value); }} style={{background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 10px',fontSize:13}}>
-            <option value="1h">1 Saat</option>
-            <option value="4h">4 Saat</option>
-            <option value="1d">1 Gun</option>
-          </select>
-        </Row>
         <Row label="Tarama Araligi (dk)"><input type="number" value={settings.scan_interval||'20'} onChange={function(e){handleChange('scan_interval',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
-        <Row label="Maksimum Coin"><input type="number" value={settings.max_coins||'120'} onChange={function(e){handleChange('max_coins',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
-        <Row label="Minimum Hacim (USDT)"><input type="number" value={settings.min_volume||'5000000'} onChange={function(e){handleChange('min_volume',e.target.value);}} style={{width:120,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
+        <Row label="Maksimum Coin"><input type="number" value={settings.max_coins||'50'} onChange={function(e){handleChange('max_coins',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
+        <Row label="Minimum Hacim (USDT)"><input type="number" value={settings.min_volume||'10000000'} onChange={function(e){handleChange('min_volume',e.target.value);}} style={{width:120,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
+      </div>
+
+      {/* SINYAL */}
+      <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
+        <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Sinyal Ayarlari</h3>
+        <Row label="Minimum Puan"><input type="number" value={settings.min_score||'40'} onChange={function(e){handleChange('min_score',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
+        <Row label="AI Guven Esigi (%)"><input type="number" step="1" value={settings.machine_confidence_min?String(parseFloat(settings.machine_confidence_min)*100):'70'} onChange={function(e){handleChange('machine_confidence_min',String(parseFloat(e.target.value)/100));}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
       </div>
 
       {/* RISK */}
@@ -123,6 +128,7 @@ function Settings() {
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Telegram</h3>
         <Row label="Bot Token"><input type="text" value={settings.telegram_token||''} onChange={function(e){handleChange('telegram_token',e.target.value);}} placeholder="123456:ABCdef..." style={{width:200,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:12,textAlign:'left'}} /></Row>
         <Row label="Chat ID"><input type="text" value={settings.telegram_chat_id||''} onChange={function(e){handleChange('telegram_chat_id',e.target.value);}} placeholder="-100123456" style={{width:160,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:12,textAlign:'left'}} /></Row>
+        <Row label="Minimum Bildirim Puani"><input type="number" value={settings.telegram_min_score||'60'} onChange={function(e){handleChange('telegram_min_score',e.target.value);}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
       </div>
 
       <button onClick={saveSettings} style={{marginTop:8,padding:'14px 0',fontSize:15,fontWeight:600,width:'100%',background:'#1e293b',border:'1px solid #334155',borderRadius:10,color:'#e2e8f0',cursor:'pointer'}}>Ayarlari Kaydet</button>
