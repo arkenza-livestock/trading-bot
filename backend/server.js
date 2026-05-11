@@ -8,26 +8,18 @@ const app = express();
 const PORT = process.env.WEB_PORT || 3000;
 
 app.use(express.json());
+
+// React frontend'i serve et (MEVCUT ARAYÜZÜNÜZ)
 app.use(express.static(path.join(__dirname, '..', 'frontend', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'frontend', 'build')));
 
 // ════════════════════════════════════════════════
-//  MANUEL TARAMA
+//  API: MANUEL TARAMA (arka planda çalışır)
 // ════════════════════════════════════════════════
 app.post('/api/scan', async (req, res) => {
   try {
-    const force = req.body?.force === true;
-    
     if (!engine.running) {
       return res.json({ success: false, message: '❌ Bot çalışmıyor' });
-    }
-
-    const now = Date.now();
-    const lastScan = engine.lastScanTime || 0;
-    const minInterval = force ? 0 : 30000;
-
-    if (now - lastScan < minInterval && !force) {
-      const waitSec = Math.ceil((minInterval - (now - lastScan)) / 1000);
-      return res.json({ success: false, message: `⏳ ${waitSec} saniye bekleyin` });
     }
 
     res.json({ success: true, message: '🔍 Tarama başlatıldı!' });
@@ -45,14 +37,9 @@ app.post('/api/scan', async (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════
-//  DURUM
-// ════════════════════════════════════════════════
 app.get('/api/status', (req, res) => {
   try {
     const simStats = simulation.getStats();
-    const settings = engine.getSettings();
-    
     res.json({
       success: true,
       data: {
@@ -74,9 +61,6 @@ app.get('/api/status', (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════
-//  SİNYALLER
-// ════════════════════════════════════════════════
 app.get('/api/signals', (req, res) => {
   try {
     const signals = db.prepare('SELECT * FROM signals ORDER BY id DESC LIMIT 50').all();
@@ -86,13 +70,15 @@ app.get('/api/signals', (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════
-//  BAŞLAT
-// ════════════════════════════════════════════════
+// React Router için fallback
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'frontend', 'public', 'index.html'));
+});
+
 app.listen(PORT, () => {
   console.log('═'.repeat(50));
   console.log(`🌐 Panel: http://localhost:${PORT}`);
-  console.log(`🔍 Tarama: POST http://localhost:${PORT}/api/scan`);
+  console.log(`🔍 API Tarama: POST http://localhost:${PORT}/api/scan`);
   console.log('═'.repeat(50));
 });
 
