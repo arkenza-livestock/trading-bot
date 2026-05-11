@@ -23,14 +23,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 /**
  * 🟢 MANUEL TARAMA BUTONU
- * POST /api/scan
- * Body: { force?: boolean }
  */
 app.post('/api/scan', async (req, res) => {
   try {
     const force = req.body?.force === true;
     
-    // Bot durumunu kontrol et
     if (!engine.running) {
       return res.json({ 
         success: false, 
@@ -38,10 +35,9 @@ app.post('/api/scan', async (req, res) => {
       });
     }
 
-    // Eğer zorla tarama istenmişse veya son taramadan beri 30 sn geçtiyse
     const now = Date.now();
     const lastScan = engine.lastScanTime || 0;
-    const minInterval = force ? 0 : 30000; // 30 saniye
+    const minInterval = force ? 0 : 30000;
 
     if (now - lastScan < minInterval && !force) {
       const waitSec = Math.ceil((minInterval - (now - lastScan)) / 1000);
@@ -51,14 +47,12 @@ app.post('/api/scan', async (req, res) => {
       });
     }
 
-    // Taramayı başlat
     res.json({ 
       success: true, 
       message: '🔍 Tarama başlatıldı! Sonuçlar konsolda görünecek...',
       btcTrend: engine.btcTrend
     });
 
-    // Async tarama başlat
     console.log('\n🟡 [MANUEL TARAMA] Kullanıcı tarafından başlatıldı...');
     engine.lastScanTime = Date.now();
     
@@ -78,7 +72,6 @@ app.post('/api/scan', async (req, res) => {
 
 /**
  * 📊 BOT DURUMU
- * GET /api/status
  */
 app.get('/api/status', (req, res) => {
   try {
@@ -139,31 +132,7 @@ app.get('/api/status', (req, res) => {
 });
 
 /**
- * 🔄 BOT KONTROL
- * POST /api/bot/restart
- */
-app.post('/api/bot/restart', (req, res) => {
-  try {
-    engine.stop();
-    
-    setTimeout(async () => {
-      try {
-        await engine.start();
-        console.log('🔄 [API] Bot yeniden başlatıldı');
-      } catch (e) {
-        console.error('[API] Bot başlatma hatası:', e.message);
-      }
-    }, 2000);
-    
-    res.json({ success: true, message: '🔄 Bot yeniden başlatılıyor...' });
-  } catch (e) {
-    res.status(500).json({ success: false, message: 'Yeniden başlatma hatası: ' + e.message });
-  }
-});
-
-/**
  * 📋 SON SİNYALLER
- * GET /api/signals
  */
 app.get('/api/signals', (req, res) => {
   try {
@@ -171,19 +140,6 @@ app.get('/api/signals', (req, res) => {
     res.json({ success: true, data: signals });
   } catch (e) {
     res.status(500).json({ success: false, message: 'Sinyaller alınamadı' });
-  }
-});
-
-/**
- * 📈 TARAMA GEÇMİŞİ
- * GET /api/scan-history
- */
-app.get('/api/scan-history', (req, res) => {
-  try {
-    const history = db.prepare('SELECT * FROM scan_logs ORDER BY id DESC LIMIT 20').all();
-    res.json({ success: true, data: history });
-  } catch (e) {
-    res.status(500).json({ success: false, message: 'Tarama geçmişi alınamadı' });
   }
 });
 
