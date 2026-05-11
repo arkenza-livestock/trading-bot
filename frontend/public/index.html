@@ -1,18 +1,712 @@
 <!DOCTYPE html>
 <html lang="tr">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Kripto Sinyal Botu</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 Trading Bot Panel v21</title>
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0e1a; color: #e2e8f0; }
-      ::-webkit-scrollbar { width: 6px; }
-      ::-webkit-scrollbar-track { background: #1a1f2e; }
-      ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
+        :root {
+            --bg: #0d1117;
+            --card: #161b22;
+            --border: #30363d;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d2991d;
+            --blue: #58a6ff;
+            --text: #c9d1d9;
+            --text-secondary: #8b949e;
+            --button-bg: #238636;
+            --button-hover: #2ea043;
+            --danger-bg: #da3633;
+            --danger-hover: #f85149;
+            --warning-bg: #9e6a03;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        .status-dot.online { background: var(--green); }
+        .status-dot.offline { background: var(--red); animation: none; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ──── KONTROL BUTONLARI ──── */
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .btn-scan {
+            background: var(--button-bg);
+            color: white;
+            font-size: 18px;
+            padding: 16px 36px;
+            letter-spacing: 0.5px;
+        }
+        .btn-scan:hover:not(:disabled) {
+            background: var(--button-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(35, 134, 54, 0.4);
+        }
+        .btn-scan:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(35, 134, 54, 0.3);
+        }
+
+        .btn-force {
+            background: var(--warning-bg);
+            color: white;
+        }
+        .btn-force:hover:not(:disabled) {
+            background: #b8860b;
+            transform: translateY(-2px);
+        }
+
+        .btn-refresh {
+            background: var(--border);
+            color: var(--text);
+        }
+        .btn-refresh:hover:not(:disabled) {
+            background: #484f58;
+        }
+
+        .btn-auto {
+            background: transparent;
+            border: 2px solid var(--border);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-auto.active {
+            border-color: var(--green);
+            color: var(--green);
+            background: rgba(63, 185, 80, 0.1);
+        }
+
+        /* ──── BİLDİRİM ──── */
+        .notification {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            font-weight: 500;
+            animation: slideIn 0.3s ease;
+        }
+        .notification.show { display: flex; align-items: center; gap: 8px; }
+        .notification.success { background: rgba(63, 185, 80, 0.15); border: 1px solid var(--green); color: var(--green); }
+        .notification.error { background: rgba(248, 81, 73, 0.15); border: 1px solid var(--red); color: var(--red); }
+        .notification.info { background: rgba(88, 166, 255, 0.15); border: 1px solid var(--blue); color: var(--blue); }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ──── GRID ──── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card h3 {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .card .value {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+        .value.green { color: var(--green); }
+        .value.red { color: var(--red); }
+        .value.yellow { color: var(--yellow); }
+        .value.blue { color: var(--blue); }
+
+        .card .sub {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* ──── TABLO ──── */
+        .table-container {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        .table-container h3 {
+            padding: 16px 20px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 16px;
+            background: rgba(48, 54, 61, 0.5);
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 10px 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        tr:hover td {
+            background: rgba(88, 166, 255, 0.04);
+        }
+
+        /* ──── BİLGİ SATIRI ──── */
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .info-row:last-child { border-bottom: none; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-success { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+        .badge-danger { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+        .badge-warning { background: rgba(210, 153, 29, 0.2); color: var(--yellow); }
+        .badge-info { background: rgba(88, 166, 255, 0.2); color: var(--blue); }
+
+        .countdown {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-left: 8px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid transparent;
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 600px) {
+            .controls { flex-direction: column; }
+            .btn { width: 100%; justify-content: center; }
+            .value { font-size: 24px; }
+            .grid { grid-template-columns: 1fr; }
+        }
     </style>
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            🤖 Trading Bot v21
+            <span class="status-dot online" id="statusDot"></span>
+            <span style="font-size:14px;font-weight:400;color:var(--text-secondary)" id="statusText">Bağlanıyor...</span>
+        </h1>
+
+        <!-- BİLDİRİM -->
+        <div class="notification" id="notification"></div>
+
+        <!-- KONTROL BUTONLARI -->
+        <div class="controls">
+            <button class="btn btn-scan" id="btnScan" onclick="manualScan(false)">
+                🔍 <span>TARA</span>
+            </button>
+            <button class="btn btn-force" id="btnForce" onclick="manualScan(true)">
+                ⚡ ZORLA TARA
+            </button>
+            <button class="btn btn-refresh" onclick="refreshStatus()">
+                🔄 YENİLE
+            </button>
+            <button class="btn btn-auto" id="btnAutoRefresh" onclick="toggleAutoRefresh()">
+                ⏱️ OTO YENİLE: <span id="autoRefreshLabel">KAPALI</span>
+            </button>
+        </div>
+
+        <!-- ANA METRİKLER -->
+        <div class="grid" id="metricsGrid">
+            <div class="card">
+                <h3>💰 Bakiye</h3>
+                <div class="value green" id="balance">--</div>
+                <div class="sub" id="pnlInfo">Toplam PnL: --</div>
+            </div>
+            <div class="card">
+                <h3>📊 Toplam İşlem</h3>
+                <div class="value blue" id="totalTrades">--</div>
+                <div class="sub" id="winRateInfo">Başarı: %--</div>
+            </div>
+            <div class="card">
+                <h3>🎯 Karlılık</h3>
+                <div class="value" id="profitFactor" style="color:var(--yellow)">--</div>
+                <div class="sub">Profit Faktör</div>
+            </div>
+            <div class="card">
+                <h3>📉 Max Drawdown</h3>
+                <div class="value red" id="maxDrawdown">--</div>
+                <div class="sub">Sharpe: <span id="sharpeRatio">--</span></div>
+            </div>
+        </div>
+
+        <!-- BOT DURUMU -->
+        <div class="table-container">
+            <h3>📡 Bot & Piyasa Durumu</h3>
+            <div class="info-row">
+                <span>🔍 Tarama Sayısı:</span>
+                <strong id="scanCount">--</strong>
+            </div>
+            <div class="info-row">
+                <span>🕐 Son Tarama:</span>
+                <strong id="lastScan">--</strong>
+            </div>
+            <div class="info-row">
+                <span>₿ BTC Trend:</span>
+                <strong id="btcTrend">--</strong>
+            </div>
+            <div class="info-row">
+                <span>🧠 AI Eşik:</span>
+                <strong id="aiThreshold">--</strong>
+            </div>
+            <div class="info-row">
+                <span>⚠️ Ardışık Zarar:</span>
+                <strong id="consecutiveLosses">--</strong>
+            </div>
+            <div class="info-row">
+                <span>📊 Sinyaller (Kabul/Red):</span>
+                <strong id="signalStats">--</strong>
+            </div>
+            <div class="info-row">
+                <span>💼 Açık Pozisyon:</span>
+                <strong id="openPositions">--</strong>
+            </div>
+            <div class="info-row">
+                <span>🏦 Gerçek İşlem:</span>
+                <strong id="realTrading">--</strong>
+            </div>
+        </div>
+
+        <!-- AÇIK POZİSYONLAR -->
+        <div class="table-container" id="openPosContainer" style="display:none;">
+            <h3>📋 Açık Pozisyonlar</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Sembol</th>
+                        <th>Yön</th>
+                        <th>Giriş</th>
+                        <th>Güncel</th>
+                        <th>PnL %</th>
+                        <th>Stop</th>
+                        <th>Güç</th>
+                    </tr>
+                </thead>
+                <tbody id="openPosBody"></tbody>
+            </table>
+        </div>
+
+        <!-- SON İŞLEMLER -->
+        <div class="table-container">
+            <h3>📜 Son İşlemler</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Sembol</th>
+                        <th>Yön</th>
+                        <th>Giriş</th>
+                        <th>Çıkış</th>
+                        <th>PnL</th>
+                        <th>PnL %</th>
+                        <th>Neden</th>
+                    </tr>
+                </thead>
+                <tbody id="recentTradesBody">
+                    <tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">Henüz işlem yok</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let isScanning = false;
+
+        // ════════════════════════════════════════════════════════════
+        //  SAYFA YÜKLENDİ
+        // ════════════════════════════════════════════════════════════
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshStatus();
+            // Her 10 saniyede bir otomatik yenileme opsiyonu
+        });
+
+        // ════════════════════════════════════════════════════════════
+        //  MANUEL TARAMA
+        // ════════════════════════════════════════════════════════════
+        async function manualScan(force = false) {
+            if (isScanning) return;
+
+            const btn = force ? document.getElementById('btnForce') : document.getElementById('btnScan');
+            const originalHTML = btn.innerHTML;
+            
+            isScanning = true;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> TARANIYOR...';
+            
+            // Force butonunu da devre dışı bırak
+            document.getElementById('btnForce').disabled = true;
+
+            showNotification('info', '🔍 Tarama başlatıldı, sonuçlar konsolda görünecek...');
+
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ force: force })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification('success', result.message);
+                    // Tarama bittikten sonra durumu güncelle (tahmini 30-60 sn)
+                    setTimeout(() => {
+                        refreshStatus();
+                        showNotification('success', '✅ Tarama tamamlandı! Sonuçları kontrol edin.');
+                    }, 30000);
+                } else {
+                    showNotification('error', result.message);
+                }
+            } catch (e) {
+                showNotification('error', 'Bağlantı hatası: ' + e.message);
+            } finally {
+                // Butonları 5 saniye sonra tekrar aktif et (rate limit koruması)
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                    document.getElementById('btnForce').disabled = false;
+                    isScanning = false;
+                }, 5000);
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  DURUM YENİLE
+        // ════════════════════════════════════════════════════════════
+        async function refreshStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const result = await response.json();
+
+                if (!result.success) {
+                    updateOfflineStatus();
+                    return;
+                }
+
+                const d = result.data;
+                
+                // Bot durumu
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+                
+                if (d.bot.running) {
+                    statusDot.className = 'status-dot online';
+                    statusText.textContent = 'ÇALIŞIYOR';
+                    statusText.style.color = 'var(--green)';
+                } else {
+                    statusDot.className = 'status-dot offline';
+                    statusText.textContent = 'DURDU';
+                    statusText.style.color = 'var(--red)';
+                }
+
+                // Metrikler
+                document.getElementById('balance').textContent = '$' + (d.simulation.balance || 0).toFixed(2);
+                document.getElementById('pnlInfo').textContent = 
+                    'Toplam PnL: ' + (d.simulation.totalPnl >= 0 ? '+' : '') + 
+                    '$' + (d.simulation.totalPnl || 0).toFixed(2) + 
+                    ' (%' + (d.simulation.totalPnlPct || 0).toFixed(2) + ')';
+
+                document.getElementById('totalTrades').textContent = d.simulation.totalTrades || 0;
+                document.getElementById('winRateInfo').textContent = 
+                    'Başarı: %' + (d.simulation.winRate || 0).toFixed(1) + 
+                    ' | Kazanan: ' + (d.simulation.wins || 0) + 
+                    ' / Kaybeden: ' + (d.simulation.losses || 0);
+
+                document.getElementById('profitFactor').textContent = (d.simulation.profitFactor || 0).toFixed(2);
+                document.getElementById('maxDrawdown').textContent = '%' + (d.simulation.maxDrawdown || 0).toFixed(2);
+                document.getElementById('sharpeRatio').textContent = (d.simulation.sharpeRatio || 0).toFixed(2);
+
+                // Bot durum bilgileri
+                document.getElementById('scanCount').textContent = d.bot.scanCount || 0;
+                
+                const lastScanElem = document.getElementById('lastScan');
+                if (d.bot.lastScanAgo !== null && d.bot.lastScanAgo !== undefined) {
+                    const mins = Math.floor(d.bot.lastScanAgo / 60);
+                    const secs = d.bot.lastScanAgo % 60;
+                    lastScanElem.textContent = mins > 0 ? `${mins} dk ${secs} sn önce` : `${secs} sn önce`;
+                } else {
+                    lastScanElem.textContent = 'Henüz taranmadı';
+                }
+
+                const btcTrendData = d.bot.btcTrend || {};
+                const btcTrendElem = document.getElementById('btcTrend');
+                btcTrendElem.textContent = `${btcTrendData.trend || 'BELIRSIZ'} | RSI:${(btcTrendData.rsi || 50).toFixed(1)}`;
+                btcTrendElem.className = '';
+                if (btcTrendData.trend?.includes('YUKARI')) btcTrendElem.style.color = 'var(--green)';
+                else if (btcTrendData.trend?.includes('ASAGI')) btcTrendElem.style.color = 'var(--red)';
+                else btcTrendElem.style.color = 'var(--yellow)';
+
+                document.getElementById('aiThreshold').textContent = '%' + (d.machine.adaptiveThreshold || 70);
+                document.getElementById('consecutiveLosses').textContent = d.machine.consecutiveLosses || 0;
+                
+                document.getElementById('signalStats').textContent = 
+                    `${d.performance.signalsAccepted || 0} / ${d.performance.signalsRejected || 0} ` +
+                    `(%${d.performance.acceptanceRate || 0} kabul)`;
+
+                document.getElementById('openPositions').textContent = d.simulation.openTrades || 0;
+                
+                const realTradingElem = document.getElementById('realTrading');
+                if (d.bot.realTrading) {
+                    realTradingElem.innerHTML = '<span class="badge badge-danger">GERÇEK AKTİF</span> (' + d.realPositions + ' açık)';
+                } else {
+                    realTradingElem.innerHTML = '<span class="badge badge-info">SİMÜLASYON</span>';
+                }
+
+                // Açık pozisyonlar tablosu
+                updateOpenPositions(d.simulation.openPositions || []);
+
+                // Son işlemler tablosu
+                updateRecentTrades(d.simulation.recentTrades || []);
+
+            } catch (e) {
+                updateOfflineStatus();
+                console.error('Durum yenileme hatası:', e);
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  AÇIK POZİSYONLARI GÜNCELLE
+        // ════════════════════════════════════════════════════════════
+        function updateOpenPositions(positions) {
+            const container = document.getElementById('openPosContainer');
+            const tbody = document.getElementById('openPosBody');
+
+            if (!positions || positions.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            tbody.innerHTML = positions.map(p => {
+                const side = (p.side || 'LONG').toUpperCase();
+                const sideColor = side === 'LONG' ? 'var(--green)' : 'var(--red)';
+                const pnlColor = (p.pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+                const gucBadge = (p.signal_guc || '').includes('GUCLU') ? 'badge-success' : 
+                                 (p.signal_guc || '').includes('NORMAL') ? 'badge-warning' : 'badge-info';
+                
+                return `
+                    <tr>
+                        <td><strong>${p.symbol}</strong></td>
+                        <td style="color:${sideColor}">${side}</td>
+                        <td>${(p.entry_price || 0).toFixed(6)}</td>
+                        <td>${(p.current_price || 0).toFixed(6)}</td>
+                        <td style="color:${pnlColor}">%${(p.pnl_percent || 0).toFixed(2)}</td>
+                        <td>${(p.stop_loss || 0).toFixed(6)}</td>
+                        <td><span class="badge ${gucBadge}">${p.signal_guc || 'AI_ZAYIF'}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  SON İŞLEMLERİ GÜNCELLE
+        // ════════════════════════════════════════════════════════════
+        function updateRecentTrades(trades) {
+            const tbody = document.getElementById('recentTradesBody');
+
+            if (!trades || trades.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">Henüz işlem yok</td></tr>';
+                return;
+            }
+
+            // Sadece kapalı işlemleri göster
+            const closedTrades = trades.filter(t => t.status !== 'OPEN').slice(0, 10);
+
+            if (closedTrades.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">Kapalı işlem yok</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = closedTrades.map(t => {
+                const side = (t.side || 'LONG').toUpperCase();
+                const sideColor = side === 'LONG' ? 'var(--green)' : 'var(--red)';
+                const pnlColor = (t.pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+                const pnlSign = (t.pnl || 0) >= 0 ? '+' : '';
+                const reasonBadge = (t.close_reason || '').includes('TRAILING') ? 'badge-success' :
+                                    (t.close_reason || '').includes('STOP') ? 'badge-danger' : 'badge-info';
+
+                return `
+                    <tr>
+                        <td><strong>${t.symbol}</strong></td>
+                        <td style="color:${sideColor}">${side}</td>
+                        <td>${(t.entry_price || 0).toFixed(6)}</td>
+                        <td>${(t.exit_price || 0).toFixed(6)}</td>
+                        <td style="color:${pnlColor}">${pnlSign}$${(t.pnl || 0).toFixed(4)}</td>
+                        <td style="color:${pnlColor}">${pnlSign}%${(t.pnl_percent || 0).toFixed(2)}</td>
+                        <td><span class="badge ${reasonBadge}">${t.close_reason || 'MANUEL'}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  BİLDİRİM GÖSTER
+        // ════════════════════════════════════════════════════════════
+        function showNotification(type, message) {
+            const notif = document.getElementById('notification');
+            notif.className = 'notification show ' + type;
+            notif.innerHTML = message;
+            
+            // 8 saniye sonra otomatik kapat
+            clearTimeout(notif._timeout);
+            notif._timeout = setTimeout(() => {
+                notif.className = 'notification';
+            }, 8000);
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  OTOMATİK YENİLEME
+        // ════════════════════════════════════════════════════════════
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('btnAutoRefresh');
+            const label = document.getElementById('autoRefreshLabel');
+
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                btn.classList.remove('active');
+                label.textContent = 'KAPALI';
+            } else {
+                autoRefreshInterval = setInterval(refreshStatus, 10000); // 10 saniye
+                btn.classList.add('active');
+                label.textContent = 'AKTİF (10sn)';
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  OFFLINE DURUMU
+        // ════════════════════════════════════════════════════════════
+        function updateOfflineStatus() {
+            document.getElementById('statusDot').className = 'status-dot offline';
+            document.getElementById('statusText').textContent = 'BAĞLANTI YOK';
+            document.getElementById('statusText').style.color = 'var(--red)';
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  KLAVYE KISAYOLU: Enter ile tarama
+        // ════════════════════════════════════════════════════════════
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !isScanning) {
+                e.preventDefault();
+                manualScan(false);
+            }
+            if (e.key === 'F5') {
+                e.preventDefault();
+                refreshStatus();
+            }
+        });
+    </script>
+</body>
 </html>
