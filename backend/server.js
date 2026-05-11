@@ -1,15 +1,63 @@
-/**
- * ════════════════════════════════════════════════════════════════════
- *   SERVER.JS - WEB PANEL + MANUEL TARAMA BUTONU
- *   Express.js ile HTTP API ve Web Arayüzü
- * ════════════════════════════════════════════════════════════════════
- */
-
 const express = require('express');
 const path = require('path');
-const engine = require('./engine');
-const simulation = require('./simulation');
-const db = require('./database');
+const fs = require('fs');
+
+// Mevcut dizindeki tüm .js dosyalarını listele
+console.log('\n📁 /app/backend/ içindeki dosyalar:');
+const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
+files.forEach(f => console.log('   - ' + f));
+console.log('');
+
+// Modülleri dene-yükle
+let engine, simulation, db;
+
+try {
+  engine = require('./engine');
+  console.log('✅ engine.js yüklendi');
+} catch(e) {
+  console.log('❌ engine.js bulunamadı, alternatifler deneniyor...');
+  try { engine = require('./Engine'); console.log('✅ Engine.js yüklendi'); } catch(e) {}
+  try { engine = require('./trading'); console.log('✅ trading.js yüklendi'); } catch(e) {}
+  try { engine = require('./bot'); console.log('✅ bot.js yüklendi'); } catch(e) {}
+  try { engine = require('./index'); console.log('✅ index.js yüklendi'); } catch(e) {}
+  try { engine = require('./main'); console.log('✅ main.js yüklendi'); } catch(e) {}
+}
+
+try {
+  simulation = require('./simulation');
+  console.log('✅ simulation.js yüklendi');
+} catch(e) {
+  console.log('❌ simulation.js bulunamadı');
+  try { simulation = require('./Simulation'); console.log('✅ Simulation.js yüklendi'); } catch(e) {}
+}
+
+try {
+  db = require('./database');
+  console.log('✅ database.js yüklendi');
+} catch(e) {
+  console.log('❌ database.js bulunamadı');
+  try { db = require('./Database'); console.log('✅ Database.js yüklendi'); } catch(e) {}
+  try { db = require('./db'); console.log('✅ db.js yüklendi'); } catch(e) {}
+}
+
+// Eksik modül kontrolü
+if (!engine) {
+  console.error('\n🔴 HATA: engine modülü yüklenemedi!');
+  console.error('Lütfen /app/backend/ içindeki ana bot dosyasının gerçek adını söyleyin.');
+  process.exit(1);
+}
+
+if (!simulation) {
+  console.error('\n🔴 HATA: simulation modülü yüklenemedi!');
+  process.exit(1);
+}
+
+if (!db) {
+  console.error('\n🔴 HATA: database modülü yüklenemedi!');
+  process.exit(1);
+}
+
+console.log('\n✅ Tüm modüller başarıyla yüklendi!\n');
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
@@ -17,22 +65,12 @@ const PORT = process.env.WEB_PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ════════════════════════════════════════════════════════════════════
-//  API ENDPOINT'LERİ
-// ════════════════════════════════════════════════════════════════════
-
-/**
- * 🟢 MANUEL TARAMA BUTONU
- */
 app.post('/api/scan', async (req, res) => {
   try {
     const force = req.body?.force === true;
     
     if (!engine.running) {
-      return res.json({ 
-        success: false, 
-        message: '❌ Bot şu anda çalışmıyor. Önce botu başlatın.' 
-      });
+      return res.json({ success: false, message: '❌ Bot çalışmıyor' });
     }
 
     const now = Date.now();
@@ -41,99 +79,50 @@ app.post('/api/scan', async (req, res) => {
 
     if (now - lastScan < minInterval && !force) {
       const waitSec = Math.ceil((minInterval - (now - lastScan)) / 1000);
-      return res.json({ 
-        success: false, 
-        message: `⏳ Lütfen ${waitSec} saniye bekleyin. Acele tarama için "Zorla Tara" butonunu kullanın.` 
-      });
+      return res.json({ success: false, message: `⏳ ${waitSec} saniye bekleyin` });
     }
 
-    res.json({ 
-      success: true, 
-      message: '🔍 Tarama başlatıldı! Sonuçlar konsolda görünecek...',
-      btcTrend: engine.btcTrend
-    });
-
-    console.log('\n🟡 [MANUEL TARAMA] Kullanıcı tarafından başlatıldı...');
+    res.json({ success: true, message: '🔍 Tarama başlatıldı!' });
+    
+    console.log('\n🟡 [MANUEL TARAMA] Başlatıldı...');
     engine.lastScanTime = Date.now();
     
-    try {
-      await engine.updateBTCTrend();
-      await engine.scan();
-      console.log('🟢 [MANUEL TARAMA] Tamamlandı!');
-    } catch (e) {
-      console.error('🔴 [MANUEL TARAMA] Hata:', e.message);
-    }
+    engine.updateBTCTrend()
+      .then(() => engine.scan())
+      .then(() => console.log('🟢 [MANUEL TARAMA] Tamamlandı!'))
+      .catch(e => console.error('🔴 [MANUEL TARAMA] Hata:', e.message));
 
   } catch (e) {
-    console.error('[API /scan] Hata:', e.message);
-    res.status(500).json({ success: false, message: 'Sunucu hatası: ' + e.message });
+    res.status(500).json({ success: false, message: 'Hata: ' + e.message });
   }
 });
 
-/**
- * 📊 BOT DURUMU
- */
 app.get('/api/status', (req, res) => {
   try {
     const simStats = simulation.getStats();
     const settings = engine.getSettings();
     
-    const status = {
-      bot: {
-        running: engine.running,
-        scanCount: engine.scanCount || 0,
-        lastScanTime: engine.lastScanTime || null,
-        lastScanAgo: engine.lastScanTime ? Math.floor((Date.now() - engine.lastScanTime) / 1000) : null,
-        btcTrend: engine.btcTrend || { trend: 'BELIRSIZ', rsi: 50 },
-        scanIntervalMin: parseInt(settings.scan_interval || 20),
-        realTrading: settings.real_trading === 'true' || settings.real_trading === '1',
-        longEnabled: settings.long_enabled === 'true' || settings.long_enabled === '1' || settings.long_enabled === undefined,
-        shortEnabled: settings.short_enabled === 'true' || settings.short_enabled === '1'
-      },
-      machine: {
-        adaptiveThreshold: simulation.getAdaptiveThreshold ? 
-          (simulation.getAdaptiveThreshold() * 100).toFixed(1) : 70,
-        consecutiveLosses: simStats.consecutiveLosses || 0
-      },
-      performance: {
-        signalsGenerated: engine.performance?.signalsGenerated || 0,
-        signalsAccepted: engine.performance?.signalsAccepted || 0,
-        signalsRejected: engine.performance?.signalsRejected || 0,
-        acceptanceRate: engine.performance?.signalsGenerated > 0 ? 
-          ((engine.performance.signalsAccepted / engine.performance.signalsGenerated) * 100).toFixed(1) : 0
-      },
-      simulation: {
-        balance: simStats.balance || 0,
-        startBalance: simStats.startBalance || 1000,
-        totalPnl: simStats.totalPnl || 0,
-        totalPnlPct: simStats.totalPnlPct || 0,
-        totalTrades: simStats.totalTrades || 0,
-        openTrades: simStats.openTrades || 0,
-        wins: simStats.wins || 0,
-        losses: simStats.losses || 0,
-        winRate: simStats.winRate || 0,
-        profitFactor: simStats.profitFactor || 0,
-        avgWin: simStats.avgWin || 0,
-        avgLoss: simStats.avgLoss || 0,
-        sharpeRatio: simStats.sharpeRatio || 0,
-        maxDrawdown: simStats.maxDrawdown || 0,
-        openPositions: simStats.openPositions || [],
-        recentTrades: simStats.recentTrades?.slice(0, 10) || []
-      },
-      realPositions: Object.keys(engine.realPositions || {}).length,
-      serverTime: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
-    };
-
-    res.json({ success: true, data: status });
+    res.json({
+      success: true,
+      data: {
+        bot: {
+          running: engine.running,
+          scanCount: engine.scanCount || 0,
+          btcTrend: engine.btcTrend || { trend: 'BELIRSIZ', rsi: 50 }
+        },
+        simulation: {
+          balance: simStats.balance || 0,
+          totalPnl: simStats.totalPnl || 0,
+          totalTrades: simStats.totalTrades || 0,
+          winRate: simStats.winRate || 0
+        }
+      }
+    });
   } catch (e) {
-    console.error('[API /status] Hata:', e.message);
-    res.status(500).json({ success: false, message: 'Durum alınamadı: ' + e.message });
+    res.status(500).json({ success: false, message: 'Hata: ' + e.message });
   }
 });
 
-/**
- * 📋 SON SİNYALLER
- */
 app.get('/api/signals', (req, res) => {
   try {
     const signals = db.prepare('SELECT * FROM signals ORDER BY id DESC LIMIT 50').all();
@@ -143,16 +132,11 @@ app.get('/api/signals', (req, res) => {
   }
 });
 
-// ════════════════════════════════════════════════════════════════════
-//  SERVER BAŞLAT
-// ════════════════════════════════════════════════════════════════════
-
 app.listen(PORT, () => {
-  console.log('\n' + '═'.repeat(55));
-  console.log(`  🌐 WEB PANEL AKTİF: http://localhost:${PORT}`);
-  console.log(`  📊 API Durum: http://localhost:${PORT}/api/status`);
-  console.log(`  🔍 API Tarama: POST http://localhost:${PORT}/api/scan`);
-  console.log('═'.repeat(55) + '\n');
+  console.log('═'.repeat(50));
+  console.log(`🌐 Panel: http://localhost:${PORT}`);
+  console.log(`🔍 Tarama: POST http://localhost:${PORT}/api/scan`);
+  console.log('═'.repeat(50));
 });
 
 module.exports = app;
