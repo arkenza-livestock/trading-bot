@@ -1,156 +1,70 @@
-const fs = require('fs');
+const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-/**
- * DATABASE - JSON Based (No sql.js needed)
- * Hızlı, basit, sıkıntısız
- */
+process.env.TZ = 'Europe/Istanbul';
 
-class Database {
-  constructor(dbDir = './data') {
-    this.dir = dbDir;
-    this.dataFile = path.join(dbDir, 'trading.json');
-    this.settingsFile = path.join(dbDir, 'settings.json');
-
-    // Dizin oluştur
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-      console.log(`[DB] 📁 Data directory: ${dbDir}`);
-    }
-
-    // Data yükle
-    this.data = this.loadFile(this.dataFile) || {
-      wallet: { balance: 1000, total_pnl: 0, total_trades: 0 },
-      positions: [],
-      signals: [],
-      scans: []
-    };
-
-    this.settings = this.loadFile(this.settingsFile) || {
-      scan_interval: '20',
-      max_open_positions: '3',
-      trade_amount_usdt: '100',
-      trailing_stop_percent: '0.5',
-      stop_loss_percent: '2.0',
-      analysis_timeframe: '4h',
-      real_trading: 'false'
-    };
-
-    this.save();
-    console.log('[DB] ✅ Database initialized');
-  }
-
-  loadFile(filePath) {
-    try {
-      if (fs.existsSync(filePath)) {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      }
-    } catch (e) {
-      console.warn(`[DB] Warning loading ${path.basename(filePath)}`);
-    }
-    return null;
-  }
-
-  save() {
-    try {
-      fs.writeFileSync(this.dataFile, JSON.stringify(this.data, null, 2), 'utf8');
-      fs.writeFileSync(this.settingsFile, JSON.stringify(this.settings, null, 2), 'utf8');
-    } catch (e) {
-      console.error('[DB] Save error:', e.message);
-    }
-  }
-
-  // Settings
-  getSetting(key) { return this.settings[key] || null; }
-  setSetting(key, value) { this.settings[key] = value; this.save(); }
-  setDefaultSettings() { this.save(); }
-
-  // Wallet
-  getWallet() { return this.data.wallet || { balance: 1000, total_pnl: 0 }; }
-  updateWallet(updates) { 
-    this.data.wallet = { ...this.data.wallet, ...updates };
-    this.save();
-  }
-
-  // Positions
-  getOpenPositions() { return this.data.positions.filter(p => p.status === 'OPEN'); }
-  getClosedPositions(limit = 50) { return this.data.positions.filter(p => p.status === 'CLOSED').slice(-limit); }
-  
-  addPosition(pos) {
-    pos.id = (this.data.positions.length || 0) + 1;
-    pos.status = 'OPEN';
-    pos.opened_at = new Date().toISOString();
-    this.data.positions.push(pos);
-    this.save();
-    return pos.id;
-  }
-
-  updatePosition(id, updates) {
-    const pos = this.data.positions.find(p => p.id === id);
-    if (pos) {
-      Object.assign(pos, updates);
-      if (updates.status === 'CLOSED') pos.closed_at = new Date().toISOString();
-      this.save();
-    }
-  }
-
-  // Signals
-  getRecentSignals(limit = 100) { return (this.data.signals || []).slice(-limit); }
-  addSignal(signal) {
-    if (!this.data.signals) this.data.signals = [];
-    signal.created_at = new Date().toISOString();
-    this.data.signals.push(signal);
-    if (this.data.signals.length > 1000) this.data.signals = this.data.signals.slice(-1000);
-    this.save();
-  }
-
-  // Stats
-  getStats() {
-    const closed = this.getClosedPositions(999);
-    const wins = closed.filter(p => (p.pnl || 0) > 0);
-    const totalPnL = closed.reduce((s, p) => s + (parseFloat(p.pnl) || 0), 0);
-    const wallet = this.getWallet();
-
-    return {
-      wallet,
-      totalTrades: closed.length,
-      openTrades: this.getOpenPositions().length,
-      wins: wins.length,
-      losses: closed.length - wins.length,
-      winRate: closed.length > 0 
-        ? parseFloat(((wins.length / closed.length) * 100).toFixed(1)) 
-        : 0,
-      totalPnL: parseFloat(totalPnL.toFixed(4)),
-      totalPnLPercent: parseFloat(((totalPnL / (wallet?.balance || 1000)) * 100).toFixed(2))
-    };
-  }
-
-  // Backup
-  backup() {
-    try {
-      const backupDir = path.join(this.dir, 'backups');
-      if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupFile = path.join(backupDir, `backup-${timestamp}.json`);
-      fs.writeFileSync(backupFile, JSON.stringify(this.data, null, 2), 'utf8');
-      console.log(`[DB] ✅ Backup: ${timestamp}`);
-      return true;
-    } catch (e) {
-      console.error('[DB] Backup error:', e.message);
-      return false;
-    }
-  }
-
-  clearPositions() { 
-    this.data.positions = []; 
-    this.data.wallet = { balance: 1000, total_pnl: 0 }; 
-    this.save(); 
-  }
-
-  close() { 
-    this.save(); 
-    console.log('[DB] ✅ Closed');
-  }
+const dbDir = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+  console.log('[DB] Data klasörü oluşturuldu:', dbDir);
 }
 
-module.exports = new Database();
+const dbPath = path.join(dbDir, 'trading.db');
+const db = new Database(dbPath);
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+function initDatabase() {
+  db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS signals (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, signal_type TEXT DEFAULT 'BEKLE', score INTEGER DEFAULT 0, risk TEXT DEFAULT 'ORTA', price REAL, fiyat REAL, rsi REAL, macd INTEGER DEFAULT 0, trend TEXT, positive_signals TEXT, negative_signals TEXT, ai_comment TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS scan_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, coin_count INTEGER DEFAULT 0, signal_count INTEGER DEFAULT 0, duration_ms INTEGER DEFAULT 0, signals_found TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sim_wallet (id INTEGER PRIMARY KEY AUTOINCREMENT, balance REAL DEFAULT 1000, total_pnl REAL DEFAULT 0, total_trades INTEGER DEFAULT 0, winning_trades INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sim_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, side TEXT DEFAULT 'LONG', quantity REAL, entry_price REAL, current_price REAL, exit_price REAL, stop_loss REAL, take_profit REAL, highest_price REAL, lowest_price REAL, pnl REAL DEFAULT 0, pnl_percent REAL DEFAULT 0, status TEXT DEFAULT 'OPEN', signal_guc TEXT DEFAULT 'NORMAL', trend4H TEXT, trend1D TEXT, score INTEGER DEFAULT 0, machine_confidence REAL DEFAULT 0, close_reason TEXT, opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS machine_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, pattern_data TEXT, outcome TEXT, return_pct REAL, similarity REAL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS machine_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, action TEXT, confidence REAL, reasoning TEXT, expected_return REAL, stop_loss REAL, take_profit REAL, similar_patterns INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS machine_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, signal_timestamp INTEGER, actual_return REAL, max_favorable REAL, max_adverse REAL, profitable INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS machine_weights (id INTEGER PRIMARY KEY AUTOINCREMENT, weights_data TEXT, threshold REAL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS backtest_results (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, summary TEXT, params TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_confidence REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_action TEXT DEFAULT 'WAIT'`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN machine_reasoning TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN similar_patterns INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE signals ADD COLUMN expected_return REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE sim_positions ADD COLUMN machine_confidence REAL DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE sim_positions ADD COLUMN take_profit REAL`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_accepted INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN machine_rejected INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.exec(`ALTER TABLE scan_logs ADD COLUMN rejection_reasons TEXT DEFAULT '{}'`); } catch(e) {}
+
+  const defaultSettings = {
+    min_volume: '10000000', max_coins: '50', min_score: '40', scan_interval: '20',
+    trade_amount_usdt: '100', max_open_positions: '3',
+    stop_loss_percent: '2.0', trailing_stop_percent: '0.5', min_profit_percent: '1.5',
+    telegram_min_score: '60', telegram_min_machine_confidence: '0.75',
+    sim_balance: '1000', machine_confidence_min: '0.70', machine_learning_enabled: 'true',
+    long_enabled: 'true',
+    short_enabled: 'true', short_confidence_min: '0.85',
+    binance_api_key: '', binance_api_secret: '',
+    telegram_token: '', telegram_chat_id: '',
+    real_trading: 'false', github_sync_enabled: 'false'
+  };
+
+  const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  for (const [key, value] of Object.entries(defaultSettings)) {
+    insertSetting.run(key, value);
+  }
+
+  const walletExists = db.prepare('SELECT COUNT(*) as count FROM sim_wallet').get();
+  if (walletExists.count === 0) {
+    db.prepare('INSERT INTO sim_wallet (balance) VALUES (1000)').run();
+  }
+
+  console.log('[DB] ✅ Veritabani hazir:', dbPath);
+}
+
+initDatabase();
+
+module.exports = db;
