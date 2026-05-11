@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 function Backtest() {
   const [params, setParams] = useState({
     symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT',
-    interval: '4h', days: 30, stopLoss: 2.0, trailingStop: 0.5, minProfit: 1.5,
+    interval: '1h', days: 30, stopLoss: 2.0, trailingStop: 0.5, minProfit: 1.5,
     commission: 0.1, slippage: 0.05, minScore: 50, tradeAmount: 100, maxPositions: 3,
-    epochs: 1, machineConfidenceMin: 0.60,
-    longEnabled: true, shortEnabled: true
+    epochs: 1, machineConfidenceMin: 0.70,
+    longEnabled: true, shortEnabled: true, shortConfMin: 0.85
   });
 
   const [results, setResults] = useState(null);
@@ -16,13 +16,10 @@ function Backtest() {
   const handleChange = function(e) { setParams({ ...params, [e.target.name]: e.target.value }); };
   const handleToggle = function(key) { setParams({ ...params, [key]: !params[key] }); };
 
-  const setTumu = function() { setParams({ ...params, symbols: 'TUMU' }); };
-  const setTop5 = function() { setParams({ ...params, symbols: 'BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,BNBUSDT' }); };
-
   const runBacktest = async function() {
     setLoading(true); setError(''); setResults(null);
     try {
-      var symbolArray = params.symbols === 'TUMU' ? ['TUMU'] : params.symbols.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+      var symbolArray = params.symbols.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
       var body = {
         symbols: symbolArray, interval: params.interval, days: parseInt(params.days),
         stopLoss: parseFloat(params.stopLoss), trailingStop: parseFloat(params.trailingStop),
@@ -30,7 +27,8 @@ function Backtest() {
         slippage: parseFloat(params.slippage), minScore: parseInt(params.minScore),
         tradeAmount: parseFloat(params.tradeAmount), maxPositions: parseInt(params.maxPositions),
         epochs: parseInt(params.epochs), machineConfidenceMin: parseFloat(params.machineConfidenceMin),
-        longEnabled: params.longEnabled, shortEnabled: params.shortEnabled
+        longEnabled: params.longEnabled, shortEnabled: params.shortEnabled,
+        shortConfMin: parseFloat(params.shortConfMin)
       };
       var res = await fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error('Sunucu hatasi: ' + res.status);
@@ -46,7 +44,7 @@ function Backtest() {
   return (
     <div style={{maxWidth:520,padding:'32px 20px',margin:'0 auto'}}>
       <h1 style={{fontSize:22,fontWeight:700,marginBottom:4,color:'#f1f5f9'}}>Backtest</h1>
-      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>🟢 LONG & 🔴 SHORT | Adaptif Cift Motor</p>
+      <p style={{color:'#64748b',marginBottom:30,fontSize:13}}>🟢 LONG & 🔴 SHORT</p>
 
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Islem Yonu</h3>
@@ -54,23 +52,24 @@ function Backtest() {
           <span style={{color:'#cbd5e1',fontSize:14}}>🟢 LONG</span>
           <label className="toggle-switch"><input type="checkbox" checked={params.longEnabled} onChange={function(){handleToggle('longEnabled');}} /><span className="toggle-slider"></span></label>
         </div>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid #111827'}}>
           <span style={{color:'#cbd5e1',fontSize:14}}>🔴 SHORT</span>
           <label className="toggle-switch"><input type="checkbox" checked={params.shortEnabled} onChange={function(){handleToggle('shortEnabled');}} /><span className="toggle-slider"></span></label>
         </div>
+        {params.shortEnabled && (
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0'}}>
+            <span style={{color:'#cbd5e1',fontSize:14}}>SHORT Guven Esigi (%)</span>
+            <input name="shortConfMin" type="number" step="1" value={String(Math.round(params.shortConfMin*100))} onChange={function(e){setParams({...params,shortConfMin:parseFloat(e.target.value)/100});}} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} />
+          </div>
+        )}
       </div>
 
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Parametreler</h3>
-        <Row label="Coin">
-          <div style={{display:'flex', gap:6, alignItems:'center'}}>
-            <input name="symbols" type="text" value={params.symbols} onChange={handleChange} style={{width:180,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:12,textAlign:'left'}} />
-            <button onClick={setTumu} style={{padding:'4px 10px',background: params.symbols==='TUMU' ? '#7c3aed' : '#1e293b',border:'1px solid #334155',borderRadius:4,color: params.symbols==='TUMU' ? '#fff' : '#94a3b8',fontSize:11,cursor:'pointer'}}>TUMU</button>
-            <button onClick={setTop5} style={{padding:'4px 10px',background:'#1e293b',border:'1px solid #334155',borderRadius:4,color:'#94a3b8',fontSize:11,cursor:'pointer'}}>Top5</button>
-          </div>
-        </Row>
+        <Row label="Coin"><span style={{color:'#64748b'}}>Tum Coinler</span></Row>
         <Row label="Mum Araligi"><select name="interval" value={params.interval} onChange={handleChange} style={{background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 10px',fontSize:13}}><option value="1h">1 Saat</option><option value="4h">4 Saat</option><option value="1d">1 Gun</option></select></Row>
         <Row label="Test Suresi"><span style={{display:'flex',alignItems:'center',gap:6}}><input name="days" type="number" value={params.days} onChange={handleChange} style={{width:60,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /><span style={{color:'#64748b',fontSize:13}}>Gun</span></span></Row>
+        <Row label="AI Guven Esigi"><input name="machineConfidenceMin" type="number" step="0.05" value={params.machineConfidenceMin} onChange={handleChange} style={{width:70,background:'#0a0e17',border:'1px solid #334155',borderRadius:6,color:'#e2e8f0',padding:'6px 8px',fontSize:13,textAlign:'center'}} /></Row>
       </div>
       <div style={{background:'#0d1321',border:'1px solid #1a2540',borderRadius:14,padding:'20px 22px',marginBottom:16}}>
         <h3 style={{fontSize:13,fontWeight:600,color:'#94a3b8',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>RISK</h3>
@@ -90,22 +89,22 @@ function Backtest() {
       {error && <div style={{marginTop:15,padding:14,background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:10,color:'#ef4444',fontSize:13}}>{error}</div>}
       {loading && <div style={{marginTop:15,padding:30,textAlign:'center',color:'#fbbf24',background:'#0d1321',border:'1px solid #1a2540',borderRadius:10}}>Backtest calisiyor... 1-5 dakika surebilir.</div>}
 
-      {results && results.summary && results.summary.totalTrades > 0 && (
+      {results && (
         <div style={{marginTop:25}}>
           <h2 style={{fontSize:16,marginBottom:15,color:'#94a3b8'}}>Sonuclar</h2>
           <div className="card-grid" style={{gridTemplateColumns:'repeat(2,1fr)'}}>
-            <div className="card"><div className="card-label">Toplam Islem</div><div className="card-value" style={{fontSize:24}}>{results.summary.totalTrades}</div></div>
-            <div className="card"><div className="card-label">Basari Orani</div><div className="card-value green" style={{fontSize:24}}>%{results.summary.winRate}</div></div>
-            <div className="card"><div className="card-label">Toplam PnL</div><div className="card-value green" style={{fontSize:24}}>${(results.summary.totalPnl||0).toFixed(2)}</div></div>
-            <div className="card"><div className="card-label">Profit Factor</div><div className="card-value gold" style={{fontSize:24}}>{results.summary.profitFactor}</div></div>
-            <div className="card"><div className="card-label">📈 Sharpe</div><div className="card-value gold" style={{fontSize:24}}>{results.summary.sharpeRatio || '-'}</div></div>
-            <div className="card"><div className="card-label">📉 MaxDD</div><div className="card-value red" style={{fontSize:24}}>%{results.summary.maxDrawdown || '0.0'}</div></div>
+            <div className="card"><div className="card-label">Toplam Islem</div><div className="card-value" style={{fontSize:24}}>{results.summary?results.summary.totalTrades:0}</div></div>
+            <div className="card"><div className="card-label">Basari Orani</div><div className="card-value green" style={{fontSize:24}}>%{results.summary?results.summary.winRate:0}</div></div>
+            <div className="card"><div className="card-label">Toplam PnL</div><div className="card-value green" style={{fontSize:24}}>${results.summary?(results.summary.totalPnl||0).toFixed(2):'0.00'}</div></div>
+            <div className="card"><div className="card-label">Profit Factor</div><div className="card-value gold" style={{fontSize:24}}>{results.summary?results.summary.profitFactor:'-'}</div></div>
+            <div className="card"><div className="card-label">📈 Sharpe</div><div className="card-value gold" style={{fontSize:24}}>{results.summary?.sharpeRatio || '-'}</div></div>
+            <div className="card"><div className="card-label">📉 MaxDD</div><div className="card-value red" style={{fontSize:24}}>%{results.summary?.maxDrawdown || '0.0'}</div></div>
           </div>
 
           <h3 style={{fontSize:14,marginTop:20,marginBottom:10,color:'#94a3b8'}}>🟢 LONG & 🔴 SHORT Dagilimi</h3>
           <div className="card-grid" style={{gridTemplateColumns:'repeat(2,1fr)'}}>
-            <div className="card" style={{borderLeft:'3px solid #22c55e'}}><div className="card-label">🟢 LONG Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary.longCount}</div><div style={{fontSize:12,color:'#22c55e',marginTop:4}}>Basari: %{results.summary.longWinRate}</div></div>
-            <div className="card" style={{borderLeft:'3px solid #ef4444'}}><div className="card-label">🔴 SHORT Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary.shortCount}</div><div style={{fontSize:12,color:'#ef4444',marginTop:4}}>Basari: %{results.summary.shortWinRate}</div></div>
+            <div className="card" style={{borderLeft:'3px solid #22c55e'}}><div className="card-label">🟢 LONG Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary?results.summary.longCount:0}</div><div style={{fontSize:12,color:'#22c55e',marginTop:4}}>Basari: %{results.summary?results.summary.longWinRate:0}</div></div>
+            <div className="card" style={{borderLeft:'3px solid #ef4444'}}><div className="card-label">🔴 SHORT Islem</div><div className="card-value" style={{fontSize:20}}>{results.summary?results.summary.shortCount:0}</div><div style={{fontSize:12,color:'#ef4444',marginTop:4}}>Basari: %{results.summary?results.summary.shortWinRate:0}</div></div>
           </div>
 
           {results.trades && results.trades.length > 0 && (
@@ -124,12 +123,6 @@ function Backtest() {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {results && results.summary && results.summary.totalTrades === 0 && (
-        <div style={{marginTop:25, padding:30, textAlign:'center', color:'#fbbf24', background:'#0d1321', border:'1px solid #1a2540', borderRadius:10}}>
-          Backtest 0 islem buldu. Test suresini uzatin veya farkli ayarlarla deneyin.
         </div>
       )}
     </div>
