@@ -8,6 +8,7 @@ function Dashboard() {
   var [loading, setLoading] = useState(true);
   var [message, setMessage] = useState('');
   var [lastUpdate, setLastUpdate] = useState('');
+  var [scanLoading, setScanLoading] = useState(false);
 
   var fetchData = useCallback(async function() {
     try {
@@ -30,6 +31,20 @@ function Dashboard() {
     var interval = setInterval(fetchData, 3000);
     return function() { clearInterval(interval); };
   }, [fetchData]);
+
+  var handleScan = async function() {
+    setScanLoading(true);
+    setMessage('');
+    try {
+      var res = await fetch('/api/scan', { method: 'POST' });
+      var data = await res.json();
+      setMessage(data.message);
+      setTimeout(function() { fetchData(); }, 35000);
+    } catch(e) {
+      setMessage('❌ Bağlantı hatası');
+    }
+    setTimeout(function() { setScanLoading(false); }, 5000);
+  };
 
   var manualSell = async function(symbol) {
     if (!window.confirm(symbol + ' icin manuel kapatma yapilsin mi?')) return;
@@ -67,6 +82,7 @@ function Dashboard() {
         <div style={{display:'flex', alignItems:'center', gap:15}}>
           <span style={{color:'#64748b', fontSize:12}}>Son guncelleme: {lastUpdate}</span>
           <button onClick={fetchData} style={{padding:'6px 14px', background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#e2e8f0', fontSize:12, cursor:'pointer'}}>🔄 Yenile</button>
+          <button onClick={handleScan} disabled={scanLoading} style={{padding:'8px 16px', background:scanLoading?'#334155':'#f59e0b', border:'none', borderRadius:8, color:'#000', fontSize:13, fontWeight:700, cursor:scanLoading?'not-allowed':'pointer'}}>{scanLoading ? '⏳' : '🔍'} TARA</button>
         </div>
       </div>
       <p style={{color:'#64748b', marginBottom:25, fontSize:14, marginTop:5}}>
